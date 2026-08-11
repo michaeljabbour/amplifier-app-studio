@@ -52,9 +52,11 @@ export function Transcript(props: Props) {
           <div class="boot-card" role="status" aria-live="polite">
             <div class="boot-orbit"><span /></div>
             <div>
-              <div class="eyebrow">RUNTIME BOOT</div>
+              <div class="eyebrow">{props.state.restoreProgress ? "SESSION RESTORE" : "RUNTIME BOOT"}</div>
               <h2>{props.state.bootLabel}</h2>
-              <p>Preparing the Python runtime out of process. This can take a few minutes for a cold bundle.</p>
+              <p>{props.state.restoreProgress
+                ? "Loading durable history and the authoritative model, context, and spend state. The composer unlocks when the session is ready."
+                : "Preparing the Python runtime out of process. This can take a few minutes for a cold bundle."}</p>
             </div>
           </div>
         </Show>

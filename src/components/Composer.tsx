@@ -65,8 +65,16 @@ export function Composer(props: Props) {
         ref={textarea}
         value={text()}
         disabled={sending() || props.state.phase !== "ready"}
-        placeholder={props.state.busy ? "Course-correct the current machine…" : "Tell the coordinator what to build, investigate, or organize…"}
-        aria-label={props.state.busy ? "Steer current turn" : "Message Amplifier"}
+        placeholder={props.state.restoreProgress && props.state.phase !== "ready"
+          ? "Restoring this conversation…"
+          : props.state.busy
+            ? "Course-correct the current machine…"
+            : "Tell the coordinator what to build, investigate, or organize…"}
+        aria-label={props.state.restoreProgress && props.state.phase !== "ready"
+          ? "Restoring Amplifier conversation"
+          : props.state.busy
+            ? "Steer current turn"
+            : "Message Amplifier"}
         onInput={(event) => setText(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

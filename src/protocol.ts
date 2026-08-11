@@ -158,6 +158,10 @@ export interface SessionViewState {
   activity: string;
   turnStartedAtMs?: number;
   replaying: boolean;
+  restoreProgress?: {
+    history: boolean;
+    status: boolean;
+  };
   pendingApproval?: ApprovalState;
   pendingDecision?: DecisionState;
   context: ContextState;

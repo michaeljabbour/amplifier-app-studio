@@ -50,7 +50,8 @@ export function createSessionState(
     busy: false,
     autopilot: false,
     activity: "Starting turn",
-    replaying: false,
+    replaying: Boolean(input.resumeId),
+    restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
     context: { tokens: 0, window: 0, percent: 0, costUsd: "0" },
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
     blocks: [],
@@ -81,19 +82,19 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         title: next.resumeId || next.capabilityName ? next.title : `Session ${stringValue(record.session_id).slice(0, 8)}`,
         bundle: stringValue(record.bundle, next.bundle),
         model: stringValue(record.model, next.model),
-        phase: "ready",
-        bootLabel: "Runtime ready",
+        phase: next.restoreProgress ? "starting" : "ready",
+        bootLabel: next.restoreProgress ? "Restoring conversation history" : "Runtime ready",
         error: undefined,
       };
     case "session.attached":
       return {
         ...next,
         runtimeSessionId: stringValue(record.session_id),
-        phase: "ready",
-        bootLabel: "Attached to live runtime",
+        phase: next.restoreProgress ? "starting" : "ready",
+        bootLabel: next.restoreProgress ? "Restoring conversation history" : "Attached to live runtime",
       };
     case "session.status":
-      return reduceSessionStatus(next, record);
+      return markRestoreProgress(reduceSessionStatus(next, record), "status");
     case "runtime.event": {
       const event = asEvent(record.event);
       return event ? reduceEvent(next, event, record.replay === true) : next;
@@ -137,9 +138,14 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         : reconciled;
     }
     case "history.begin":
-      return { ...next, replaying: true, bootLabel: "Replaying durable history" };
+      return {
+        ...next,
+        replaying: true,
+        phase: next.restoreProgress ? "starting" : next.phase,
+        bootLabel: "Replaying durable history",
+      };
     case "history.end":
-      return { ...next, replaying: false, busy: false, phase: "ready", bootLabel: "History restored" };
+      return markRestoreProgress(next, "history");
     case "turn.completed": {
       const response = stringValue(record.response).trim();
       next = finalizeAnswer(next, response);
@@ -843,6 +849,31 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
     },
   };
   return pendingApproval ? markLaneAwaitingApproval(next, pendingApproval.prompt) : next;
+}
+
+function markRestoreProgress(
+  state: SessionViewState,
+  step: keyof NonNullable<SessionViewState["restoreProgress"]>,
+): SessionViewState {
+  if (!state.restoreProgress) {
+    return step === "history"
+      ? { ...state, replaying: false, phase: "ready", bootLabel: "History restored" }
+      : state;
+  }
+
+  const restoreProgress = { ...state.restoreProgress, [step]: true };
+  const restored = restoreProgress.history && restoreProgress.status;
+  return {
+    ...state,
+    restoreProgress,
+    replaying: !restoreProgress.history,
+    phase: restored ? "ready" : "starting",
+    bootLabel: restored
+      ? "Session restored"
+      : restoreProgress.history
+        ? "Restoring model, context, and spend"
+        : "Restoring conversation history",
+  };
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

@@ -47,6 +47,59 @@ describe("session reducer", () => {
     expect(createSessionState("gui-chat", { projectDir: "/tmp/project", mode: "chat" }).mode).toBe("chat");
   });
 
+  it("keeps a resumed session non-interactive until history and status are restored", () => {
+    let state = createSessionState("gui-resume", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      resumeName: "Stored work",
+    });
+
+    expect(state).toMatchObject({
+      phase: "starting",
+      replaying: true,
+      restoreProgress: { history: false, status: false },
+    });
+
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.attached",
+      session_id: "stored-session-1",
+    });
+    expect(state.phase).toBe("starting");
+
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 43 });
+    expect(state).toMatchObject({
+      phase: "starting",
+      replaying: false,
+      bootLabel: "Restoring model, context, and spend",
+      restoreProgress: { history: true, status: false },
+    });
+
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "idle",
+      turn: { active: false },
+      session: { bundle: "tui", model: "claude-opus-5", effort: "high" },
+      context: { context_tokens: 90_000, context_window: 100_000, context_pct: 90, cost_usd: "114.13" },
+      pending: { decisions: [] },
+    });
+    expect(state).toMatchObject({
+      phase: "ready",
+      replaying: false,
+      bootLabel: "Session restored",
+      model: "claude-opus-5",
+      effort: "high",
+      context: { percent: 90, costUsd: "114.13" },
+      restoreProgress: { history: true, status: true },
+    });
+  });
+
+  it("does not delay a new session after the runtime starts", () => {
+    expect(started()).toMatchObject({ phase: "ready", replaying: false, restoreProgress: undefined });
+  });
+
   it("keeps effort pending until the runtime acknowledges the exact state", () => {
     let state = markEffortPending(started(), "high");
     expect(state.effortPending).toBe("high");
