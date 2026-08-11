@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { laneLivePreview, liveAgentCount, orderAgentLanes } from "./agentLanes";
+import { isLaneHistorical, laneLivePreview, liveAgentCount, orderAgentLanes } from "./agentLanes";
 import type { LaneState } from "./protocol";
 
 function lane(id: string, status: LaneState["status"], overrides: Partial<LaneState> = {}): LaneState {
@@ -28,5 +28,11 @@ describe("agent lane presentation", () => {
     expect(laneLivePreview(lane("live", "running", { tail: "Writing the answer", thinking: "Earlier thought" }))).toEqual({ kind: "text", text: "Writing the answer" });
     expect(laneLivePreview(lane("thinking", "running", { thinking: "Checking the dependency graph" }))).toEqual({ kind: "thinking", text: "Checking the dependency graph" });
     expect(laneLivePreview(lane("quiet", "running"))).toBeUndefined();
+  });
+
+  it("treats a completed attention lane as recorded history", () => {
+    expect(isLaneHistorical(lane("failed", "attention", { completedAtMs: 1786489142881 }))).toBe(true);
+    expect(isLaneHistorical(lane("approval", "attention"))).toBe(false);
+    expect(isLaneHistorical(lane("live", "running"))).toBe(false);
   });
 });

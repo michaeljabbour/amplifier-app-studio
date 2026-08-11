@@ -13,14 +13,20 @@ export async function appendImageFiles(existing: ComposerImage[], files: File[])
   const candidates = files.filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
   if (!candidates.length) throw new Error("Drop a PNG, JPEG, GIF, or WebP image.");
   if (candidates.length !== files.length) throw new Error("Only PNG, JPEG, GIF, and WebP files can be attached.");
-  if (existing.length + candidates.length > MAX_IMAGE_COUNT) throw new Error(`Attach up to ${MAX_IMAGE_COUNT} images per turn.`);
   if (candidates.some((file) => file.size === 0 || file.size > MAX_IMAGE_BYTES)) {
     throw new Error("Each image must be non-empty and no larger than 20 MB.");
   }
-  const total = existing.reduce((sum, image) => sum + image.size, 0)
-    + candidates.reduce((sum, file) => sum + file.size, 0);
-  if (total > MAX_IMAGE_TOTAL_BYTES) throw new Error("Image attachments can total up to 32 MB per turn.");
   const added = await Promise.all(candidates.map(toComposerImage));
+  return appendComposerImages(existing, added);
+}
+
+export function appendComposerImages(existing: ComposerImage[], added: ComposerImage[]): ComposerImage[] {
+  if (existing.length + added.length > MAX_IMAGE_COUNT) throw new Error(`Attach up to ${MAX_IMAGE_COUNT} images per turn.`);
+  if (added.some((image) => image.size === 0 || image.size > MAX_IMAGE_BYTES || !SUPPORTED_IMAGE_TYPES.has(image.mediaType))) {
+    throw new Error("Each image must be a supported, non-empty file no larger than 20 MB.");
+  }
+  const total = [...existing, ...added].reduce((sum, image) => sum + image.size, 0);
+  if (total > MAX_IMAGE_TOTAL_BYTES) throw new Error("Image attachments can total up to 32 MB per turn.");
   return [...existing, ...added];
 }
 

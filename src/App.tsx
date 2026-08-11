@@ -15,7 +15,7 @@ import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
-import { appendImageFiles, hasImageFiles } from "./imageAttachments";
+import { appendComposerImages, appendImageFiles, hasImageFiles } from "./imageAttachments";
 import type { CapabilityCatalog, ComposerImage, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -50,6 +50,7 @@ import {
   getRuntimeStatus,
   openLocalOutput,
   installRuntime,
+  listenNativeImageDrops,
   launchSession,
   listCatalog,
   listStoredSessions,
@@ -60,6 +61,7 @@ import {
   transportLabel,
   usesWebBridge,
   type RuntimeStatus,
+  type NativeImageDropEvent,
   type SessionConnection,
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
@@ -86,6 +88,7 @@ export default function App() {
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
   const [workspaceImageDrag, setWorkspaceImageDrag] = createSignal(false);
+  const [homeImages, setHomeImages] = createSignal<ComposerImage[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
@@ -128,11 +131,19 @@ export default function App() {
     window.addEventListener("focus", checkForUpdates);
     document.addEventListener("visibilitychange", visibility);
     queueMicrotask(() => void restoreAfterUpdate());
+    let nativeDropDisposed = false;
+    let unlistenNativeImageDrops: (() => void) | undefined;
+    void listenNativeImageDrops(handleNativeImageDrop).then((unlisten) => {
+      if (nativeDropDisposed) unlisten();
+      else unlistenNativeImageDrops = unlisten;
+    }).catch((error) => setRuntimeError(cleanError(error)));
     onCleanup(() => {
+      nativeDropDisposed = true;
       window.removeEventListener("focus", checkForUpdates);
       document.removeEventListener("visibilitychange", visibility);
       if (updateTimer !== undefined) window.clearTimeout(updateTimer);
       if (updateInterval !== undefined) window.clearInterval(updateInterval);
+      unlistenNativeImageDrops?.();
     });
   });
 
@@ -570,6 +581,8 @@ export default function App() {
         onUpdate={() => void applyAppUpdate()}
       />
 
+      <Show when={workspaceImageDrag()}><div class="native-drop-target">Drop images to attach</div></Show>
+
       <Show
         when={active()}
         fallback={
@@ -589,6 +602,8 @@ export default function App() {
             onConfigureProvider={() => setProviderSetupOpen(true)}
             providerSetupSupported={!usesWebBridge()}
             onSettings={() => setSettingsOpen(true)}
+            images={homeImages()}
+            onImages={setHomeImages}
           />
         }
       >
@@ -624,7 +639,6 @@ export default function App() {
               void attachImagesToSession(session().guiId, Array.from(event.dataTransfer?.files || []));
             }}
           >
-            <Show when={workspaceImageDrag()}><div class="workspace-drop-target">Drop images into this session</div></Show>
             <WorkspaceSidebar
               state={session()}
               parallelCount={sessions().length}
@@ -769,6 +783,43 @@ export default function App() {
 
   function reportSendError(guiId: string, error: unknown) {
     update(guiId, (state) => addLocalNotice(state, cleanError(error), "error"));
+  }
+
+  function handleNativeImageDrop(event: NativeImageDropEvent) {
+    if (event.type === "enter") {
+      setWorkspaceImageDrag(true);
+      return;
+    }
+    if (event.type === "leave") {
+      setWorkspaceImageDrag(false);
+      return;
+    }
+    setWorkspaceImageDrag(false);
+    if (event.type === "error") {
+      const session = active();
+      if (session) update(session.guiId, (state) => addLocalNotice(state, event.message, "warning"));
+      else setRuntimeError(event.message);
+      return;
+    }
+    const images = event.images.map((image, index): ComposerImage => ({
+      ...image,
+      id: globalThis.crypto?.randomUUID?.() || `native-image-${Date.now()}-${index}`,
+    }));
+    const session = active();
+    try {
+      if (session) {
+        update(session.guiId, (state) => setComposerImages(
+          state,
+          appendComposerImages(state.composerImages, images),
+        ));
+      } else {
+        setHomeImages(appendComposerImages(homeImages(), images));
+        setRuntimeError(undefined);
+      }
+    } catch (error) {
+      if (session) update(session.guiId, (state) => addLocalNotice(state, cleanError(error), "warning"));
+      else setRuntimeError(cleanError(error));
+    }
   }
 
   async function refreshRuntime() {

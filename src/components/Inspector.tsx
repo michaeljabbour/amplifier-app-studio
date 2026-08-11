@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { liveAgentCount, orderAgentLanes } from "../agentLanes";
+import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 
@@ -115,7 +115,7 @@ function RunPanel(props: Props) {
 }
 
 function AgentPanel(props: { lane: LaneState }) {
-  const historical = () => props.lane.status === "completed" || props.lane.status === "detached";
+  const historical = () => isLaneHistorical(props.lane);
   return (
     <>
       <div class={`agent-inspector-hero ${props.lane.status}`}>

@@ -20,11 +20,13 @@ interface Props {
   onConfigureProvider: () => void;
   providerSetupSupported: boolean;
   onSettings: () => void;
+  images: ComposerImage[];
+  onImages: (images: ComposerImage[]) => void;
 }
 
 export function CoordinatorHome(props: Props) {
   const [text, setText] = createSignal("");
-  const [images, setImages] = createSignal<ComposerImage[]>([]);
+  const images = () => props.images;
   const [draggingImages, setDraggingImages] = createSignal(false);
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
@@ -53,13 +55,13 @@ export function CoordinatorHome(props: Props) {
     await run(async () => {
       await props.onSend(value, images());
       setText("");
-      setImages([]);
+      props.onImages([]);
     });
   };
 
   const addImageFiles = async (files: File[]) => {
     try {
-      setImages(await appendImageFiles(images(), files));
+      props.onImages(await appendImageFiles(images(), files));
       setLocalError(undefined);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "Could not read the dropped image.");
@@ -202,7 +204,7 @@ export function CoordinatorHome(props: Props) {
                 <div class="composer-image">
                   <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
                   <span><strong>{image.name}</strong><small>{formatImageBytes(image.size)}</small></span>
-                  <button type="button" aria-label={`Remove ${image.name}`} onClick={() => setImages((items) => items.filter((item) => item.id !== image.id))}>×</button>
+                  <button type="button" aria-label={`Remove ${image.name}`} onClick={() => props.onImages(images().filter((item) => item.id !== image.id))}>×</button>
                 </div>
               )}</For>
             </div>
