@@ -1,0 +1,29 @@
+[package]
+name = "amplifier-studio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+default-run = "amplifier-studio"
+
+[lib]
+name = "amplifier_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time", "net"] }
+dirs = "6"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
+
+[dev-dependencies]
+tempfile = "3"

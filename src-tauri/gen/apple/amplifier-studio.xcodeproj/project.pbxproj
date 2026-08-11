@@ -1,0 +1,478 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00254F24A6A66F0B805CD95F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81E36389279F9EBD3E8B2EF6 /* LaunchScreen.storyboard */; };
+		05092F4890FA6EA037F02B7F /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C7D385023CE9D679BBD42AD9 /* WebKit.framework */; };
+		113A2BEAEF2E45F903315C33 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 87EC5717552C24281A560A3F /* MetalKit.framework */; };
+		2B44F80F8D37BB452985A790 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 695F842D0E3ECF01829BD086 /* libapp.a */; };
+		42E73952B4E295B62C01B515 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 97AE7918971B3722F5E8BA8E /* Metal.framework */; };
+		51AAECCC3EB41B45F28CD0C8 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3F4F0F9357B4744A4A464765 /* main.mm */; };
+		7376529BAA3B91A3FA9D6DB4 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C0146C8CCDAADA59DE611DD /* Security.framework */; };
+		8A9F13695C633340AA5551F3 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = C6F1250412E790541770CD4C /* assets */; };
+		936752C02C6EB2FA5ECCED65 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC898335C99D0F63879EAF78 /* UIKit.framework */; };
+		B48103E53AFBF2DF3003C71D /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A9F849F3DF9D4B88347FAA6 /* QuartzCore.framework */; };
+		C814E3E9C98E7D191D2CA518 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 284851325F8A3C7EB8E34EFE /* CoreGraphics.framework */; };
+		E7498C23494DD02602464C58 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 67E3A97B1AAC623EA1657504 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		098A26EDE3AE175357A98A0C /* session.rs */ = {isa = PBXFileReference; path = session.rs; sourceTree = "<group>"; };
+		0A65F4113543A925D0D13C42 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		1D7C25CA6BF548193C958199 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		284851325F8A3C7EB8E34EFE /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		3BC884859C549AA134FEC12F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		3F4F0F9357B4744A4A464765 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		4A909B0A6BCF98212D0040B6 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		6720920BB6A3C9C198343AF9 /* amplifier-studio_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "amplifier-studio_iOS.entitlements"; sourceTree = "<group>"; };
+		67E3A97B1AAC623EA1657504 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		695F842D0E3ECF01829BD086 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		7F5BF9A733F6AE8387D5FBA5 /* store.rs */ = {isa = PBXFileReference; path = store.rs; sourceTree = "<group>"; };
+		81E36389279F9EBD3E8B2EF6 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		87EC5717552C24281A560A3F /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		97AE7918971B3722F5E8BA8E /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		9A9F849F3DF9D4B88347FAA6 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		9B67825063102B825427EF75 /* protocol.rs */ = {isa = PBXFileReference; path = protocol.rs; sourceTree = "<group>"; };
+		9C0146C8CCDAADA59DE611DD /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		BF9BBF05C6D6D7EF2B2AE2B6 /* amplifier-studio_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "amplifier-studio_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C14EB9CE84914F233720943A /* web_server.rs */ = {isa = PBXFileReference; path = web_server.rs; sourceTree = "<group>"; };
+		C6F1250412E790541770CD4C /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		C7D385023CE9D679BBD42AD9 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		E4E959B4CA972CF55B611D92 /* amplifier-studio-server.rs */ = {isa = PBXFileReference; path = "amplifier-studio-server.rs"; sourceTree = "<group>"; };
+		EC898335C99D0F63879EAF78 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B6758796CE7E7393DED1E24B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2B44F80F8D37BB452985A790 /* libapp.a in Frameworks */,
+				C814E3E9C98E7D191D2CA518 /* CoreGraphics.framework in Frameworks */,
+				42E73952B4E295B62C01B515 /* Metal.framework in Frameworks */,
+				113A2BEAEF2E45F903315C33 /* MetalKit.framework in Frameworks */,
+				B48103E53AFBF2DF3003C71D /* QuartzCore.framework in Frameworks */,
+				7376529BAA3B91A3FA9D6DB4 /* Security.framework in Frameworks */,
+				936752C02C6EB2FA5ECCED65 /* UIKit.framework in Frameworks */,
+				05092F4890FA6EA037F02B7F /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A5AD716EC9D223778CC9754 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BF9BBF05C6D6D7EF2B2AE2B6 /* amplifier-studio_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3D68E9DD60E1A36EB6BDB067 /* bin */ = {
+			isa = PBXGroup;
+			children = (
+				E4E959B4CA972CF55B611D92 /* amplifier-studio-server.rs */,
+			);
+			path = bin;
+			sourceTree = "<group>";
+		};
+		8024A874C090566F373590A2 = {
+			isa = PBXGroup;
+			children = (
+				C6F1250412E790541770CD4C /* assets */,
+				67E3A97B1AAC623EA1657504 /* Assets.xcassets */,
+				81E36389279F9EBD3E8B2EF6 /* LaunchScreen.storyboard */,
+				FBACD6BE372CFA4EBA59690E /* amplifier-studio_iOS */,
+				E2FC5F4D93CE7BF3EBB66CBC /* Externals */,
+				9FBF37F20CC4C88C23BA3262 /* Sources */,
+				F0C905360C52EAEF18E4D9B0 /* src */,
+				A5CA2B00EA524065CB8D98B3 /* Frameworks */,
+				1A5AD716EC9D223778CC9754 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9FBF37F20CC4C88C23BA3262 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				FF384D28894AFEB7D5127E49 /* amplifier-studio */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A49512BADCC4BBD27CDE68D2 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				1D7C25CA6BF548193C958199 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		A5CA2B00EA524065CB8D98B3 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				284851325F8A3C7EB8E34EFE /* CoreGraphics.framework */,
+				695F842D0E3ECF01829BD086 /* libapp.a */,
+				97AE7918971B3722F5E8BA8E /* Metal.framework */,
+				87EC5717552C24281A560A3F /* MetalKit.framework */,
+				9A9F849F3DF9D4B88347FAA6 /* QuartzCore.framework */,
+				9C0146C8CCDAADA59DE611DD /* Security.framework */,
+				EC898335C99D0F63879EAF78 /* UIKit.framework */,
+				C7D385023CE9D679BBD42AD9 /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E2FC5F4D93CE7BF3EBB66CBC /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		F0C905360C52EAEF18E4D9B0 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				4A909B0A6BCF98212D0040B6 /* lib.rs */,
+				0A65F4113543A925D0D13C42 /* main.rs */,
+				9B67825063102B825427EF75 /* protocol.rs */,
+				098A26EDE3AE175357A98A0C /* session.rs */,
+				7F5BF9A733F6AE8387D5FBA5 /* store.rs */,
+				C14EB9CE84914F233720943A /* web_server.rs */,
+				3D68E9DD60E1A36EB6BDB067 /* bin */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		FBACD6BE372CFA4EBA59690E /* amplifier-studio_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				6720920BB6A3C9C198343AF9 /* amplifier-studio_iOS.entitlements */,
+				3BC884859C549AA134FEC12F /* Info.plist */,
+			);
+			path = "amplifier-studio_iOS";
+			sourceTree = "<group>";
+		};
+		FF384D28894AFEB7D5127E49 /* amplifier-studio */ = {
+			isa = PBXGroup;
+			children = (
+				3F4F0F9357B4744A4A464765 /* main.mm */,
+				A49512BADCC4BBD27CDE68D2 /* bindings */,
+			);
+			path = "amplifier-studio";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CFB352504ED248A1FCF175FA /* amplifier-studio_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EBA1051824E306C6D16908F8 /* Build configuration list for PBXNativeTarget "amplifier-studio_iOS" */;
+			buildPhases = (
+				F1539A31AF5F8A5AA7A6A703 /* Build Rust Code */,
+				16F9536FEF3669B6B9B1E15D /* Sources */,
+				F245755ADD90C997ABEF4830 /* Resources */,
+				B6758796CE7E7393DED1E24B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "amplifier-studio_iOS";
+			packageProductDependencies = (
+			);
+			productName = "amplifier-studio_iOS";
+			productReference = BF9BBF05C6D6D7EF2B2AE2B6 /* amplifier-studio_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		21402913E78AAB0B95F6DFDB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = B8302D24D80955CBB39C64D5 /* Build configuration list for PBXProject "amplifier-studio" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 8024A874C090566F373590A2;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1A5AD716EC9D223778CC9754 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CFB352504ED248A1FCF175FA /* amplifier-studio_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F245755ADD90C997ABEF4830 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E7498C23494DD02602464C58 /* Assets.xcassets in Resources */,
+				00254F24A6A66F0B805CD95F /* LaunchScreen.storyboard in Resources */,
+				8A9F13695C633340AA5551F3 /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F1539A31AF5F8A5AA7A6A703 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		16F9536FEF3669B6B9B1E15D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51AAECCC3EB41B45F28CD0C8 /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		06BBDBFFA09026D33302D153 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		47E0073349F34AE5F369840A /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		A408D5FAA156BDEF27604814 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "amplifier-studio_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.amplifier.studio;
+				PRODUCT_NAME = "Amplifier Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		ADD82C8D4B3773BFBB99CB00 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "amplifier-studio_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.amplifier.studio;
+				PRODUCT_NAME = "Amplifier Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B8302D24D80955CBB39C64D5 /* Build configuration list for PBXProject "amplifier-studio" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				06BBDBFFA09026D33302D153 /* debug */,
+				47E0073349F34AE5F369840A /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		EBA1051824E306C6D16908F8 /* Build configuration list for PBXNativeTarget "amplifier-studio_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ADD82C8D4B3773BFBB99CB00 /* debug */,
+				A408D5FAA156BDEF27604814 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 21402913E78AAB0B95F6DFDB /* Project object */;
+}
