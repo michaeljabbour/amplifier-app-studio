@@ -19,6 +19,7 @@ export interface StudioCapability {
   mode: string;
   requirements: string;
   accent: "blue" | "green" | "amber" | "violet";
+  activation: "parallel-session" | "included";
 }
 
 export type CapabilityReadiness = "native" | "catalogued" | "on-demand";
@@ -35,6 +36,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: "Uses your active Amplifier composition.",
     accent: "blue",
+    activation: "parallel-session",
   },
   {
     id: "browser",
@@ -48,18 +50,20 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: "Requires agent-browser on the runtime host; first launch may prepare the bundle.",
     accent: "blue",
+    activation: "parallel-session",
   },
   {
     id: "terminal",
     name: "Terminal Use",
     eyebrow: "BUILT IN",
     outcome: "Run fast coding and infrastructure commands in the project boundary.",
-    description: "Amplifier's standard machine already includes the bash tool. No extra plugin or terminal harness is needed for normal command work.",
-    action: "Start terminal-capable session",
+    description: "Commands appear as visible tool activity inside the active coordinator. A long-lived interactive PTY would be a separate console drawer, not another Amplifier session.",
+    action: "Included in active chat",
     catalogNames: [],
     mode: "auto",
     requirements: "Included with the standard Amplifier runtime on the selected host.",
     accent: "green",
+    activation: "included",
   },
   {
     id: "imagen",
@@ -73,6 +77,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: "Requires imagen-mcp plus configured OpenAI or Gemini image credentials.",
     accent: "violet",
+    activation: "parallel-session",
   },
   {
     id: "attractor",
@@ -86,6 +91,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: "Development-grade profile: some internal dependencies still track main.",
     accent: "amber",
+    activation: "parallel-session",
   },
 ];
 

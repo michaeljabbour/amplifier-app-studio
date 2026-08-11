@@ -12,6 +12,7 @@ describe("Studio capabilities", () => {
       capabilityId: "imagen",
     });
     expect(STUDIO_CAPABILITIES.some((item) => item.id === ("app-use" as never))).toBe(false);
+    expect(STUDIO_CAPABILITIES.find((item) => item.id === "terminal")?.activation).toBe("included");
   });
 
   it("does not claim an on-demand bundle is installed", () => {

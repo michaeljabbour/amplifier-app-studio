@@ -203,6 +203,17 @@ async fn list_catalog(project_dir: Option<String>) -> Result<CapabilityCatalog, 
 }
 
 #[tauri::command]
+async fn add_bundle(
+    project_dir: Option<String>,
+    uri: String,
+    name: Option<String>,
+) -> Result<CapabilityCatalog, String> {
+    tauri::async_runtime::spawn_blocking(move || catalog::add_bundle(project_dir, uri, name))
+        .await
+        .map_err(|error| format!("Bundle registration task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn runtime_status() -> Result<runtime_setup::RuntimeStatus, String> {
     tauri::async_runtime::spawn_blocking(runtime_setup::status)
         .await
@@ -242,6 +253,7 @@ pub fn run() {
             list_sessions,
             list_stored_sessions,
             list_catalog,
+            add_bundle,
             runtime_status,
             install_runtime,
             default_project_dir,

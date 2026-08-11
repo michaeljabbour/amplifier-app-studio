@@ -1,8 +1,10 @@
 import type { SessionViewState } from "../protocol";
+import { EffortControl } from "./EffortControl";
 
 export function Footer(props: {
   state: SessionViewState;
   onCycleEffort: () => void;
+  onSetEffort: (effort: string) => void;
   onContext: () => void;
   onBuild: () => void;
   onOutputs: () => void;
@@ -19,7 +21,7 @@ export function Footer(props: {
       <button onClick={props.onBuild}>{props.state.mode}</button>
       <div class="footer-grow" title={props.state.projectDir}>{props.state.projectDir}</div>
       <button onClick={props.onBuild}>{props.state.model}</button>
-      <button onClick={props.onCycleEffort} title="Cycle effort">effort <strong>{props.state.effort || "none"}</strong></button>
+      <EffortControl state={props.state} onCycle={props.onCycleEffort} onSet={props.onSetEffort} />
       <button onClick={props.onContext}>context <strong>{contextLabel()}</strong></button>
       <button onClick={props.onOutputs}>outputs <strong>{props.state.outputs.length}</strong></button>
       <div class="footer-cost">{cost()}</div>

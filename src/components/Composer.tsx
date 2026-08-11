@@ -1,4 +1,5 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { machinePresence } from "../machinePresence";
 import type { SessionViewState } from "../protocol";
 
 interface Props {
@@ -11,6 +12,7 @@ export function Composer(props: Props) {
   const [sending, setSending] = createSignal(false);
   const [startersOpen, setStartersOpen] = createSignal(false);
   let textarea: HTMLTextAreaElement | undefined;
+  const presence = createMemo(() => machinePresence(props.state));
 
   createEffect(() => {
     const lines = Math.min(7, Math.max(1, text().split("\n").length));
@@ -38,8 +40,14 @@ export function Composer(props: Props) {
   return (
     <div class="composer-shell">
       <div class="composer-mode">
-        <span classList={{ steer: props.state.busy }}>{props.state.busy ? "STEER COORDINATOR" : "COORDINATE"}</span>
-        {props.state.busy && props.state.queuedSteers > 0 && <small>{props.state.queuedSteers}/32 queued</small>}
+        <div class={`machine-presence ${presence().tone}`} role="status" aria-live="polite">
+          <span class="machine-avatar" classList={{ live: presence().live }} aria-hidden="true"><i /><i /><b /></span>
+          <span><strong>{presence().label}</strong><small>{presence().detail}</small></span>
+        </div>
+        <div class="composer-intent">
+          <span classList={{ steer: props.state.busy }}>{props.state.busy ? "STEER COORDINATOR" : "COORDINATE"}</span>
+          {props.state.busy && props.state.queuedSteers > 0 && <small>{props.state.queuedSteers}/32 queued</small>}
+        </div>
       </div>
       <textarea
         ref={textarea}

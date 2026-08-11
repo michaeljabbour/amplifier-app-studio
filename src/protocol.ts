@@ -1,4 +1,5 @@
 export const JSONL_SCHEMA_VERSION = 1 as const;
+export const DEFAULT_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 export type JsonObject = Record<string, unknown>;
 
@@ -162,6 +163,8 @@ export interface SessionViewState {
   context: ContextState;
   goal?: GoalProgressState;
   effort?: string;
+  effortLevels: string[];
+  effortPending?: string;
   blocks: TranscriptBlock[];
   liveTail?: LiveTailState;
   openThinkingId?: string;

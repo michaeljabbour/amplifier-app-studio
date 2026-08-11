@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, markAutopilotEngaged, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
+import { createSessionState, markAutopilotEngaged, markEffortPending, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -45,6 +45,21 @@ describe("session reducer", () => {
   it("defaults to Amplifier auto mode unless the user explicitly overrides it", () => {
     expect(createSessionState("gui-default", { projectDir: "/tmp/project" }).mode).toBe("auto");
     expect(createSessionState("gui-chat", { projectDir: "/tmp/project", mode: "chat" }).mode).toBe("chat");
+  });
+
+  it("keeps effort pending until the runtime acknowledges the exact state", () => {
+    let state = markEffortPending(started(), "high");
+    expect(state.effortPending).toBe("high");
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "effort.state",
+      effort: "high",
+      levels: ["none", "low", "high"],
+      ok: true,
+    });
+    expect(state.effort).toBe("high");
+    expect(state.effortLevels).toEqual(["none", "low", "high"]);
+    expect(state.effortPending).toBeUndefined();
   });
 
   it("keeps stream deltas in the live tail and Channel B text in durable history", () => {

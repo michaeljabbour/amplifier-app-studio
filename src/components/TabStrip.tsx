@@ -65,7 +65,7 @@ export function TabStrip(props: Props) {
             </button>
           )}
         </For>
-        <button class="new-tab-button" onClick={props.onNew} aria-label="New session" title="New session">
+        <button class="new-tab-button" onClick={props.onNew} aria-label="New parallel session" title="New independent parallel session">
           +
         </button>
       </div>
@@ -78,8 +78,8 @@ export function TabStrip(props: Props) {
           onClick={props.onAutopilot}
           title={props.autopilotAvailable
             ? props.autopilotActive
-              ? "Autopilot is directing the active coordinator; open its progress"
-              : "Continue autonomously in the active coordinator"
+              ? "Autopilot is directing the active coordinator; it does not imply Studio UI control"
+              : "Continue autonomously in the active coordinator; computer use is a separate capability"
             : "Open a ready session to use Autopilot"}
         >
           {props.autopilotActive ? "Autopilot · active" : "Autopilot"}

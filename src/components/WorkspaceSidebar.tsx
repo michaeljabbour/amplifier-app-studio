@@ -27,9 +27,10 @@ export function WorkspaceSidebar(props: Props) {
 
       <section class="sidebar-section">
         <div class="sidebar-heading">
-          <span>LIVE SESSIONS</span>
-          <button onClick={props.onNew}>New</button>
+          <span>PARALLEL SESSIONS</span>
+          <button onClick={props.onNew}>New session</button>
         </div>
+        <p class="sidebar-section-hint">Independent runtimes that keep working when you switch tabs.</p>
         <div class="sidebar-session-list">
           <For each={props.sessions}>{(session) => (
             <button
@@ -47,17 +48,17 @@ export function WorkspaceSidebar(props: Props) {
 
       <section class="sidebar-section agents-section">
         <div class="sidebar-heading">
-          <span>AGENT WORKSPACES</span>
+          <span>THIS SESSION'S AGENTS</span>
           <b>{props.lanes.length}</b>
         </div>
         <Show
           when={props.lanes.length > 0}
           fallback={
             <div class="agent-empty">
-              <strong>{active()?.busy ? "Coordinator is working" : "No delegates this turn"}</strong>
+              <strong>{active()?.busy ? "Coordinator is working" : "No child agents this turn"}</strong>
               <p>{active()?.busy
-                ? "If the coordinator creates specialists, each workspace will appear here live."
-                : "Ask for parallel work when the task benefits from independent specialists."}</p>
+                ? "If this session creates specialists, each child workspace will appear here live."
+                : "Child agents belong to the active session; top tabs are separate parallel runtimes."}</p>
             </div>
           }
         >

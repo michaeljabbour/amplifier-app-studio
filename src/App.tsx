@@ -21,6 +21,7 @@ import {
   dismissAlert,
   markClosing,
   markAutopilotEngaged,
+  markEffortPending,
   markExited,
   queueLocalSteer,
   reduceRecord,
@@ -28,6 +29,7 @@ import {
 } from "./reducer";
 import {
   createGuiId,
+  addBundle,
   configuredBridgeUrl,
   defaultProjectDir,
   getRuntimeStatus,
@@ -73,7 +75,6 @@ export default function App() {
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
-  const availableBundles = createMemo(() => catalog().bundles.map((bundle) => bundle.name));
   const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "closing"));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
   const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
@@ -100,12 +101,22 @@ export default function App() {
       }
     };
     window.addEventListener("keydown", keydown);
-    const updateTimer = appUpdatesEnabled()
-      ? window.setTimeout(() => void refreshAppUpdate(false), 1_500)
-      : undefined;
+    const checkForUpdates = () => {
+      if (appUpdatesEnabled() && !updateInProgress()) void refreshAppUpdate(false);
+    };
+    const updateTimer = appUpdatesEnabled() ? window.setTimeout(checkForUpdates, 1_500) : undefined;
+    const updateInterval = appUpdatesEnabled() ? window.setInterval(checkForUpdates, 15 * 60_000) : undefined;
+    const visibility = () => {
+      if (document.visibilityState === "visible") checkForUpdates();
+    };
+    window.addEventListener("focus", checkForUpdates);
+    document.addEventListener("visibilitychange", visibility);
     onCleanup(() => {
       window.removeEventListener("keydown", keydown);
+      window.removeEventListener("focus", checkForUpdates);
+      document.removeEventListener("visibilitychange", visibility);
       if (updateTimer !== undefined) window.clearTimeout(updateTimer);
+      if (updateInterval !== undefined) window.clearInterval(updateInterval);
     });
   });
 
@@ -285,6 +296,11 @@ export default function App() {
   };
 
   const openCapability = (capability: StudioCapability) => {
+    if (capability.activation === "included") {
+      setCapabilitiesOpen(false);
+      if (active()) openInspector("run");
+      return;
+    }
     const session = active();
     const remembered = session?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
     const provider = catalog().providers.find((item) => item.model === session?.model)
@@ -342,11 +358,37 @@ export default function App() {
   const cycleEffort = async () => {
     const session = active();
     if (!session) return;
+    const levels = session.effortLevels;
+    const index = Math.max(0, levels.indexOf(session.effort || "none"));
+    const requested = levels[(index + 1) % levels.length] || "none";
+    update(session.guiId, (state) => markEffortPending(state, requested));
     try {
       await sendOp(session.guiId, { op: "effort.cycle" });
     } catch (error) {
+      update(session.guiId, (state) => ({ ...state, effortPending: undefined }));
       reportSendError(session.guiId, error);
     }
+  };
+
+  const setEffort = async (effort: string) => {
+    const session = active();
+    if (!session || !session.effortLevels.includes(effort)) return;
+    update(session.guiId, (state) => markEffortPending(state, effort));
+    try {
+      await sendOp(session.guiId, { op: "effort.set", effort });
+    } catch (error) {
+      update(session.guiId, (state) => ({ ...state, effortPending: undefined }));
+      reportSendError(session.guiId, error);
+    }
+  };
+
+  const registerBundle = async (uri: string, name?: string) => {
+    const projectDir = active()?.projectDir || defaultDir();
+    setCatalog(await addBundle({ projectDir, uri, name }));
+  };
+
+  const reloadCatalog = async () => {
+    setCatalog(await listCatalog(active()?.projectDir || defaultDir()));
   };
 
   const requestContextForActive = async () => {
@@ -445,6 +487,7 @@ export default function App() {
               <Footer
                 state={session()}
                 onCycleEffort={() => void cycleEffort()}
+                onSetEffort={(effort) => void setEffort(effort)}
                 onContext={() => { openInspector("context"); void requestContextForActive(); }}
                 onBuild={() => openInspector("build")}
                 onOutputs={() => openInspector("outputs")}
@@ -456,13 +499,15 @@ export default function App() {
               lane={selectedLane()}
               tab={inspectorTab()}
               transport={transport()}
-              recentBundles={availableBundles()}
+              bundles={catalog().bundles}
               providers={catalog().providers}
               onTab={setInspectorTab}
               onSelectLane={selectLane}
               onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
               onCycleEffort={() => void cycleEffort()}
               onStartSibling={openSibling}
+              onAddBundle={registerBundle}
+              onRefreshBundles={reloadCatalog}
               onCapabilities={() => setCapabilitiesOpen(true)}
               onRequestContext={() => void requestContextForActive()}
             />

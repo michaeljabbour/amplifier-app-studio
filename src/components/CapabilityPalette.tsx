@@ -40,7 +40,12 @@ export function CapabilityPalette(props: Props) {
                 <p>{capability.description}</p>
                 <footer>
                   <small>{capability.requirements}</small>
-                  <button class="secondary-button" onClick={() => props.onLaunch(capability)}>{capability.action}</button>
+                  <button
+                    class="secondary-button"
+                    classList={{ included: capability.activation === "included" }}
+                    disabled={capability.activation === "included"}
+                    onClick={() => props.onLaunch(capability)}
+                  >{capability.action}</button>
                 </footer>
               </article>
             );
@@ -49,7 +54,7 @@ export function CapabilityPalette(props: Props) {
 
         <div class="capability-footnote">
           <strong>Active-session Autopilot</strong>
-          <span>Autopilot directs the coordinator already open. Desktop control is a capability mounted into that runtime, not a separate coordinator session.</span>
+          <span>Autopilot and terminal tools operate the coordinator already open. New tabs are reserved for genuinely independent runtimes that can execute in parallel.</span>
         </div>
       </section>
     </div>

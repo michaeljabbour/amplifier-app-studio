@@ -12,7 +12,7 @@ use axum::{
     },
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -106,6 +106,7 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         .route("/api/config", get(config))
         .route("/api/stored-sessions", get(stored_sessions))
         .route("/api/catalog", get(capability_catalog))
+        .route("/api/catalog/bundles", post(register_bundle))
         .route("/api/runtime", get(runtime_status))
         .route("/api/session/{gui_id}", get(session_upgrade))
         .fallback_service(assets)
@@ -161,6 +162,28 @@ async fn capability_catalog(Query(query): Query<StoredQuery>) -> Result<Json<Val
         .await
         .map_err(|error| ServerError(format!("Capability catalog task failed: {error}")))?
         .map_err(ServerError)?;
+    serde_json::to_value(catalog)
+        .map(Json)
+        .map_err(|error| ServerError(format!("Could not encode capability catalog: {error}")))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddBundleRequest {
+    project_dir: Option<String>,
+    uri: String,
+    name: Option<String>,
+}
+
+async fn register_bundle(
+    Json(request): Json<AddBundleRequest>,
+) -> Result<Json<Value>, ServerError> {
+    let catalog = tokio::task::spawn_blocking(move || {
+        catalog::add_bundle(request.project_dir, request.uri, request.name)
+    })
+    .await
+    .map_err(|error| ServerError(format!("Bundle registration task failed: {error}")))?
+    .map_err(ServerError)?;
     serde_json::to_value(catalog)
         .map(Json)
         .map_err(|error| ServerError(format!("Could not encode capability catalog: {error}")))

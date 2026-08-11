@@ -1,21 +1,23 @@
-import { For, Show } from "solid-js";
-import type { LaneState, ProviderOption, SessionViewState } from "../protocol";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 
-export type InspectorTab = "run" | "agent" | "build" | "outputs" | "context";
+export type InspectorTab = "run" | "agent" | "build" | "bundles" | "outputs" | "context";
 
 interface Props {
   state: SessionViewState;
   lane?: LaneState;
   tab: InspectorTab;
   transport: string;
-  recentBundles: string[];
+  bundles: BundleOption[];
   providers: ProviderOption[];
   onTab: (tab: InspectorTab) => void;
   onSelectLane: (id: string) => void;
   onDismissAlert: (id: string) => void;
   onCycleEffort: () => void;
   onStartSibling: (bundle?: string, provider?: ProviderOption) => void;
+  onAddBundle: (uri: string, name?: string) => Promise<void>;
+  onRefreshBundles: () => Promise<void>;
   onCapabilities: () => void;
   onRequestContext: () => void;
 }
@@ -30,6 +32,7 @@ export function Inspector(props: Props) {
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
         <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Machine</button>
+        <button classList={{ active: props.tab === "bundles" }} onClick={() => props.onTab("bundles")}>Bundles</button>
         <button classList={{ active: props.tab === "outputs" }} onClick={() => props.onTab("outputs")}>Outputs</button>
         <button classList={{ active: props.tab === "context" }} onClick={() => props.onTab("context")}>Context</button>
       </nav>
@@ -37,6 +40,7 @@ export function Inspector(props: Props) {
         <Show when={props.tab === "run"}><RunPanel {...props} /></Show>
         <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} /></Show>
         <Show when={props.tab === "build"}><BuildPanel {...props} /></Show>
+        <Show when={props.tab === "bundles"}><BundlesPanel {...props} /></Show>
         <Show when={props.tab === "outputs"}><OutputsPanel state={props.state} /></Show>
         <Show when={props.tab === "context"}><ContextPanel {...props} /></Show>
       </div>
@@ -53,7 +57,7 @@ function RunPanel(props: Props) {
         <div class="progress-list">
           <ProgressRow label="Runtime prepared" status={props.state.phase === "starting" ? "live" : "done"} detail={props.state.bundle} />
           <ProgressRow label="Coordinator" status={props.state.busy ? "live" : complete() ? "done" : "next"} detail={props.state.activity} />
-          <ProgressRow label="Agent workspaces" status={lanes().some((lane) => lane.status === "running") ? "live" : lanes().length ? "done" : "next"} detail={lanes().length ? `${lanes().length} created` : "Created only when useful"} />
+          <ProgressRow label="This session's agents" status={lanes().some((lane) => lane.status === "running") ? "live" : lanes().length ? "done" : "next"} detail={lanes().length ? `${lanes().length} child workspace${lanes().length === 1 ? "" : "s"}` : "Created only when useful"} />
           <ProgressRow label="Final response" status={complete() ? "done" : "next"} detail={complete() ? "Returned to session" : "Waiting on the machine"} />
         </div>
       </InspectorSection>
@@ -87,7 +91,7 @@ function RunPanel(props: Props) {
         </InspectorSection>
       </Show>
 
-      <InspectorSection title="Agent workspaces" meta={String(lanes().length)}>
+      <InspectorSection title="This session's agents" meta={String(lanes().length)}>
         <Show when={lanes().length} fallback={<p class="inspector-empty">The coordinator has not created a delegate workspace yet.</p>}>
           <div class="inspector-agent-list">
             <For each={lanes()}>{(lane) => (
@@ -152,19 +156,73 @@ function BuildPanel(props: Props) {
         </div>
         <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
       </InspectorSection>
-      <InspectorSection title="Available bundles" meta={String(props.recentBundles.length)}>
-        <Show when={props.recentBundles.length} fallback={<p class="inspector-empty">Open stored sessions to discover previously used bundles.</p>}>
-          <div class="bundle-list">
-            <For each={props.recentBundles}>{(bundle) => <button onClick={() => props.onStartSibling(bundle)}><strong>{bundle}</strong><span>Start in new tab</span></button>}</For>
-          </div>
-        </Show>
-      </InspectorSection>
       <InspectorSection title="Providers" meta={String(props.providers.length)}>
         <Show when={props.providers.length} fallback={<p class="inspector-empty">No provider routes were discovered.</p>}>
           <div class="bundle-list provider-list">
             <For each={props.providers}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>{provider.model || provider.module}</span></button>}</For>
           </div>
         </Show>
+      </InspectorSection>
+    </>
+  );
+}
+
+function BundlesPanel(props: Props) {
+  const [query, setQuery] = createSignal("");
+  const [uri, setUri] = createSignal("");
+  const [name, setName] = createSignal("");
+  const [adding, setAdding] = createSignal(false);
+  const [message, setMessage] = createSignal<{ tone: "success" | "error"; text: string }>();
+  const visible = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    return [...props.bundles]
+      .filter((bundle) => !needle || `${bundle.name} ${bundle.location} ${bundle.status}`.toLowerCase().includes(needle))
+      .sort((left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name));
+  });
+
+  const register = async () => {
+    if (!uri().trim() || adding()) return;
+    setAdding(true);
+    setMessage(undefined);
+    try {
+      await props.onAddBundle(uri(), name().trim() || undefined);
+      setMessage({ tone: "success", text: "Registered. Start a new parallel session to use this composition." });
+      setUri("");
+      setName("");
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <>
+      <InspectorSection title="Amplifier catalog" meta={String(props.bundles.length)}>
+        <p class="inspector-guidance">Discovered from Amplifier's own bundle registry—the same composition source backed by its module catalog. Starting one opens an independent parallel runtime.</p>
+        <div class="bundle-catalog-controls">
+          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Filter bundles…" aria-label="Filter available bundles" />
+          <button class="secondary-button" onClick={() => void props.onRefreshBundles()}>Refresh</button>
+        </div>
+        <Show when={visible().length} fallback={<p class="inspector-empty">No bundles match this filter.</p>}>
+          <div class="bundle-list bundle-catalog-list">
+            <For each={visible()}>{(bundle) => (
+              <button onClick={() => props.onStartSibling(bundle.name)} title={bundle.location}>
+                <span class="bundle-copy"><strong>{bundle.name}</strong><small>{bundle.location || "Amplifier registry"}</small></span>
+                <span classList={{ active: bundle.active }}>{bundle.active ? "Active" : bundle.status || "Available"}</span>
+              </button>
+            )}</For>
+          </div>
+        </Show>
+      </InspectorSection>
+      <InspectorSection title="Add from GitHub" meta="FOR NEW SESSIONS">
+        <p class="inspector-guidance">Register a trusted Amplifier bundle by repository URL. The runtime validates it; it is not injected into the current turn.</p>
+        <form class="bundle-add-form" onSubmit={(event) => { event.preventDefault(); void register(); }}>
+          <label><span>GitHub repository</span><input value={uri()} onInput={(event) => setUri(event.currentTarget.value)} placeholder="https://github.com/org/amplifier-bundle-name" required /></label>
+          <label><span>Catalog name <small>optional</small></span><input value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder="my-bundle" /></label>
+          <button class="primary-button" disabled={adding() || !uri().trim()}>{adding() ? "Validating…" : "Validate and add"}</button>
+        </form>
+        <Show when={message()} keyed>{(result) => <p class={`bundle-add-result ${result.tone}`}>{result.text}</p>}</Show>
       </InspectorSection>
     </>
   );

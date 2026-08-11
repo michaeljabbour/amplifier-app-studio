@@ -1,5 +1,6 @@
 import {
   asEvent,
+  DEFAULT_EFFORT_LEVELS,
   isRecord,
   JSONL_SCHEMA_VERSION,
   type LaneEventState,
@@ -51,6 +52,7 @@ export function createSessionState(
     activity: "Starting turn",
     replaying: false,
     context: { tokens: 0, window: 0, percent: 0, costUsd: "0" },
+    effortLevels: [...DEFAULT_EFFORT_LEVELS],
     blocks: [],
     lanes: {},
     alerts: [],
@@ -117,8 +119,23 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
           costUsd: String(record.cost_usd ?? next.context.costUsd),
         },
       };
-    case "effort.state":
-      return { ...next, effort: typeof record.effort === "string" ? record.effort : undefined };
+    case "effort.state": {
+      const effort = typeof record.effort === "string" ? record.effort : next.effort;
+      const levels = stringList(record.levels);
+      const reconciled = {
+        ...next,
+        effort,
+        effortLevels: levels.length ? levels : next.effortLevels,
+        effortPending: undefined,
+      };
+      return record.ok === false
+        ? appendBlock(reconciled, {
+            kind: "notice",
+            level: "error",
+            text: stringValue(record.detail, "Amplifier could not change the effort level"),
+          })
+        : reconciled;
+    }
     case "history.begin":
       return { ...next, replaying: true, bootLabel: "Replaying durable history" };
     case "history.end":
@@ -177,6 +194,10 @@ export function markAutopilotEngaged(state: SessionViewState): SessionViewState 
     autopilot: true,
     activity: state.busy ? "Autopilot steering this turn" : "Autopilot starting",
   };
+}
+
+export function markEffortPending(state: SessionViewState, effort: string): SessionViewState {
+  return { ...state, effortPending: effort };
 }
 
 export function resolveAttention(
@@ -801,6 +822,7 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
         }
     : undefined;
 
+  const effort = stringValue(session.effort, state.effort);
   const next: SessionViewState = {
     ...state,
     busy: turnActive,
@@ -811,7 +833,8 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
     queuedSteers: numberValue(turn.queued_steers, state.queuedSteers),
     bundle: stringValue(session.bundle, state.bundle),
     model: stringValue(session.model, state.model),
-    effort: stringValue(session.effort, state.effort),
+    effort,
+    effortPending: effort && effort === state.effortPending ? undefined : state.effortPending,
     context: {
       tokens: numberValue(context.context_tokens, state.context.tokens),
       window: numberValue(context.context_window, state.context.window),

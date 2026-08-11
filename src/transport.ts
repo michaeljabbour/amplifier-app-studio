@@ -155,6 +155,27 @@ export async function listCatalog(projectDir?: string): Promise<CapabilityCatalo
   return invoke<CapabilityCatalog>("list_catalog", { projectDir: clean(projectDir) });
 }
 
+export async function addBundle(input: { projectDir?: string; uri: string; name?: string }): Promise<CapabilityCatalog> {
+  const bridge = bridgeBaseUrl();
+  if (bridge) {
+    return fetchJson<CapabilityCatalog>(new URL("/api/catalog/bundles", bridge), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectDir: clean(input.projectDir),
+        uri: input.uri.trim(),
+        name: clean(input.name),
+      }),
+    });
+  }
+  requireTauri();
+  return invoke<CapabilityCatalog>("add_bundle", {
+    projectDir: clean(input.projectDir),
+    uri: input.uri.trim(),
+    name: clean(input.name),
+  });
+}
+
 export async function defaultProjectDir(): Promise<string> {
   const bridge = bridgeBaseUrl();
   if (bridge) {
@@ -301,8 +322,8 @@ function sendBridge(socket: WebSocket, value: Record<string, unknown>): void {
   socket.send(JSON.stringify(value));
 }
 
-async function fetchJson<T>(url: URL): Promise<T> {
-  const response = await fetch(url);
+async function fetchJson<T>(url: URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
   if (!response.ok) throw new Error(value?.error || `Bridge request failed (${response.status})`);
   return value as T;
