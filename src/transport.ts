@@ -38,6 +38,19 @@ export interface RuntimeStatus {
   message: string;
 }
 
+export interface NativeImageAttachment {
+  name: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  data: string;
+  size: number;
+}
+
+export type NativeImageDropEvent =
+  | { type: "enter" }
+  | { type: "leave" }
+  | { type: "drop"; images: NativeImageAttachment[] }
+  | { type: "error"; message: string };
+
 interface BridgeConnection extends SessionConnection {
   socket: WebSocket;
   disposed: boolean;
@@ -149,6 +162,13 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
 export function transportLabel(): string {
   if (usesWebBridge()) return isTauriRuntime() ? "Native mobile · remote Rust bridge" : "Web · local Rust bridge";
   return "Native desktop · local Rust bridge";
+}
+
+export async function listenNativeImageDrops(
+  handler: (event: NativeImageDropEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauriRuntime() || usesWebBridge()) return () => undefined;
+  return listen<NativeImageDropEvent>("app://native-image-drop", (event) => handler(event.payload));
 }
 
 export async function openLocalOutput(projectDir: string, path: string): Promise<void> {

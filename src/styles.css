@@ -106,6 +106,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .workspace { position: relative; min-height: 0; display: flex; }
 .workspace-drop-target { position: absolute; inset: 10px; z-index: 80; display: grid; place-items: center; border: 1px dashed rgba(79,183,255,.72); border-radius: 12px; background: rgba(7,16,25,.91); color: #c5e8ff; font-size: 12px; font-weight: 760; letter-spacing: .04em; pointer-events: none; backdrop-filter: blur(8px); }
+.native-drop-target { position: fixed; inset: calc(64px + env(safe-area-inset-top, 0px)) 12px 12px; z-index: 200; display: grid; place-items: center; border: 1px dashed rgba(79,183,255,.76); border-radius: 12px; background: rgba(7,16,25,.93); color: #c5e8ff; font-size: 12px; font-weight: 760; letter-spacing: .04em; pointer-events: none; backdrop-filter: blur(10px); }
 .session-column { min-width: 0; min-height: 0; flex: 1; display: grid; grid-template-rows: minmax(0, 1fr) auto calc(29px + env(safe-area-inset-bottom, 0px)); }
 .transcript { min-height: 0; overflow: auto; scrollbar-color: #263649 transparent; }
 .transcript-inner { width: min(900px, calc(100% - 52px)); min-height: 100%; margin: 0 auto; padding: 48px 0 30px; }

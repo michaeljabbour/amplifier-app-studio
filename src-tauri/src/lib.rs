@@ -1,4 +1,5 @@
 mod catalog;
+mod image_drop;
 mod protocol;
 mod runtime_setup;
 mod session;
@@ -281,6 +282,7 @@ fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathB
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .on_webview_event(image_drop::handle_webview_event)
         .setup(|_app| {
             #[cfg(desktop)]
             {

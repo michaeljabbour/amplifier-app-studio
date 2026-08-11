@@ -18,6 +18,12 @@ export function liveAgentCount(lanes: LaneState[]): number {
   return lanes.filter((lane) => lane.status === "running").length;
 }
 
+export function isLaneHistorical(lane: LaneState): boolean {
+  return lane.status === "completed"
+    || lane.status === "detached"
+    || lane.completedAtMs !== undefined;
+}
+
 export function laneLivePreview(lane: LaneState, limit = 520): { kind: "text" | "thinking"; text: string } | undefined {
   const liveTail = lane.tail.trim();
   const source = liveTail || lane.thinking.trim();
