@@ -24,6 +24,8 @@ import {
   markAutopilotEngaged,
   markEffortPending,
   markExited,
+  markPromptSendFailed,
+  markPromptSubmitted,
   queueLocalSteer,
   reduceRecord,
   resolveAttention,
@@ -148,7 +150,9 @@ export default function App() {
       const initialPrompt = pendingInitialPrompts.get(guiId);
       if (initialPrompt) {
         pendingInitialPrompts.delete(guiId);
-        void sendOp(guiId, { op: "submit", text: initialPrompt }).catch((error) => reportSendError(guiId, error));
+        void sendOp(guiId, { op: "submit", text: initialPrompt }).catch((error) => {
+          update(guiId, (state) => markPromptSendFailed(state, cleanError(error)));
+        });
       }
     }
   };
@@ -156,7 +160,9 @@ export default function App() {
   const start = async (input: NewSessionInput, initialPrompt?: string) => {
     if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another machine");
     const guiId = createGuiId();
-    const state = createSessionState(guiId, input);
+    const state = initialPrompt?.trim()
+      ? markPromptSubmitted(createSessionState(guiId, input), initialPrompt)
+      : createSessionState(guiId, input);
     setSessions((items) => [...items, state]);
     setActiveId(guiId);
     setDialog(undefined);
@@ -224,7 +230,12 @@ export default function App() {
       update(session.guiId, queueLocalSteer);
       return;
     }
-    await sendOp(session.guiId, { op: "submit", text });
+    update(session.guiId, (state) => markPromptSubmitted(state, text));
+    try {
+      await sendOp(session.guiId, { op: "submit", text });
+    } catch (error) {
+      update(session.guiId, (state) => markPromptSendFailed(state, cleanError(error)));
+    }
   };
 
   const interrupt = async () => {

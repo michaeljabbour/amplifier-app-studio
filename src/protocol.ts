@@ -154,6 +154,10 @@ export interface SessionViewState {
   phase: SessionPhase;
   bootLabel: string;
   busy: boolean;
+  pendingPrompt?: {
+    text: string;
+    mode: string;
+  };
   autopilot: boolean;
   activity: string;
   turnStartedAtMs?: number;

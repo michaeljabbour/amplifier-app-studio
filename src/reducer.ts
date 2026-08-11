@@ -159,6 +159,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         busy: false,
+        pendingPrompt: undefined,
         autopilot: false,
         activity: "Idle",
         liveTail: undefined,
@@ -173,6 +174,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         busy: false,
+        pendingPrompt: undefined,
         autopilot: false,
         liveTail: undefined,
         error: message,
@@ -192,6 +194,34 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
 
 export function queueLocalSteer(state: SessionViewState): SessionViewState {
   return { ...state, queuedSteers: Math.min(32, state.queuedSteers + 1) };
+}
+
+export function markPromptSubmitted(state: SessionViewState, text: string): SessionViewState {
+  const prompt = text.trim();
+  if (!prompt) return state;
+  const next = appendBlock(state, { kind: "user", text: prompt, mode: state.mode });
+  return {
+    ...next,
+    pendingPrompt: { text: prompt, mode: state.mode },
+    busy: true,
+    activity: "Submitting prompt",
+    turnStartedAtMs: Date.now(),
+    error: undefined,
+    goal: state.goal?.state === "continuing" ? state.goal : undefined,
+    liveTail: undefined,
+    openThinkingId: undefined,
+  };
+}
+
+export function markPromptSendFailed(state: SessionViewState, message: string): SessionViewState {
+  const next = appendBlock(state, { kind: "notice", level: "error", text: message });
+  return {
+    ...next,
+    pendingPrompt: undefined,
+    busy: false,
+    activity: "Prompt was not sent",
+    turnStartedAtMs: undefined,
+  };
 }
 
 export function markAutopilotEngaged(state: SessionViewState): SessionViewState {
@@ -259,6 +289,7 @@ export function markExited(
     ...next,
     phase: code === 0 ? "exited" : "error",
     busy: false,
+    pendingPrompt: undefined,
     autopilot: false,
     activity: "Idle",
     liveTail: undefined,
@@ -372,13 +403,13 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
   switch (event.kind) {
     case "prompt_submit": {
       const mode = stringValue(event.mode, next.mode);
-      next = appendBlock(next, {
-        kind: "user",
-        text: stringValue(event.prompt),
-        mode,
-      });
+      const prompt = stringValue(event.prompt);
+      if (next.pendingPrompt?.text !== prompt) {
+        next = appendBlock(next, { kind: "user", text: prompt, mode });
+      }
       return {
         ...next,
+        pendingPrompt: undefined,
         mode,
         busy: !replay,
         activity: "Starting turn",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, markAutopilotEngaged, markEffortPending, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
+import { createSessionState, markAutopilotEngaged, markEffortPending, markPromptSendFailed, markPromptSubmitted, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -98,6 +98,33 @@ describe("session reducer", () => {
 
   it("does not delay a new session after the runtime starts", () => {
     expect(started()).toMatchObject({ phase: "ready", replaying: false, restoreProgress: undefined });
+  });
+
+  it("shows a submitted prompt immediately and reconciles the runtime echo", () => {
+    let state = markPromptSubmitted(started(), "continue the work");
+    expect(state).toMatchObject({
+      busy: true,
+      activity: "Submitting prompt",
+      pendingPrompt: { text: "continue the work", mode: "chat" },
+    });
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "user", text: "continue the work", mode: "chat" }),
+    ]);
+
+    state = reduceRecord(state, runtime(2, {
+      kind: "prompt_submit",
+      prompt: "continue the work",
+      mode: "chat",
+    }));
+    expect(state.pendingPrompt).toBeUndefined();
+    expect(state.blocks.filter((block) => block.kind === "user")).toHaveLength(1);
+    expect(state.activity).toBe("Starting turn");
+  });
+
+  it("makes a prompt transport failure visible and returns control", () => {
+    const state = markPromptSendFailed(markPromptSubmitted(started(), "continue"), "Runtime is closed");
+    expect(state).toMatchObject({ busy: false, activity: "Prompt was not sent", pendingPrompt: undefined });
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "error", text: "Runtime is closed" });
   });
 
   it("keeps effort pending until the runtime acknowledges the exact state", () => {
