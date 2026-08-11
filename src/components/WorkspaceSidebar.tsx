@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { laneLivePreview, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { LaneState, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 
@@ -14,6 +15,10 @@ interface Props {
 
 export function WorkspaceSidebar(props: Props) {
   const projectName = () => props.state.projectDir.split(/[\\/]/).filter(Boolean).at(-1) || "No project";
+  const orderedLanes = () => orderAgentLanes(props.lanes);
+  const activeLanes = () => orderedLanes().filter((lane) => lane.status !== "completed");
+  const completedLanes = () => orderedLanes().filter((lane) => lane.status === "completed");
+  const liveCount = () => liveAgentCount(props.lanes);
 
   return (
     <aside class="workbench-sidebar" aria-label="Workspace navigation">
@@ -38,7 +43,7 @@ export function WorkspaceSidebar(props: Props) {
       <section class="sidebar-section agents-section">
         <div class="sidebar-heading">
           <span>THIS SESSION'S AGENTS</span>
-          <b>{props.lanes.length}</b>
+          <b classList={{ live: liveCount() > 0 }}>{liveCount() > 0 ? `${liveCount()} LIVE · ${props.lanes.length} TOTAL` : `${props.lanes.length} TOTAL`}</b>
         </div>
         <Show
           when={props.lanes.length > 0}
@@ -52,7 +57,15 @@ export function WorkspaceSidebar(props: Props) {
           }
         >
           <div class="agent-workspaces">
-            <For each={props.lanes}>{(lane) => <AgentWorkspaceButton
+            <For each={activeLanes()}>{(lane) => <AgentWorkspaceButton
+              lane={lane}
+              selected={lane.id === props.selectedLaneId}
+              onSelect={() => props.onSelectLane(lane.id)}
+            />}</For>
+            <Show when={completedLanes().length > 0}>
+              <div class="agent-history-label"><span>COMPLETED HISTORY</span><b>{completedLanes().length}</b></div>
+            </Show>
+            <For each={completedLanes()}>{(lane) => <AgentWorkspaceButton
               lane={lane}
               selected={lane.id === props.selectedLaneId}
               onSelect={() => props.onSelectLane(lane.id)}
@@ -66,17 +79,24 @@ export function WorkspaceSidebar(props: Props) {
 
 function AgentWorkspaceButton(props: { lane: LaneState; selected: boolean; onSelect: () => void }) {
   const runningTools = () => props.lane.tools.filter((tool) => tool.status === "running").length;
+  const livePreview = () => props.lane.status === "running" ? laneLivePreview(props.lane) : undefined;
   return (
     <button
       class={`agent-workspace ${props.lane.status}`}
       classList={{ selected: props.selected }}
       onClick={props.onSelect}
-      aria-label={`Inspect ${props.lane.agent}`}
+      aria-label={`Inspect ${props.lane.agent}, ${props.lane.status}, ${props.lane.activity}`}
     >
       <span class="agent-status-word">{props.lane.status === "running" ? "LIVE" : props.lane.status === "completed" ? "DONE" : "CHECK"}</span>
       <span class="agent-workspace-copy">
         <strong>{props.lane.agent}</strong>
         <Markdown compact class="agent-summary" text={props.lane.activity} />
+        <Show when={livePreview()} keyed>{(preview) => (
+          <div class={`agent-live-preview ${preview.kind}`}>
+            <span>{preview.kind === "thinking" ? "THINKING" : "REPORTING"}</span>
+            <Markdown compact text={preview.text} />
+          </div>
+        )}</Show>
         <Show when={runningTools() > 0}><em>{runningTools()} operation{runningTools() === 1 ? "" : "s"} running</em></Show>
       </span>
       <span class="agent-open-label">Open</span>

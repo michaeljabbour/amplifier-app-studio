@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 
@@ -49,7 +50,8 @@ export function Inspector(props: Props) {
 }
 
 function RunPanel(props: Props) {
-  const lanes = () => Object.values(props.state.lanes);
+  const lanes = () => orderAgentLanes(Object.values(props.state.lanes));
+  const liveCount = () => liveAgentCount(lanes());
   const complete = () => props.state.blocks.some((block) => block.kind === "answer" && block.final);
   return (
     <>
@@ -57,7 +59,7 @@ function RunPanel(props: Props) {
         <div class="progress-list">
           <ProgressRow label="Runtime prepared" status={props.state.phase === "starting" ? "live" : "done"} detail={props.state.bundle} />
           <ProgressRow label="Coordinator" status={props.state.busy ? "live" : complete() ? "done" : "next"} detail={props.state.activity} />
-          <ProgressRow label="This session's agents" status={lanes().some((lane) => lane.status === "running") ? "live" : lanes().length ? "done" : "next"} detail={lanes().length ? `${lanes().length} child workspace${lanes().length === 1 ? "" : "s"}` : "Created only when useful"} />
+          <ProgressRow label="This session's agents" status={liveCount() > 0 ? "live" : lanes().length ? "done" : "next"} detail={lanes().length ? `${liveCount()} live · ${lanes().length} total workspace${lanes().length === 1 ? "" : "s"}` : "Created only when useful"} />
           <ProgressRow label="Final response" status={complete() ? "done" : "next"} detail={complete() ? "Returned to session" : "Waiting on the machine"} />
         </div>
       </InspectorSection>
@@ -91,7 +93,7 @@ function RunPanel(props: Props) {
         </InspectorSection>
       </Show>
 
-      <InspectorSection title="This session's agents" meta={String(lanes().length)}>
+      <InspectorSection title="This session's agents" meta={liveCount() > 0 ? `${liveCount()} LIVE · ${lanes().length} TOTAL` : `${lanes().length} TOTAL`}>
         <Show when={lanes().length} fallback={<p class="inspector-empty">The coordinator has not created a delegate workspace yet.</p>}>
           <div class="inspector-agent-list">
             <For each={lanes()}>{(lane) => (
