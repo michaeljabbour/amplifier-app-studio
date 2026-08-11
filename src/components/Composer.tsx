@@ -5,6 +5,9 @@ import type { SessionViewState } from "../protocol";
 interface Props {
   state: SessionViewState;
   onSend: (text: string) => Promise<void>;
+  onAutopilot: () => void;
+  autopilotActive: boolean;
+  autopilotAvailable: boolean;
 }
 
 export function Composer(props: Props) {
@@ -45,7 +48,16 @@ export function Composer(props: Props) {
           <span><strong>{presence().label}</strong><small>{presence().detail}</small></span>
         </div>
         <div class="composer-intent">
-          <span classList={{ steer: props.state.busy }}>{props.state.busy ? "STEER COORDINATOR" : "COORDINATE"}</span>
+          <button
+            type="button"
+            class="composer-autopilot"
+            classList={{ active: props.autopilotActive }}
+            disabled={!props.autopilotAvailable}
+            onClick={props.onAutopilot}
+            title={props.autopilotActive
+              ? "Autopilot is directing this coordinator; open its progress"
+              : "Let this coordinator continue autonomously. Studio UI control is separate."}
+          ><i aria-hidden="true" />{props.autopilotActive ? "AUTOPILOT ON" : "AUTOPILOT"}</button>
           {props.state.busy && props.state.queuedSteers > 0 && <small>{props.state.queuedSteers}/32 queued</small>}
         </div>
       </div>

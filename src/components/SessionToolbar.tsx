@@ -4,8 +4,6 @@ import type { SessionViewState } from "../protocol";
 export function SessionToolbar(props: {
   state: SessionViewState;
   onDismissAlert: (id: string) => void;
-  onOpenRun: () => void;
-  onOpenOutputs: () => void;
 }) {
   const agents = () => Object.values(props.state.lanes);
   const running = () => agents().filter((lane) => lane.status === "running").length;
@@ -14,11 +12,12 @@ export function SessionToolbar(props: {
       <div class="session-identity">
         <small>COORDINATOR CHAT</small>
         <strong>{props.state.title}</strong>
-        <span>{props.state.busy ? props.state.activity : "Ready for the next turn"}</span>
-      </div>
-      <div class="session-toolbar-actions">
-        <button onClick={props.onOpenRun}><b>{agents().length}</b> agents <Show when={running() > 0}><span>{running()} live</span></Show></button>
-        <button onClick={props.onOpenOutputs}><b>{props.state.outputs.length}</b> outputs</button>
+        <span>
+          {props.state.busy ? props.state.activity : "Ready for the next turn"}
+          <Show when={agents().length || props.state.outputs.length}>
+            {" · "}{agents().length} agents<Show when={running() > 0}> ({running()} live)</Show>{" · "}{props.state.outputs.length} outputs
+          </Show>
+        </span>
       </div>
       <Show when={props.state.alerts.at(-1)} keyed>{(alert) => (
         <div class={`session-recovery ${alert.level}`} role="status">

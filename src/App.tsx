@@ -425,15 +425,7 @@ export default function App() {
         onNew={openNew}
         onDrawer={openDrawer}
         onSettings={() => setSettingsOpen(true)}
-        agentCount={lanes().length}
-        alertCount={active()?.alerts.length || 0}
         inspectorOpen={rightOpen()}
-        onAgents={() => openInspector("run")}
-        onOutputs={() => openInspector("outputs")}
-        onCapabilities={() => setCapabilitiesOpen(true)}
-        onAutopilot={() => void engageAutopilot()}
-        autopilotActive={autopilotActive()}
-        autopilotAvailable={canEngageAutopilot(active())}
         onToggleInspector={() => setRightOpen((value) => !value)}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
@@ -459,11 +451,10 @@ export default function App() {
         {(session) => (
           <div class="workspace" classList={{ "left-open": leftOpen(), "right-open": rightOpen() }}>
             <WorkspaceSidebar
-              sessions={sessions()}
-              activeId={activeId()}
+              state={session()}
+              parallelCount={sessions().length}
               lanes={lanes()}
               selectedLaneId={selectedLaneId()}
-              onSelectSession={(id) => { setActiveId(id); setSelectedLaneId(undefined); setInspectorTab("run"); }}
               onSelectLane={selectLane}
               onNew={openNew}
               onResume={openDrawer}
@@ -472,14 +463,18 @@ export default function App() {
               <SessionToolbar
                 state={session()}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
-                onOpenRun={() => openInspector("run")}
-                onOpenOutputs={() => openInspector("outputs")}
               />
               <Transcript state={session()} onInterrupt={() => void interrupt()} />
               <div class="input-zone">
                 <Show
                   when={session().pendingApproval || session().pendingDecision}
-                  fallback={<Composer state={session()} onSend={submit} />}
+                  fallback={<Composer
+                    state={session()}
+                    onSend={submit}
+                    onAutopilot={() => void engageAutopilot()}
+                    autopilotActive={autopilotActive()}
+                    autopilotAvailable={canEngageAutopilot(active())}
+                  />}
                 >
                   <AttentionBar state={session()} onChoose={(choice) => void chooseAttention(choice)} />
                 </Show>

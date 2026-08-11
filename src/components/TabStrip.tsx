@@ -10,15 +10,7 @@ interface Props {
   onNew: () => void;
   onDrawer: () => void;
   onSettings: () => void;
-  agentCount: number;
-  alertCount: number;
   inspectorOpen: boolean;
-  onAgents: () => void;
-  onOutputs: () => void;
-  onCapabilities: () => void;
-  onAutopilot: () => void;
-  autopilotActive: boolean;
-  autopilotAvailable: boolean;
   onToggleInspector: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
@@ -70,25 +62,16 @@ export function TabStrip(props: Props) {
         </button>
       </div>
       <div class="top-workbench-actions">
-        <button onClick={props.onCapabilities}>Machines</button>
         <button
-          class="autopilot-button"
-          classList={{ active: props.autopilotActive }}
-          disabled={!props.autopilotAvailable}
-          onClick={props.onAutopilot}
-          title={props.autopilotAvailable
-            ? props.autopilotActive
-              ? "Autopilot is directing the active coordinator; it does not imply Studio UI control"
-              : "Continue autonomously in the active coordinator; computer use is a separate capability"
-            : "Open a ready session to use Autopilot"}
+          class="inspector-toggle"
+          classList={{ active: props.inspectorOpen }}
+          onClick={props.onToggleInspector}
+          aria-label={props.inspectorOpen ? "Hide machine inspector" : "Show machine inspector"}
+          title={props.inspectorOpen ? "Hide machine inspector" : "Show run, bundles, outputs, and context"}
         >
-          {props.autopilotActive ? "Autopilot · active" : "Autopilot"}
+          <span class="inspector-toggle-glyph" aria-hidden="true"><i /><i /><i /></span>
+          <span>Inspect</span>
         </button>
-        <button classList={{ attention: props.alertCount > 0 }} onClick={props.onAgents}>
-          Agents <strong>{props.agentCount}</strong>
-        </button>
-        <button onClick={props.onOutputs}>Outputs</button>
-        <button classList={{ active: props.inspectorOpen }} onClick={props.onToggleInspector}>Inspector</button>
       </div>
       <Show when={["available", "downloading", "installing", "error"].includes(props.update.status)}>
         <button
@@ -108,7 +91,6 @@ export function TabStrip(props: Props) {
       </button>
       <div class="brand-mark" data-tauri-drag-region>
         <span class="brand-diamond" aria-hidden="true" />
-        <span>AMPLIFIER STUDIO</span>
       </div>
     </header>
   );

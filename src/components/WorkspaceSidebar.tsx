@@ -3,47 +3,36 @@ import type { LaneState, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 
 interface Props {
-  sessions: SessionViewState[];
-  activeId?: string;
+  state: SessionViewState;
+  parallelCount: number;
   lanes: LaneState[];
   selectedLaneId?: string;
-  onSelectSession: (id: string) => void;
   onSelectLane: (id: string) => void;
   onNew: () => void;
   onResume: () => void;
 }
 
 export function WorkspaceSidebar(props: Props) {
-  const active = () => props.sessions.find((session) => session.guiId === props.activeId);
-  const projectName = () => active()?.projectDir.split(/[\\/]/).filter(Boolean).at(-1) || "No project";
+  const projectName = () => props.state.projectDir.split(/[\\/]/).filter(Boolean).at(-1) || "No project";
 
   return (
     <aside class="workbench-sidebar" aria-label="Workspace navigation">
       <div class="sidebar-project">
         <div class="section-kicker">WORKSPACE</div>
         <strong>{projectName()}</strong>
-        <span title={active()?.projectDir}>{active()?.projectDir || "Choose a project to begin"}</span>
+        <span title={props.state.projectDir}>{props.state.projectDir || "Choose a project to begin"}</span>
       </div>
 
       <section class="sidebar-section">
         <div class="sidebar-heading">
           <span>PARALLEL SESSIONS</span>
-          <button onClick={props.onNew}>New session</button>
+          <b>{props.parallelCount} OPEN</b>
         </div>
-        <p class="sidebar-section-hint">Independent runtimes that keep working when you switch tabs.</p>
-        <div class="sidebar-session-list">
-          <For each={props.sessions}>{(session) => (
-            <button
-              class="sidebar-session"
-              classList={{ active: session.guiId === props.activeId }}
-              onClick={() => props.onSelectSession(session.guiId)}
-            >
-              <span class={`tab-status phase-${session.phase}`} />
-              <span><strong>{session.title}</strong><small>{session.busy ? session.activity : session.phase}</small></span>
-            </button>
-          )}</For>
+        <p class="sidebar-section-hint">Each tab above is an independent Amplifier runtime. Switching tabs does not stop the others.</p>
+        <div class="sidebar-session-actions">
+          <button class="primary" onClick={props.onNew}>+ New parallel session</button>
+          <button onClick={props.onResume}>Resume stored</button>
         </div>
-        <button class="sidebar-secondary-action" onClick={props.onResume}>Resume any stored session</button>
       </section>
 
       <section class="sidebar-section agents-section">
@@ -55,8 +44,8 @@ export function WorkspaceSidebar(props: Props) {
           when={props.lanes.length > 0}
           fallback={
             <div class="agent-empty">
-              <strong>{active()?.busy ? "Coordinator is working" : "No child agents this turn"}</strong>
-              <p>{active()?.busy
+              <strong>{props.state.busy ? "Coordinator is working" : "No child agents this turn"}</strong>
+              <p>{props.state.busy
                 ? "If this session creates specialists, each child workspace will appear here live."
                 : "Child agents belong to the active session; top tabs are separate parallel runtimes."}</p>
             </div>
