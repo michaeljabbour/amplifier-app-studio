@@ -94,7 +94,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         bootLabel: next.restoreProgress ? "Restoring conversation history" : "Attached to live runtime",
       };
     case "session.status":
-      return markRestoreProgress(reduceSessionStatus(next, record), "status");
+      return markRestoreStatus(reduceSessionStatus(next, record));
     case "runtime.event": {
       const event = asEvent(record.event);
       return event ? reduceEvent(next, event, record.replay === true) : next;
@@ -894,16 +894,47 @@ function markRestoreProgress(
 
   const restoreProgress = { ...state.restoreProgress, [step]: true };
   const restored = restoreProgress.history && restoreProgress.status;
-  return {
+  const restoredState: SessionViewState = {
     ...state,
     restoreProgress,
     replaying: !restoreProgress.history,
     phase: restored ? "ready" : "starting",
+    busy: restored && restoreProgress.statusBusy !== undefined
+      ? restoreProgress.statusBusy
+      : state.busy,
     bootLabel: restored
       ? "Session restored"
       : restoreProgress.history
         ? "Restoring model, context, and spend"
         : "Restoring conversation history",
+  };
+  return restored && restoreProgress.statusBusy === false
+    ? settleIdleRestoredLanes(restoredState)
+    : restoredState;
+}
+
+function markRestoreStatus(state: SessionViewState): SessionViewState {
+  if (!state.restoreProgress) return state;
+  return markRestoreProgress({
+    ...state,
+    restoreProgress: { ...state.restoreProgress, statusBusy: state.busy },
+  }, "status");
+}
+
+function settleIdleRestoredLanes(state: SessionViewState): SessionViewState {
+  return {
+    ...state,
+    lanes: Object.fromEntries(Object.entries(state.lanes).map(([laneId, lane]) => [
+      laneId,
+      lane.status === "running"
+        ? {
+            ...lane,
+            status: "completed" as const,
+            activity: "Completed before this session became idle",
+            tools: settleRunningLaneTools(lane.tools, "completed"),
+          }
+        : lane,
+    ])),
   };
 }
 

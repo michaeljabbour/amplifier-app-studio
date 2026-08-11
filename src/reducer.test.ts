@@ -96,6 +96,65 @@ describe("session reducer", () => {
     });
   });
 
+  it("keeps replayed agents inspectable without calling them live after an idle restore", () => {
+    let state = createSessionState("gui-resume", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, runtime(42, {
+      kind: "agent_spawned",
+      sub_session_id: "child-1",
+      parent_session_id: "runtime-1",
+      agent: "foundation:explorer",
+    }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 42 });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "idle",
+      turn: { active: false },
+      session: {},
+      context: {},
+      pending: { decisions: [] },
+    });
+
+    expect(state.busy).toBe(false);
+    expect(state.lanes["child-1"]).toMatchObject({
+      status: "completed",
+      activity: "Completed before this session became idle",
+    });
+  });
+
+  it("preserves live replayed agents when authoritative status says the turn is active", () => {
+    let state = createSessionState("gui-resume", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, runtime(42, {
+      kind: "agent_spawned",
+      sub_session_id: "child-1",
+      parent_session_id: "runtime-1",
+      agent: "foundation:explorer",
+    }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 42 });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "busy",
+      turn: { active: true },
+      session: {},
+      context: {},
+      pending: { decisions: [] },
+    });
+
+    expect(state.busy).toBe(true);
+    expect(state.lanes["child-1"].status).toBe("running");
+  });
+
   it("does not delay a new session after the runtime starts", () => {
     expect(started()).toMatchObject({ phase: "ready", replaying: false, restoreProgress: undefined });
   });

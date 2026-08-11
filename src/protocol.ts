@@ -165,6 +165,7 @@ export interface SessionViewState {
   restoreProgress?: {
     history: boolean;
     status: boolean;
+    statusBusy?: boolean;
   };
   pendingApproval?: ApprovalState;
   pendingDecision?: DecisionState;
