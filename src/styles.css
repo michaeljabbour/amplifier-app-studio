@@ -104,7 +104,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand-mark { display: flex; align-items: center; gap: 9px; padding: 0 18px; color: #64758a; font-size: 9px; font-weight: 800; letter-spacing: 0.18em; }
 .brand-diamond { width: 9px; height: 9px; background: var(--blue); transform: rotate(45deg); box-shadow: 0 0 15px rgba(79, 183, 255, 0.65); }
 
-.workspace { min-height: 0; display: flex; }
+.workspace { position: relative; min-height: 0; display: flex; }
+.workspace-drop-target { position: absolute; inset: 10px; z-index: 80; display: grid; place-items: center; border: 1px dashed rgba(79,183,255,.72); border-radius: 12px; background: rgba(7,16,25,.91); color: #c5e8ff; font-size: 12px; font-weight: 760; letter-spacing: .04em; pointer-events: none; backdrop-filter: blur(8px); }
 .session-column { min-width: 0; min-height: 0; flex: 1; display: grid; grid-template-rows: minmax(0, 1fr) auto calc(29px + env(safe-area-inset-bottom, 0px)); }
 .transcript { min-height: 0; overflow: auto; scrollbar-color: #263649 transparent; }
 .transcript-inner { width: min(900px, calc(100% - 52px)); min-height: 100%; margin: 0 auto; padding: 48px 0 30px; }

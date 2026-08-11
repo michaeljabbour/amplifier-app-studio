@@ -82,6 +82,7 @@ export function Composer(props: Props) {
       }}
       onDrop={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         setDraggingImages(false);
         void addImageFiles(Array.from(event.dataTransfer?.files || []));
       }}

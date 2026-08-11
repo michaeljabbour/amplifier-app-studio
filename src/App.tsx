@@ -15,6 +15,7 @@ import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
+import { appendImageFiles, hasImageFiles } from "./imageAttachments";
 import type { CapabilityCatalog, ComposerImage, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -84,6 +85,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
+  const [workspaceImageDrag, setWorkspaceImageDrag] = createSignal(false);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
@@ -282,6 +284,17 @@ export default function App() {
       return false;
     }
     return true;
+  };
+
+  const attachImagesToSession = async (guiId: string, files: File[]) => {
+    const session = sessions().find((item) => item.guiId === guiId);
+    if (!session) return;
+    try {
+      const images = await appendImageFiles(session.composerImages, files);
+      update(guiId, (state) => setComposerImages(state, images));
+    } catch (error) {
+      update(guiId, (state) => addLocalNotice(state, cleanError(error), "warning"));
+    }
   };
 
   const interrupt = async () => {
@@ -580,7 +593,38 @@ export default function App() {
         }
       >
         {(session) => (
-          <div class="workspace" classList={{ "left-open": leftOpen(), "right-open": rightOpen() }}>
+          <div
+            class="workspace"
+            classList={{ "left-open": leftOpen(), "right-open": rightOpen() }}
+            onDragEnter={(event) => {
+              const transfer = event.dataTransfer;
+              const target = event.target as HTMLElement | null;
+              if (transfer && hasImageFiles(transfer) && !target?.closest(".composer-shell")) {
+                event.preventDefault();
+                setWorkspaceImageDrag(true);
+              }
+            }}
+            onDragOver={(event) => {
+              const transfer = event.dataTransfer;
+              const target = event.target as HTMLElement | null;
+              if (transfer && hasImageFiles(transfer) && !target?.closest(".composer-shell")) {
+                event.preventDefault();
+                transfer.dropEffect = "copy";
+                setWorkspaceImageDrag(true);
+              }
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWorkspaceImageDrag(false);
+            }}
+            onDrop={(event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest(".composer-shell")) return;
+              event.preventDefault();
+              setWorkspaceImageDrag(false);
+              void attachImagesToSession(session().guiId, Array.from(event.dataTransfer?.files || []));
+            }}
+          >
+            <Show when={workspaceImageDrag()}><div class="workspace-drop-target">Drop images into this session</div></Show>
             <WorkspaceSidebar
               state={session()}
               parallelCount={sessions().length}
