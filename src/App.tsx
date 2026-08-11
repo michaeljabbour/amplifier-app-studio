@@ -3,6 +3,7 @@ import { AttentionBar } from "./components/AttentionBar";
 import { BridgeSettingsDialog } from "./components/BridgeSettingsDialog";
 import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
+import { CoordinatorHome } from "./components/CoordinatorHome";
 import { Footer } from "./components/Footer";
 import { Inspector, type InspectorTab } from "./components/Inspector";
 import { NewSessionDialog } from "./components/NewSessionDialog";
@@ -45,6 +46,7 @@ import {
   type SessionConnection,
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
+import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 
 export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
@@ -62,7 +64,7 @@ export default function App() {
   const [selectedLaneId, setSelectedLaneId] = createSignal<string>();
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
-  const [rightOpen, setRightOpen] = createSignal(window.matchMedia("(min-width: 981px)").matches);
+  const [rightOpen, setRightOpen] = createSignal(false);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
@@ -71,6 +73,7 @@ export default function App() {
   const connections = new Map<string, SessionConnection>();
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
+  const pendingInitialPrompts = new Map<string, string>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -111,6 +114,7 @@ export default function App() {
     };
     window.addEventListener("focus", checkForUpdates);
     document.addEventListener("visibilitychange", visibility);
+    queueMicrotask(() => void restoreAfterUpdate());
     onCleanup(() => {
       window.removeEventListener("keydown", keydown);
       window.removeEventListener("focus", checkForUpdates);
@@ -141,16 +145,22 @@ export default function App() {
       if (session?.resumeId) {
         void sendOp(guiId, { op: "history.replay", since: 0, limit: 0 }).catch((error) => reportSendError(guiId, error));
       }
+      const initialPrompt = pendingInitialPrompts.get(guiId);
+      if (initialPrompt) {
+        pendingInitialPrompts.delete(guiId);
+        void sendOp(guiId, { op: "submit", text: initialPrompt }).catch((error) => reportSendError(guiId, error));
+      }
     }
   };
 
-  const start = async (input: NewSessionInput) => {
+  const start = async (input: NewSessionInput, initialPrompt?: string) => {
     if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another machine");
     const guiId = createGuiId();
     const state = createSessionState(guiId, input);
     setSessions((items) => [...items, state]);
     setActiveId(guiId);
     setDialog(undefined);
+    if (initialPrompt?.trim()) pendingInitialPrompts.set(guiId, initialPrompt.trim());
     try {
       const connection = await launchSession(
         { guiId, ...input },
@@ -171,6 +181,7 @@ export default function App() {
         void refreshCatalog(input.projectDir);
       }
     } catch (error) {
+      pendingInitialPrompts.delete(guiId);
       update(guiId, (current) => markExited(current, undefined, cleanError(error)));
       throw error;
     }
@@ -190,6 +201,7 @@ export default function App() {
     connections.get(guiId)?.dispose();
     connections.delete(guiId);
     initialized.delete(guiId);
+    pendingInitialPrompts.delete(guiId);
     clearStatusPolling(guiId);
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
@@ -409,8 +421,14 @@ export default function App() {
     }
     if (current.status !== "available" || updateBlocked()) return;
     try {
+      saveUpdateRestorePlan(localStorage, sessions(), activeId());
+    } catch {
+      // Update installation remains available even when WebView storage is unavailable.
+    }
+    try {
       await installAppUpdate(current, setAppUpdate);
     } catch (error) {
+      try { clearUpdateRestorePlan(localStorage); } catch { /* storage is optional */ }
       setAppUpdate({ ...current, status: "error", message: cleanError(error) });
     }
   };
@@ -435,12 +453,16 @@ export default function App() {
       <Show
         when={active()}
         fallback={
-          <Welcome
+          <CoordinatorHome
+            sessions={stored()}
+            loading={storedLoading()}
             transport={transport()}
             runtime={runtime()}
             checking={runtimeChecking()}
             installing={runtimeInstalling()}
             error={runtimeError()}
+            onSend={startFromHome}
+            onResume={resumeStored}
             onNew={openNew}
             onDrawer={openDrawer}
             onInstall={() => void installLocalRuntime()}
@@ -565,6 +587,37 @@ export default function App() {
     }
   }
 
+  async function startFromHome(text: string) {
+    const projectDir = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
+    await start({ projectDir }, text);
+  }
+
+  async function resumeStored(session: StoredSession) {
+    if (!session.projectDir) throw new Error("Choose the original project folder before resuming this session");
+    await start({
+      projectDir: session.projectDir,
+      resumeId: session.sessionId,
+      resumeName: session.name || `Session ${session.sessionId.slice(0, 8)}`,
+    });
+  }
+
+  async function restoreAfterUpdate() {
+    let restore = [] as ReturnType<typeof takeUpdateRestorePlan>;
+    try {
+      restore = takeUpdateRestorePlan(localStorage);
+    } catch {
+      return;
+    }
+    for (const session of restore) {
+      try {
+        await start(session);
+      } catch {
+        // start() keeps the failed tab visible with its actionable error.
+      }
+    }
+  }
+
   async function installLocalRuntime() {
     setRuntimeInstalling(true);
     setRuntimeError(undefined);
@@ -612,51 +665,6 @@ export default function App() {
       // The exit path owns connection errors; polling is deliberately quiet.
     }
   }
-}
-
-function Welcome(props: {
-  transport: string;
-  runtime?: RuntimeStatus;
-  checking: boolean;
-  installing: boolean;
-  error?: string;
-  onNew: () => void;
-  onDrawer: () => void;
-  onInstall: () => void;
-  onSettings: () => void;
-}) {
-  const ready = () => props.runtime?.installed === true;
-  return (
-    <main class="welcome">
-      <div class="welcome-mark"><span /></div>
-      <div class="eyebrow">WINDOWS · MAC · ANDROID · IOS</div>
-      <h1>Amplifier, in parallel.</h1>
-      <p>A Tauri 2 native app on every target, with isolated Amplifier sessions and the existing Python runtime as the source of truth.</p>
-      <div class="welcome-actions">
-        <button class="primary-button" disabled={!ready()} onClick={props.onNew}>Start a session <span>→</span></button>
-        <button class="secondary-button" onClick={props.onDrawer}>Resume stored work</button>
-      </div>
-      <Show when={!props.checking && !ready()}>
-        <div class="runtime-setup-card">
-          <div><span>ENGINE SETUP</span><strong>{props.runtime?.message || "Runtime check unavailable"}</strong></div>
-          <p>Studio uses Amplifier’s existing Python runtime out of process. It does not depend on the older amplifier-app-cli.</p>
-          <div>
-            <Show when={props.runtime?.installSupported} fallback={<button class="secondary-button" onClick={props.onSettings}>Configure bridge</button>}>
-              <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? "Installing…" : "Install Amplifier runtime"}</button>
-            </Show>
-            <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
-          </div>
-          <Show when={props.error}><small>{props.error}</small></Show>
-        </div>
-      </Show>
-      <div class="welcome-features">
-        <div><span>01</span><strong>Process isolation</strong><p>One runtime per tab. Interrupt or close independently.</p></div>
-        <div><span>02</span><strong>Shared Rust bridge</strong><p>Desktop IPC and mobile/web sockets carry the same typed records.</p></div>
-        <div><span>03</span><strong>Durable resume</strong><p>Replays the event ledger from ~/.amplifier/projects.</p></div>
-      </div>
-      <div class="browser-note"><span class={`footer-dot ${ready() ? "active" : ""}`} />{props.checking ? "Checking runtime…" : ready() ? `${props.transport} · ${props.runtime?.version}` : props.transport}</div>
-    </main>
-  );
 }
 
 function cleanError(error: unknown): string {
