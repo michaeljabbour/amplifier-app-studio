@@ -13,8 +13,8 @@ export function SessionToolbar(props: {
         <small>COORDINATOR CHAT</small>
         <strong>{props.state.title}</strong>
         <span>
-          {props.state.busy ? props.state.activity : "Ready for the next turn"}
-          <Show when={agents().length || props.state.outputs.length}>
+          {sessionToolbarStatus(props.state)}
+          <Show when={props.state.phase === "ready" && (agents().length || props.state.outputs.length)}>
             {" · "}{agents().length} agents<Show when={running() > 0}> ({running()} live)</Show>{" · "}{props.state.outputs.length} outputs
           </Show>
         </span>
@@ -27,4 +27,14 @@ export function SessionToolbar(props: {
       )}</Show>
     </div>
   );
+}
+
+export function sessionToolbarStatus(state: SessionViewState): string {
+  switch (state.phase) {
+    case "starting": return state.bootLabel;
+    case "closing": return "Stopping runtime";
+    case "exited": return "Session stopped";
+    case "error": return state.error || "Session error";
+    case "ready": return state.busy ? state.activity : "Ready for the next turn";
+  }
 }

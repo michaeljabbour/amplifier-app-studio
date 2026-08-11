@@ -49,10 +49,16 @@ export function WorkspaceSidebar(props: Props) {
           when={props.lanes.length > 0}
           fallback={
             <div class="agent-empty">
-              <strong>{props.state.busy ? "Coordinator is working" : "No child agents this turn"}</strong>
-              <p>{props.state.busy
-                ? "If this session creates specialists, each child workspace will appear here live."
-                : "Child agents belong to the active session; top tabs are separate parallel runtimes."}</p>
+              <strong>{props.state.restoreProgress && props.state.phase === "starting"
+                ? "Restoring agent history"
+                : props.state.busy
+                  ? "Coordinator is working"
+                  : "No child agents this turn"}</strong>
+              <p>{props.state.restoreProgress && props.state.phase === "starting"
+                ? "Historical and active child workspaces will appear after the session status is reconciled."
+                : props.state.busy
+                  ? "If this session creates specialists, each child workspace will appear here live."
+                  : "Child agents belong to the active session; top tabs are separate parallel runtimes."}</p>
             </div>
           }
         >
