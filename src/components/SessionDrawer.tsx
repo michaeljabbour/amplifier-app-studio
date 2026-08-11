@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { StoredSession } from "../protocol";
+import { storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
 
 interface Props {
   sessions: StoredSession[];
@@ -46,9 +47,10 @@ export function SessionDrawer(props: Props) {
         <div class="stored-list">
           <For each={visible()}>
             {(session) => {
-              const resumable = () => session.state === "ok" || session.state === "transcript_lost";
+              const blocker = () => storedSessionResumeBlocker(session, false);
+              const note = () => blocker() || storedSessionWarning(session);
               return (
-                <button class="stored-row" disabled={!resumable()} onClick={() => props.onResume(session)}>
+                <button class="stored-row" disabled={Boolean(blocker())} title={note()} onClick={() => props.onResume(session)}>
                   <div class="stored-topline">
                     <strong>{session.name || `Session ${session.sessionId.slice(0, 8)}`}</strong>
                     <span>{timeAgo(session.mtimeMs)}</span>
@@ -64,7 +66,7 @@ export function SessionDrawer(props: Props) {
                     <Show when={session.tags.length}><span class="tag">{session.tags[0]}</span></Show>
                     <span class={`health-state ${session.state}`}>{healthLabel(session.state)}</span>
                   </div>
-                  <Show when={!session.projectDir}><span class="unavailable-note">Choose the original project folder to resume</span></Show>
+                  <Show when={note()} keyed>{(message) => <span class="unavailable-note">{message}</span>}</Show>
                 </button>
               );
             }}

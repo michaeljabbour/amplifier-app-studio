@@ -4,38 +4,38 @@ import type { SessionViewState } from "../protocol";
 
 interface Props {
   state: SessionViewState;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string) => Promise<boolean>;
+  onDraft: (text: string) => void;
   onAutopilot: () => void;
   autopilotActive: boolean;
   autopilotAvailable: boolean;
 }
 
 export function Composer(props: Props) {
-  const [text, setText] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [startersOpen, setStartersOpen] = createSignal(false);
   let textarea: HTMLTextAreaElement | undefined;
   const presence = createMemo(() => machinePresence(props.state));
 
   createEffect(() => {
-    const lines = Math.min(7, Math.max(1, text().split("\n").length));
+    const lines = Math.min(7, Math.max(1, props.state.composerDraft.split("\n").length));
     if (textarea) textarea.style.height = `${Math.max(48, lines * 22 + 24)}px`;
   });
 
   const send = async () => {
-    const value = text().trim();
+    const value = props.state.composerDraft.trim();
     if (!value || sending()) return;
     setSending(true);
     try {
-      await props.onSend(value);
-      setText("");
+      if (await props.onSend(value)) props.onDraft("");
     } finally {
       setSending(false);
     }
   };
 
   const useStarter = (prompt: string) => {
-    setText((current) => current.trim() ? `${current.trim()}\n\n${prompt}` : prompt);
+    const current = props.state.composerDraft.trim();
+    props.onDraft(current ? `${current}\n\n${prompt}` : prompt);
     setStartersOpen(false);
     queueMicrotask(() => textarea?.focus());
   };
@@ -54,28 +54,32 @@ export function Composer(props: Props) {
             classList={{ active: props.autopilotActive }}
             disabled={!props.autopilotAvailable}
             onClick={props.onAutopilot}
-            title={props.autopilotActive
-              ? "Autopilot is directing this coordinator; open its progress"
-              : "Let this coordinator continue autonomously. Studio UI control is separate."}
-          ><i aria-hidden="true" />{props.autopilotActive ? "AUTOPILOT ON" : "AUTOPILOT"}</button>
+            title={props.state.autopilotPending
+              ? "Waiting for Amplifier to confirm the goal state"
+              : props.autopilotActive
+                ? "Turn off Amplifier's autonomous goal loop after the current step"
+                : "Let Amplifier evaluate and continue the latest goal until it is achieved or stopped"}
+          ><i aria-hidden="true" />{props.state.autopilotPending
+              ? (props.autopilotActive ? "STOPPING…" : "STARTING…")
+              : props.autopilotActive ? "AUTOPILOT ON" : "AUTOPILOT"}</button>
           {props.state.busy && props.state.queuedSteers > 0 && <small>{props.state.queuedSteers}/32 queued</small>}
         </div>
       </div>
       <textarea
         ref={textarea}
-        value={text()}
+        value={props.state.composerDraft}
         disabled={sending() || props.state.phase !== "ready"}
         placeholder={props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring this conversation…"
           : props.state.busy
-            ? "Course-correct the current machine…"
+            ? "Course-correct the current run…"
             : "Tell the coordinator what to build, investigate, or organize…"}
         aria-label={props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring Amplifier conversation"
           : props.state.busy
             ? "Steer current turn"
             : "Message Amplifier"}
-        onInput={(event) => setText(event.currentTarget.value)}
+        onInput={(event) => props.onDraft(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
             event.preventDefault();
@@ -100,7 +104,7 @@ export function Composer(props: Props) {
           <button type="button" class="starter-trigger" aria-expanded={startersOpen()} onClick={() => setStartersOpen((open) => !open)}>Ways to start</button>
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>
-        <button disabled={!text().trim() || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
+        <button disabled={!props.state.composerDraft.trim() || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
           {props.state.busy ? "Steer" : "Send"}<span aria-hidden="true">↑</span>
         </button>
       </div>
@@ -112,7 +116,7 @@ const STARTERS = [
   {
     title: "Build with specialists",
     description: "Frame an outcome, choose agents, execute, and verify.",
-    prompt: "Help me turn this outcome into a coordinated machine: [describe the outcome]. Frame the work, delegate independent parts when useful, keep me oriented, and verify the result before calling it complete.",
+    prompt: "Help me turn this outcome into a coordinated run: [describe the outcome]. Frame the work, delegate independent parts when useful, keep me oriented, and verify the result before calling it complete.",
   },
   {
     title: "Investigate in parallel",
@@ -125,7 +129,7 @@ const STARTERS = [
     prompt: "Turn this question into a decision: [question]. Gather the relevant evidence, distinguish observation from inference, state uncertainty and trade-offs, then recommend the smallest defensible next move.",
   },
   {
-    title: "Visualize the machine",
+    title: "Visualize the run",
     description: "Map agents, tools, decisions, loops, and handoffs.",
     prompt: "Visualize this system: [system or workflow]. Map its agents, tools, decisions, handoffs, feedback loops, and failure paths. Produce a clear diagram source plus a concise explanation of the important patterns.",
   },

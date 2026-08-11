@@ -68,7 +68,7 @@ export function NewSessionDialog(props: Props) {
 
         <Show when={props.initial.capabilityName}>
           <div class="capability-selection">
-            <span>SELECTED MACHINE</span>
+            <span>SESSION SETUP</span>
             <strong>{props.initial.capabilityName}</strong>
             <p>Studio will start this capability as an isolated Amplifier runtime. Your coordinator and other sessions stay available.</p>
           </div>

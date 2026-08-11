@@ -23,6 +23,9 @@ export interface ApprovalState {
   ticketId: string;
   prompt: string;
   options: string[];
+  sessionId?: string;
+  parentId?: string;
+  toolCallId?: string;
 }
 
 export interface DecisionState {
@@ -42,6 +45,7 @@ export interface ContextState {
 
 export interface GoalProgressState {
   state: string;
+  condition?: string;
   turn: number;
   continuations: number;
   cap?: number;
@@ -51,7 +55,7 @@ export interface GoalProgressState {
   updatedAtMs: number;
 }
 
-export type SessionPhase = "starting" | "ready" | "closing" | "exited" | "error";
+export type SessionPhase = "starting" | "degraded" | "ready" | "closing" | "exited" | "error";
 
 interface BaseBlock {
   id: string;
@@ -72,6 +76,7 @@ export interface AnswerBlock extends BaseBlock {
 export interface ThinkingBlock extends BaseBlock {
   kind: "thinking";
   text: string;
+  expanded: boolean;
 }
 
 export interface ToolBlock extends BaseBlock {
@@ -100,7 +105,7 @@ export interface LaneToolState {
   id: string;
   name: string;
   label: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "unknown";
 }
 
 export interface LaneEventState {
@@ -108,20 +113,31 @@ export interface LaneEventState {
   kind: "status" | "thinking" | "message" | "tool";
   title: string;
   detail: string;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "completed" | "failed" | "unknown";
 }
 
 export interface LaneState {
   id: string;
   parentId?: string;
   agent: string;
-  status: "running" | "completed" | "attention";
+  status: "running" | "completed" | "attention" | "detached";
   activity: string;
   tail: string;
   tailKind: "text" | "thinking";
   thinking: string;
   tools: LaneToolState[];
   events: LaneEventState[];
+  instruction?: string;
+  model?: string;
+  startedAtMs?: number;
+  completedAtMs?: number;
+  costUsd?: string;
+}
+
+export interface PendingDelegateBrief {
+  instruction: string;
+  model?: string;
+  toolCallId?: string;
 }
 
 export interface SessionAlert {
@@ -136,7 +152,11 @@ export interface SessionOutput {
   kind: "file" | "image" | "diagram" | "data";
   title: string;
   path: string;
-  source: string;
+  source?: string;
+  laneId?: string;
+  toolCallId?: string;
+  eventId?: string;
+  runtimeHost?: string;
 }
 
 export interface SessionViewState {
@@ -146,6 +166,8 @@ export interface SessionViewState {
   runtimeSessionId?: string;
   projectDir: string;
   requestedBundle?: string;
+  requestedModel?: string;
+  requestedProvider?: string;
   resumeId?: string;
   title: string;
   bundle: string;
@@ -158,7 +180,9 @@ export interface SessionViewState {
     text: string;
     mode: string;
   };
+  composerDraft: string;
   autopilot: boolean;
+  autopilotPending: boolean;
   activity: string;
   turnStartedAtMs?: number;
   replaying: boolean;
@@ -166,6 +190,11 @@ export interface SessionViewState {
     history: boolean;
     status: boolean;
     statusBusy?: boolean;
+  };
+  restoreIssue?: {
+    missing: Array<"history" | "status">;
+    message: string;
+    attempt: number;
   };
   pendingApproval?: ApprovalState;
   pendingDecision?: DecisionState;
@@ -178,6 +207,7 @@ export interface SessionViewState {
   liveTail?: LiveTailState;
   openThinkingId?: string;
   lanes: Record<string, LaneState>;
+  pendingDelegateBriefs: Record<string, PendingDelegateBrief>;
   alerts: SessionAlert[];
   outputs: SessionOutput[];
   lastSequence?: number;

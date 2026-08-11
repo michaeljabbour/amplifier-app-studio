@@ -4,6 +4,7 @@ const STATUS_PRIORITY: Record<LaneState["status"], number> = {
   running: 0,
   attention: 1,
   completed: 2,
+  detached: 3,
 };
 
 export function orderAgentLanes(lanes: LaneState[]): LaneState[] {

@@ -22,6 +22,8 @@ struct DesktopLifecycle {
 #[cfg(desktop)]
 use tauri::Manager;
 use tauri::{AppHandle, Emitter, State};
+#[cfg(desktop)]
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(desktop)]
 mod app_updates {
@@ -135,12 +137,14 @@ mod app_updates {
         // every owned runtime. This is mandatory before restart: kill_on_drop
         // is not reliable across Tauri's process-replacement path.
         if let Err(error) = sessions.stop_all().await {
+            sessions.resume_after_failed_update();
             lifecycle
                 .update_installing
                 .store(false, std::sync::atomic::Ordering::SeqCst);
             return Err(error);
         }
         if let Err(error) = update.install(bytes) {
+            sessions.resume_after_failed_update();
             lifecycle
                 .update_installing
                 .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -226,10 +230,52 @@ async fn install_runtime() -> Result<runtime_setup::RuntimeStatus, String> {
 }
 
 #[tauri::command]
+async fn configure_provider(
+    provider_type: String,
+    api_key: String,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<runtime_setup::RuntimeStatus, String> {
+    runtime_setup::configure_provider(provider_type, api_key, model, base_url).await
+}
+
+#[tauri::command]
 fn default_project_dir() -> Result<String, String> {
     std::env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| format!("Could not read the current directory: {error}"))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn open_output(app: AppHandle, project_dir: String, path: String) -> Result<(), String> {
+    let output = resolve_output_path(&project_dir, &path)?;
+    app.opener()
+        .open_path(output.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|error| format!("Could not open output: {error}"))
+}
+
+#[cfg(desktop)]
+fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathBuf, String> {
+    let project = std::path::PathBuf::from(project_dir)
+        .canonicalize()
+        .map_err(|error| format!("Could not open project directory: {error}"))?;
+    let candidate = std::path::PathBuf::from(path);
+    let candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        project.join(candidate)
+    };
+    let output = candidate
+        .canonicalize()
+        .map_err(|error| format!("Output does not exist: {error}"))?;
+    if !output.starts_with(&project) {
+        return Err("Studio only opens outputs inside this session's project directory".to_owned());
+    }
+    if !output.is_file() {
+        return Err("The selected output is not a file".to_owned());
+    }
+    Ok(output)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -240,6 +286,7 @@ pub fn run() {
             {
                 _app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
+                _app.handle().plugin(tauri_plugin_opener::init())?;
                 _app.manage(app_updates::PendingUpdate::default());
                 _app.manage(DesktopLifecycle::default());
             }
@@ -256,7 +303,10 @@ pub fn run() {
             add_bundle,
             runtime_status,
             install_runtime,
+            configure_provider,
             default_project_dir,
+            #[cfg(desktop)]
+            open_output,
             #[cfg(desktop)]
             app_updates::fetch_update,
             #[cfg(desktop)]
@@ -306,7 +356,14 @@ pub fn run() {
                     app.state::<DesktopLifecycle>()
                         .exit_phase
                         .store(2, Ordering::SeqCst);
-                    app.exit(code.unwrap_or(0));
+                    // On macOS, requesting a second graceful exit after the
+                    // original application-terminate event was prevented can
+                    // leave AppKit waiting forever. Every owned runtime has
+                    // already been drained (or hit its bounded kill fallback),
+                    // so perform Tauri's documented cleanup and finish the
+                    // process directly instead of re-entering ExitRequested.
+                    app.cleanup_before_exit();
+                    std::process::exit(code.unwrap_or(0));
                 });
             }
         });
@@ -314,4 +371,28 @@ pub fn run() {
 
     #[cfg(mobile)]
     app.run(|_, _| {});
+}
+
+#[cfg(all(test, desktop))]
+mod output_tests {
+    use super::resolve_output_path;
+
+    #[test]
+    fn opens_only_existing_files_inside_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let output = project.path().join("result.txt");
+        std::fs::write(&output, "result").unwrap();
+        assert_eq!(
+            resolve_output_path(project.path().to_str().unwrap(), "result.txt").unwrap(),
+            output.canonicalize().unwrap()
+        );
+
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        let error = resolve_output_path(
+            project.path().to_str().unwrap(),
+            outside.path().to_str().unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.contains("inside this session's project"));
+    }
 }

@@ -16,8 +16,8 @@ interface Props {
 export function WorkspaceSidebar(props: Props) {
   const projectName = () => props.state.projectDir.split(/[\\/]/).filter(Boolean).at(-1) || "No project";
   const orderedLanes = () => orderAgentLanes(props.lanes);
-  const activeLanes = () => orderedLanes().filter((lane) => lane.status !== "completed");
-  const completedLanes = () => orderedLanes().filter((lane) => lane.status === "completed");
+  const activeLanes = () => orderedLanes().filter((lane) => lane.status === "running" || lane.status === "attention");
+  const historicalLanes = () => orderedLanes().filter((lane) => lane.status === "completed" || lane.status === "detached");
   const liveCount = () => liveAgentCount(props.lanes);
 
   return (
@@ -49,12 +49,16 @@ export function WorkspaceSidebar(props: Props) {
           when={props.lanes.length > 0}
           fallback={
             <div class="agent-empty">
-              <strong>{props.state.restoreProgress && props.state.phase === "starting"
+              <strong>{props.state.phase === "degraded"
+                ? "Agent history is incomplete"
+                : props.state.restoreProgress && props.state.phase === "starting"
                 ? "Restoring agent history"
                 : props.state.busy
                   ? "Coordinator is working"
                   : "No child agents this turn"}</strong>
-              <p>{props.state.restoreProgress && props.state.phase === "starting"
+              <p>{props.state.phase === "degraded"
+                ? "Retry the restore or open the partial session. Missing completions will be marked as detached."
+                : props.state.restoreProgress && props.state.phase === "starting"
                 ? "Historical and active child workspaces will appear after the session status is reconciled."
                 : props.state.busy
                   ? "If this session creates specialists, each child workspace will appear here live."
@@ -68,10 +72,10 @@ export function WorkspaceSidebar(props: Props) {
               selected={lane.id === props.selectedLaneId}
               onSelect={() => props.onSelectLane(lane.id)}
             />}</For>
-            <Show when={completedLanes().length > 0}>
-              <div class="agent-history-label"><span>COMPLETED HISTORY</span><b>{completedLanes().length}</b></div>
+            <Show when={historicalLanes().length > 0}>
+              <div class="agent-history-label"><span>RECORDED AGENT HISTORY</span><b>{historicalLanes().length}</b></div>
             </Show>
-            <For each={completedLanes()}>{(lane) => <AgentWorkspaceButton
+            <For each={historicalLanes()}>{(lane) => <AgentWorkspaceButton
               lane={lane}
               selected={lane.id === props.selectedLaneId}
               onSelect={() => props.onSelectLane(lane.id)}
@@ -93,7 +97,7 @@ function AgentWorkspaceButton(props: { lane: LaneState; selected: boolean; onSel
       onClick={props.onSelect}
       aria-label={`Inspect ${props.lane.agent}, ${props.lane.status}, ${props.lane.activity}`}
     >
-      <span class="agent-status-word">{props.lane.status === "running" ? "LIVE" : props.lane.status === "completed" ? "DONE" : "CHECK"}</span>
+      <span class="agent-status-word">{props.lane.status === "running" ? "LIVE" : props.lane.status === "completed" ? "DONE" : props.lane.status === "detached" ? "UNKNOWN" : "CHECK"}</span>
       <span class="agent-workspace-copy">
         <strong>{props.lane.agent}</strong>
         <Markdown compact class="agent-summary" text={props.lane.activity} />

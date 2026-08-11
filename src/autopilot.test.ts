@@ -1,23 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_SESSION_AUTOPILOT_INSTRUCTION, activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
+import { activeSessionAutopilotOp, canEngageAutopilot, DEFAULT_AUTOPILOT_MAX_TURNS } from "./autopilot";
+
+const user = (text: string) => ({ id: "b1", kind: "user" as const, text });
 
 describe("active-session Autopilot", () => {
-  it("continues an idle coordinator without creating another session", () => {
-    expect(activeSessionAutopilotOp({ busy: false })).toEqual({
-      op: "submit",
-      text: ACTIVE_SESSION_AUTOPILOT_INSTRUCTION,
+  it("arms Amplifier's native goal loop from the latest user objective", () => {
+    expect(activeSessionAutopilotOp({ autopilot: false, blocks: [user("Ship the cross-platform app")] })).toEqual({
+      op: "goal.set",
+      condition: "Ship the cross-platform app",
+      max_turns: DEFAULT_AUTOPILOT_MAX_TURNS,
     });
-    expect(ACTIVE_SESSION_AUTOPILOT_INSTRUCTION).toContain("this active session");
-    expect(ACTIVE_SESSION_AUTOPILOT_INSTRUCTION).toContain("Do not start");
   });
 
-  it("steers the active turn when the coordinator is already working", () => {
-    expect(activeSessionAutopilotOp({ busy: true }).op).toBe("steer");
+  it("turns the native loop off instead of starting another session", () => {
+    expect(activeSessionAutopilotOp({ autopilot: true, blocks: [] })).toEqual({ op: "goal.clear" });
+    expect(activeSessionAutopilotOp({ autopilot: false, goal: {
+      state: "continuing", turn: 2, continuations: 1, updatedAtMs: 1,
+    }, blocks: [] })).toEqual({ op: "goal.clear" });
   });
 
-  it("only enables the control for a ready runtime", () => {
-    expect(canEngageAutopilot({ phase: "ready" })).toBe(true);
-    expect(canEngageAutopilot({ phase: "starting" })).toBe(false);
+  it("requires a ready runtime and an objective, but always allows turning off", () => {
+    expect(canEngageAutopilot({ phase: "ready", autopilot: false, blocks: [user("Do it")], autopilotPending: false })).toBe(true);
+    expect(canEngageAutopilot({ phase: "ready", autopilot: false, blocks: [], autopilotPending: false })).toBe(false);
+    expect(canEngageAutopilot({ phase: "starting", autopilot: true, blocks: [], autopilotPending: false })).toBe(false);
     expect(canEngageAutopilot(undefined)).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ interface Props {
   onDrawer: () => void;
   onSettings: () => void;
   inspectorOpen: boolean;
+  inspectorAvailable: boolean;
   onToggleInspector: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
@@ -64,10 +65,11 @@ export function TabStrip(props: Props) {
       <div class="top-workbench-actions">
         <button
           class="inspector-toggle"
-          classList={{ active: props.inspectorOpen }}
+          classList={{ active: props.inspectorAvailable && props.inspectorOpen }}
+          disabled={!props.inspectorAvailable}
           onClick={props.onToggleInspector}
-          aria-label={props.inspectorOpen ? "Hide machine inspector" : "Show machine inspector"}
-          title={props.inspectorOpen ? "Hide machine inspector" : "Show run, bundles, outputs, and context"}
+          aria-label={!props.inspectorAvailable ? "Session inspector unavailable without an open session" : props.inspectorOpen ? "Hide session inspector" : "Show session inspector"}
+          title={!props.inspectorAvailable ? "Open or start a session to inspect its run" : props.inspectorOpen ? "Hide session inspector" : "Show run, setup, outputs, and context"}
         >
           <span class="inspector-toggle-glyph" aria-hidden="true"><i /><i /><i /></span>
           <span>Inspect</span>

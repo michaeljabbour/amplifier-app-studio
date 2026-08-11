@@ -4,10 +4,16 @@ const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import
 const tauriVersion = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).version;
 const cargo = readFileSync(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
 const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+const iosInfo = readFileSync(new URL("../src-tauri/gen/apple/amplifier-studio_iOS/Info.plist", import.meta.url), "utf8");
+const iosMarketingVersion = iosInfo.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+const iosProject = readFileSync(new URL("../src-tauri/gen/apple/project.yml", import.meta.url), "utf8");
+const iosProjectVersion = iosProject.match(/^\s*CFBundleShortVersionString:\s*([^\s]+)\s*$/m)?.[1];
 const versions = new Map([
   ["package.json", packageVersion],
   ["src-tauri/Cargo.toml", cargoVersion],
   ["src-tauri/tauri.conf.json", tauriVersion],
+  ["src-tauri/gen/apple/amplifier-studio_iOS/Info.plist", iosMarketingVersion],
+  ["src-tauri/gen/apple/project.yml", iosProjectVersion],
 ]);
 
 for (const [file, version] of versions) {

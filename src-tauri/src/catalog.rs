@@ -1,8 +1,8 @@
 use crate::runtime_setup;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, process::Command};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BundleOption {
     pub name: String,
@@ -11,7 +11,7 @@ pub struct BundleOption {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderOption {
     pub name: String,
@@ -29,11 +29,11 @@ pub struct CapabilityCatalog {
 
 pub fn list_catalog(project_dir: Option<String>) -> Result<CapabilityCatalog, String> {
     let cwd = resolve_cwd(project_dir)?;
-    let bundles = run_cli(&cwd, &["bundle", "list"])?;
-    let providers = run_cli(&cwd, &["provider", "list"])?;
+    let bundles = run_cli(&cwd, &["bundle", "list", "--format", "json"])?;
+    let providers = run_cli(&cwd, &["provider", "list", "--format", "json"])?;
     Ok(CapabilityCatalog {
-        bundles: parse_bundles(&bundles),
-        providers: parse_providers(&providers),
+        bundles: parse_json(&bundles, "bundle")?,
+        providers: parse_json(&providers, "provider")?,
     })
 }
 
@@ -138,57 +138,12 @@ fn run_cli(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn parse_bundles(output: &str) -> Vec<BundleOption> {
-    output
-        .lines()
-        .filter_map(|line| {
-            if !line.starts_with('│') {
-                return None;
-            }
-            let columns: Vec<_> = line.split('│').map(str::trim).collect();
-            let name = columns.get(2).copied().unwrap_or_default();
-            if name.is_empty() || name == "Name" {
-                return None;
-            }
-            Some(BundleOption {
-                name: name.to_owned(),
-                active: columns.get(1).is_some_and(|value| value.contains('●')),
-                location: columns.get(3).copied().unwrap_or_default().to_owned(),
-                status: columns.get(4).copied().unwrap_or_default().to_owned(),
-            })
-        })
-        .collect()
-}
-
-fn parse_providers(output: &str) -> Vec<ProviderOption> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || !trimmed.contains('·') {
-                return None;
-            }
-            let active = trimmed.starts_with('★');
-            let clean = trimmed.trim_start_matches('★').trim();
-            let parts: Vec<_> = clean.split('·').map(str::trim).collect();
-            let name = parts.first().copied().unwrap_or_default();
-            let module = parts.get(1).copied().unwrap_or_default();
-            let tail = parts.last().copied().unwrap_or_default();
-            let model = tail
-                .rsplit_once('(')
-                .and_then(|(_, suffix)| suffix.strip_suffix(')'))
-                .unwrap_or_default();
-            if name.is_empty() {
-                return None;
-            }
-            Some(ProviderOption {
-                name: name.to_owned(),
-                module: module.to_owned(),
-                model: model.to_owned(),
-                active,
-            })
-        })
-        .collect()
+fn parse_json<T: serde::de::DeserializeOwned>(output: &str, kind: &str) -> Result<T, String> {
+    serde_json::from_str(output.trim()).map_err(|error| {
+        format!(
+            "Amplifier returned an invalid {kind} catalog. Update amplifier-tui and retry: {error}"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -196,21 +151,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_bundle_table_rows() {
-        let rows = "│   │ anchors │ /tmp/anchors.md │ │\n│ ● │ tui │ /tmp/tui.md │ default │";
-        let parsed = parse_bundles(rows);
+    fn parses_bundle_json_contract() {
+        let rows = r#"[{"name":"anchors","active":false,"location":"/tmp/anchors.md","status":""},{"name":"tui","active":true,"location":"/tmp/tui.md","status":"default"}]"#;
+        let parsed: Vec<BundleOption> = parse_json(rows, "bundle").unwrap();
         assert_eq!(parsed.len(), 2);
         assert!(parsed[1].active);
         assert_eq!(parsed[0].name, "anchors");
     }
 
     #[test]
-    fn parses_provider_matrix_rows() {
-        let rows = "★ anthropic · provider-anthropic · pri 1 · global (claude-opus-5)\n  openai · provider-openai · pri 2 · global (gpt-5.5)";
-        let parsed = parse_providers(rows);
+    fn parses_provider_json_contract() {
+        let rows = r#"[{"name":"anthropic","module":"provider-anthropic","model":"claude-opus-5","active":true},{"name":"openai","module":"provider-openai","model":"gpt-5.5","active":false}]"#;
+        let parsed: Vec<ProviderOption> = parse_json(rows, "provider").unwrap();
         assert_eq!(parsed[0].model, "claude-opus-5");
         assert!(parsed[0].active);
         assert_eq!(parsed[1].name, "openai");
+    }
+
+    #[test]
+    fn rejects_human_formatted_catalogs_with_upgrade_guidance() {
+        let error = parse_json::<Vec<BundleOption>>("│ ● │ tui │", "bundle").unwrap_err();
+        assert!(error.contains("Update amplifier-tui"));
     }
 
     #[test]

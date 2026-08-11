@@ -16,10 +16,10 @@ interface Props {
 export function CapabilityPalette(props: Props) {
   return (
     <div class="modal-backdrop capability-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
-      <section class="capability-palette" aria-label="Machine capabilities">
+      <section class="capability-palette" aria-label="Session capabilities">
         <header class="capability-heading">
           <div>
-            <div class="eyebrow">MACHINE LIBRARY</div>
+            <div class="eyebrow">CAPABILITY LIBRARY</div>
             <h2>What should Amplifier become?</h2>
             <p>Choose an outcome. Studio composes the runtime and opens it beside your coordinator.</p>
           </div>
@@ -43,7 +43,7 @@ export function CapabilityPalette(props: Props) {
                   <button
                     class="secondary-button"
                     classList={{ included: capability.activation === "included" }}
-                    disabled={capability.activation === "included"}
+                    disabled={capability.activation !== "parallel-session"}
                     onClick={() => props.onLaunch(capability)}
                   >{capability.action}</button>
                 </footer>

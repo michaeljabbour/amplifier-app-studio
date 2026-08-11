@@ -103,13 +103,32 @@ window chrome. Platform configuration lives in `src-tauri/tauri.*.conf.json`.
 Build the SolidJS client and serve it from the Rust bridge:
 
 ```bash
+export AMPLIFIER_STUDIO_BRIDGE_TOKEN="$(openssl rand -hex 32)"
+export AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS="$PWD"
 npm run web:serve
 ```
 
-Then open <http://127.0.0.1:4317>. The browser uses the WebSocket path and can
-start real Amplifier sessions; it is not a static mock. For split development,
-run `npm run web:bridge` and `npm run dev` in separate terminals—the Vite
-server proxies `/api` and WebSocket upgrades to port 4317.
+Then open <http://127.0.0.1:4317>, open Bridge settings, and enter the token.
+The browser uses an authenticated WebSocket path and can start real Amplifier
+sessions; it is not a static mock. Project execution is default-deny and every
+allowed root is canonicalized before use. For split development, allow Vite's
+exact origin and run the bridge and client separately:
+
+```bash
+export AMPLIFIER_STUDIO_BRIDGE_TOKEN="$(openssl rand -hex 32)"
+export AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS="$PWD"
+export AMPLIFIER_STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:1420"
+npm run web:bridge
+npm run dev
+```
+
+The token may instead come from `--token-file PATH`. A remote client must use
+an authenticated TLS tunnel or reverse proxy; the included host remains
+loopback-only.
+
+For development against a specific runtime checkout, set
+`AMPLIFIER_STUDIO_RUNTIME_BIN` to that checkout's `amplifier-tui` executable.
+Packaged builds otherwise prefer `~/.local/bin/amplifier-tui` and then `PATH`.
 
 ## Android
 
@@ -191,11 +210,21 @@ the selection. GitHub publishing requires `APPLE_CERTIFICATE` (base64 `.p12`),
 key. The workflow imports the certificate, signs both macOS architectures, and
 lets Tauri notarize them before publishing.
 
-To publish, update the version in `package.json`, `src-tauri/Cargo.toml`, and
-`src-tauri/tauri.conf.json`, then push a matching tag such as `studio-v0.2.0`.
-The workflow creates a draft GitHub Release. Review its artifacts and publish
-the release; `releases/latest/download/latest.json` then becomes the update
-feed automatically. Production desktop builds check the canonical Amplifier
+Windows releases require `WINDOWS_CERTIFICATE` (base64 `.pfx`),
+`WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT` (the
+certificate's 40-character SHA-1 thumbprint), and `WINDOWS_TIMESTAMP_URL`.
+Store all desktop signing secrets in the protected `release` environment so
+its deployment rules act as the human release gate.
+
+To publish, update the version in `package.json`, `src-tauri/Cargo.toml`,
+`src-tauri/tauri.conf.json`, and the generated iOS `Info.plist`/`project.yml`,
+then push a matching tag such as `studio-v0.2.0`. `npm run release:check`
+rejects a desktop/mobile marketing-version mismatch.
+The tag-triggered workflow holds a draft GitHub Release while all four desktop
+builds finish, generates one complete cross-platform `latest.json`, and then
+publishes the release as the repository's latest release automatically.
+`releases/latest/download/latest.json` becomes the update feed only after that
+final job succeeds. Production desktop builds check the canonical Amplifier
 Studio feed by default; set `VITE_STUDIO_UPDATER_ENABLED=false` for a local or
 forked production build that must not check upstream. Development builds leave
 updates disabled unless the flag is explicitly set to `true`.

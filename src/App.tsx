@@ -7,6 +7,7 @@ import { CoordinatorHome } from "./components/CoordinatorHome";
 import { Footer } from "./components/Footer";
 import { Inspector, type InspectorTab } from "./components/Inspector";
 import { NewSessionDialog } from "./components/NewSessionDialog";
+import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
 import { SessionToolbar } from "./components/SessionToolbar";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { TabStrip } from "./components/TabStrip";
@@ -21,34 +22,48 @@ import {
   createSessionState,
   dismissAlert,
   markClosing,
-  markAutopilotEngaged,
+  markAutopilotPending,
+  markAutopilotSendFailed,
   markEffortPending,
   markExited,
   markPromptSendFailed,
   markPromptSubmitted,
-  queueLocalSteer,
+  markSteerSubmitted,
+  markSteerSendFailed,
+  markRestoreDegraded,
+  openRestoreAnyway,
   reduceRecord,
   resolveAttention,
+  retryRestore,
+  setComposerDraft,
+  setThinkingExpanded,
 } from "./reducer";
 import {
   createGuiId,
   addBundle,
   configuredBridgeUrl,
+  configureProvider,
+  configuredBridgeToken,
   defaultProjectDir,
   getRuntimeStatus,
+  openLocalOutput,
   installRuntime,
   launchSession,
   listCatalog,
   listStoredSessions,
   sendOp,
   saveBridgeUrl,
+  saveBridgeToken,
   stopSession,
   transportLabel,
+  usesWebBridge,
   type RuntimeStatus,
   type SessionConnection,
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
 import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
+
+const RESTORE_TIMEOUT_MS = 15_000;
 
 export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
@@ -60,6 +75,7 @@ export default function App() {
   const [storedError, setStoredError] = createSignal<string>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [providerSetupOpen, setProviderSetupOpen] = createSignal(false);
   const [capabilitiesOpen, setCapabilitiesOpen] = createSignal(false);
   const [transport, setTransport] = createSignal(transportLabel());
   const [catalog, setCatalog] = createSignal<CapabilityCatalog>({ bundles: [], providers: [] });
@@ -75,12 +91,13 @@ export default function App() {
   const connections = new Map<string, SessionConnection>();
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
+  const restoreTimers = new Map<string, number>();
   const pendingInitialPrompts = new Map<string, string>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
-  const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "closing"));
+  const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
   const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
 
@@ -97,15 +114,6 @@ export default function App() {
     void refreshRuntime();
     queueMicrotask(() => void refreshStored());
     queueMicrotask(() => void refreshCatalog());
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      const session = active();
-      if (session?.pendingApproval) {
-        event.preventDefault();
-        void chooseAttention("Deny");
-      }
-    };
-    window.addEventListener("keydown", keydown);
     const checkForUpdates = () => {
       if (appUpdatesEnabled() && !updateInProgress()) void refreshAppUpdate(false);
     };
@@ -118,7 +126,6 @@ export default function App() {
     document.addEventListener("visibilitychange", visibility);
     queueMicrotask(() => void restoreAfterUpdate());
     onCleanup(() => {
-      window.removeEventListener("keydown", keydown);
       window.removeEventListener("focus", checkForUpdates);
       document.removeEventListener("visibilitychange", visibility);
       if (updateTimer !== undefined) window.clearTimeout(updateTimer);
@@ -129,6 +136,7 @@ export default function App() {
   onCleanup(() => {
     connections.forEach((connection) => connection.dispose());
     statusPollers.forEach((timer) => window.clearInterval(timer));
+    restoreTimers.forEach((timer) => window.clearTimeout(timer));
   });
 
   const update = (guiId: string, transform: (state: SessionViewState) => SessionViewState) => {
@@ -137,15 +145,18 @@ export default function App() {
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
     update(guiId, (state) => reduceRecord(state, record));
+    if (sessions().find((item) => item.guiId === guiId)?.phase === "ready") clearRestoreTimeout(guiId);
     const type = typeof record.type === "string" ? record.type : "";
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
       initialized.add(guiId);
-      void requestStatus(guiId);
       void sendOp(guiId, { op: "context.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "effort.get" }).catch((error) => reportSendError(guiId, error));
+      void sendOp(guiId, { op: "goal.status" }).catch((error) => reportSendError(guiId, error));
       const session = sessions().find((item) => item.guiId === guiId);
       if (session?.resumeId) {
-        void sendOp(guiId, { op: "history.replay", since: 0, limit: 0 }).catch((error) => reportSendError(guiId, error));
+        void requestRestore(guiId);
+      } else {
+        void requestStatus(guiId);
       }
       const initialPrompt = pendingInitialPrompts.get(guiId);
       if (initialPrompt) {
@@ -158,7 +169,7 @@ export default function App() {
   };
 
   const start = async (input: NewSessionInput, initialPrompt?: string) => {
-    if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another machine");
+    if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another run");
     const guiId = createGuiId();
     const state = initialPrompt?.trim()
       ? markPromptSubmitted(createSessionState(guiId, input), initialPrompt)
@@ -175,6 +186,7 @@ export default function App() {
           onLog: (log) => update(guiId, (current) => addProcessLog(current, log.stream, log.message)),
           onExit: (exit) => {
             clearStatusPolling(guiId);
+            clearRestoreTimeout(guiId);
             update(guiId, (current) => markExited(current, exit.code, exit.message));
           },
         },
@@ -196,7 +208,7 @@ export default function App() {
   const close = async (guiId: string) => {
     const session = sessions().find((item) => item.guiId === guiId);
     if (!session) return;
-    if (session.phase === "starting" || session.phase === "ready") {
+    if (session.phase === "starting" || session.phase === "degraded" || session.phase === "ready") {
       update(guiId, markClosing);
       try {
         await stopSession(guiId);
@@ -209,6 +221,7 @@ export default function App() {
     initialized.delete(guiId);
     pendingInitialPrompts.delete(guiId);
     clearStatusPolling(guiId);
+    clearRestoreTimeout(guiId);
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
@@ -216,26 +229,38 @@ export default function App() {
 
   const submit = async (text: string) => {
     const session = active();
-    if (!session) return;
+    if (!session) return false;
     if (updateInProgress()) {
       update(session.guiId, (state) => addLocalNotice(state, "Amplifier Studio is updating; this runtime is being prepared for a clean restart", "warning"));
-      return;
+      return false;
     }
     if (session.busy) {
       if (session.queuedSteers >= 32) {
         update(session.guiId, (state) => addLocalNotice(state, "Steering queue is full (32 items)", "warning"));
-        return;
+        return false;
       }
-      await sendOp(session.guiId, { op: "steer", text });
-      update(session.guiId, queueLocalSteer);
-      return;
+      let optimisticSteerId: string | undefined;
+      update(session.guiId, (state) => {
+        const next = markSteerSubmitted(state, text);
+        optimisticSteerId = next.blocks.at(-1)?.id;
+        return next;
+      });
+      try {
+        await sendOp(session.guiId, { op: "steer", text });
+      } catch (error) {
+        update(session.guiId, (state) => markSteerSendFailed(state, cleanError(error), optimisticSteerId));
+        return false;
+      }
+      return true;
     }
     update(session.guiId, (state) => markPromptSubmitted(state, text));
     try {
       await sendOp(session.guiId, { op: "submit", text });
     } catch (error) {
       update(session.guiId, (state) => markPromptSendFailed(state, cleanError(error)));
+      return false;
     }
+    return true;
   };
 
   const interrupt = async () => {
@@ -319,6 +344,7 @@ export default function App() {
   };
 
   const openCapability = (capability: StudioCapability) => {
+    if (capability.activation === "post-release") return;
     if (capability.activation === "included") {
       setCapabilitiesOpen(false);
       if (active()) openInspector("run");
@@ -339,11 +365,7 @@ export default function App() {
   const engageAutopilot = async () => {
     const session = active();
     if (!session || !canEngageAutopilot(session)) return;
-    if (autopilotActive()) {
-      openInspector("run");
-      return;
-    }
-    if (session.pendingApproval || session.pendingDecision) {
+    if (!autopilotActive() && (session.pendingApproval || session.pendingDecision)) {
       update(session.guiId, (state) => addLocalNotice(
         state,
         "Autopilot is waiting at a consequential decision. Resolve it before autonomous work continues.",
@@ -352,19 +374,21 @@ export default function App() {
       openInspector("run");
       return;
     }
-    if (session.busy && session.queuedSteers >= 32) {
-      update(session.guiId, (state) => addLocalNotice(state, "Steering queue is full (32 items)", "warning"));
+    const op = activeSessionAutopilotOp(session);
+    if (!op) {
+      update(session.guiId, (state) => addLocalNotice(
+        state,
+        "Send a goal first, then turn on Autopilot for that goal.",
+        "warning",
+      ));
       return;
     }
+    update(session.guiId, markAutopilotPending);
     try {
-      await sendOp(session.guiId, activeSessionAutopilotOp(session));
-      update(session.guiId, (state) => {
-        const engaged = markAutopilotEngaged(state);
-        return session.busy ? queueLocalSteer(engaged) : engaged;
-      });
+      await sendOp(session.guiId, op);
       openInspector("run");
     } catch (error) {
-      reportSendError(session.guiId, error);
+      update(session.guiId, (state) => markAutopilotSendFailed(state, cleanError(error)));
     }
   };
 
@@ -424,6 +448,56 @@ export default function App() {
     }
   };
 
+  const retrySessionRestore = (guiId: string) => {
+    update(guiId, retryRestore);
+    void requestRestore(guiId);
+  };
+
+  const openSessionWithoutFullRestore = (guiId: string) => {
+    clearRestoreTimeout(guiId);
+    update(guiId, openRestoreAnyway);
+  };
+
+  const relaunchFailedSession = async (session: SessionViewState, resumeLatest: boolean) => {
+    const resumeId = resumeLatest ? session.runtimeSessionId || session.resumeId : session.resumeId;
+    const input: NewSessionInput = {
+      projectDir: session.projectDir,
+      bundle: session.requestedBundle,
+      model: session.requestedModel,
+      provider: session.requestedProvider,
+      mode: session.mode,
+      resumeId,
+      resumeName: resumeId ? session.title : undefined,
+      capabilityId: session.capabilityId,
+      capabilityName: session.capabilityName,
+    };
+    await close(session.guiId);
+    try {
+      await start(input);
+    } catch {
+      // start() keeps the replacement tab visible with its recovery actions.
+    }
+  };
+
+  const exportSessionDiagnostics = (session: SessionViewState) => {
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      session,
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const label = (session.runtimeSessionId || session.resumeId || session.guiId).replace(/[^a-zA-Z0-9._-]+/g, "-");
+    anchor.href = url;
+    anchor.download = `amplifier-studio-${label}-diagnostics.json`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    queueMicrotask(() => URL.revokeObjectURL(url));
+  };
+
   const applyAppUpdate = async () => {
     const current = appUpdate();
     if (current.status === "error") {
@@ -455,6 +529,7 @@ export default function App() {
         onDrawer={openDrawer}
         onSettings={() => setSettingsOpen(true)}
         inspectorOpen={rightOpen()}
+        inspectorAvailable={Boolean(active())}
         onToggleInspector={() => setRightOpen((value) => !value)}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
@@ -477,6 +552,8 @@ export default function App() {
             onNew={openNew}
             onDrawer={openDrawer}
             onInstall={() => void installLocalRuntime()}
+            onConfigureProvider={() => setProviderSetupOpen(true)}
+            providerSetupSupported={!usesWebBridge()}
             onSettings={() => setSettingsOpen(true)}
           />
         }
@@ -497,19 +574,32 @@ export default function App() {
                 state={session()}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
               />
-              <Transcript state={session()} onInterrupt={() => void interrupt()} />
+              <Transcript
+                state={session()}
+                onInterrupt={() => void interrupt()}
+                onRetryRestore={() => retrySessionRestore(session().guiId)}
+                onOpenRestoreAnyway={() => openSessionWithoutFullRestore(session().guiId)}
+                onThinkingExpanded={(blockId, expanded) => update(session().guiId, (state) => setThinkingExpanded(state, blockId, expanded))}
+                onRetry={session().projectDir ? () => void relaunchFailedSession(session(), false) : undefined}
+                retryLabel={session().resumeId ? "Retry resume" : "Retry"}
+                onResume={session().runtimeSessionId && session().runtimeSessionId !== session().resumeId
+                  ? () => void relaunchFailedSession(session(), true)
+                  : undefined}
+                onExport={() => exportSessionDiagnostics(session())}
+              />
               <div class="input-zone">
                 <Show
                   when={session().pendingApproval || session().pendingDecision}
                   fallback={<Composer
                     state={session()}
                     onSend={submit}
+                    onDraft={(draft) => update(session().guiId, (state) => setComposerDraft(state, draft))}
                     onAutopilot={() => void engageAutopilot()}
                     autopilotActive={autopilotActive()}
                     autopilotAvailable={canEngageAutopilot(active())}
                   />}
                 >
-                  <AttentionBar state={session()} onChoose={(choice) => void chooseAttention(choice)} />
+                  <AttentionBar state={session()} onChoose={chooseAttention} />
                 </Show>
               </div>
               <Footer
@@ -538,6 +628,13 @@ export default function App() {
               onRefreshBundles={reloadCatalog}
               onCapabilities={() => setCapabilitiesOpen(true)}
               onRequestContext={() => void requestContextForActive()}
+              onOpenOutput={usesWebBridge() ? undefined : async (path) => {
+                try {
+                  await openLocalOutput(session().projectDir, path);
+                } catch (error) {
+                  update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
+                }
+              }}
             />
           </div>
         )}
@@ -569,13 +666,35 @@ export default function App() {
       <Show when={settingsOpen()}>
         <BridgeSettingsDialog
           initialUrl={configuredBridgeUrl()}
+          initialToken={configuredBridgeToken()}
           locked={sessions().length > 0}
           onCancel={() => setSettingsOpen(false)}
-          onSave={(url) => {
+          onSave={(url, token) => {
             saveBridgeUrl(url);
+            saveBridgeToken(token, url);
             setTransport(transportLabel());
             setSettingsOpen(false);
-            void defaultProjectDir().then(setDefaultDir).catch(() => setDefaultDir(""));
+            void defaultProjectDir()
+              .then((projectDir) => {
+                setDefaultDir(projectDir);
+                return Promise.all([
+                  refreshRuntime(),
+                  refreshStored(),
+                  refreshCatalog(projectDir),
+                ]);
+              })
+              .catch(() => setDefaultDir(""));
+          }}
+        />
+      </Show>
+      <Show when={providerSetupOpen()}>
+        <ProviderSetupDialog
+          configure={configureProvider}
+          onClose={() => setProviderSetupOpen(false)}
+          onConfigured={(status) => {
+            setRuntime(status);
+            setRuntimeError(undefined);
+            void refreshCatalog(defaultDir());
           }}
         />
       </Show>
@@ -667,6 +786,36 @@ export default function App() {
     const timer = statusPollers.get(guiId);
     if (timer !== undefined) window.clearInterval(timer);
     statusPollers.delete(guiId);
+  }
+
+  function clearRestoreTimeout(guiId: string) {
+    const timer = restoreTimers.get(guiId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    restoreTimers.delete(guiId);
+  }
+
+  async function requestRestore(guiId: string) {
+    const session = sessions().find((item) => item.guiId === guiId);
+    if (!session?.restoreProgress) return;
+    clearRestoreTimeout(guiId);
+    const fail = (error: unknown) => {
+      clearRestoreTimeout(guiId);
+      update(guiId, (state) => markRestoreDegraded(state, `Amplifier could not request the remaining restore data: ${cleanError(error)}`));
+    };
+    if (!session.restoreProgress.status) {
+      void sendOp(guiId, { op: "session.status" }).catch(fail);
+    }
+    if (!session.restoreProgress.history) {
+      void sendOp(guiId, { op: "history.replay", since: 0, limit: 0 }).catch(fail);
+    }
+    const timer = window.setTimeout(() => {
+      restoreTimers.delete(guiId);
+      update(guiId, (state) => markRestoreDegraded(
+        state,
+        "Amplifier did not return all restore data within 15 seconds. The runtime is still connected; choose whether to retry or continue with partial state.",
+      ));
+    }, RESTORE_TIMEOUT_MS);
+    restoreTimers.set(guiId, timer);
   }
 
   async function requestStatus(guiId: string) {

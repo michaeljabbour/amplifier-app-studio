@@ -22,13 +22,21 @@ export function machinePresence(state: SessionViewState): MachinePresence {
   if (state.phase === "error" || state.phase === "exited" || state.phase === "closing") {
     return { label: "Amplifier is stopped", detail: state.error || state.phase, tone: "stopped", live: false };
   }
+  if (state.autopilotPending) {
+    return {
+      label: state.autopilot ? "Stopping Autopilot" : "Starting Autopilot",
+      detail: "Waiting for Amplifier's goal controller",
+      tone: "live",
+      live: true,
+    };
+  }
 
   const runningLanes = Object.values(state.lanes).filter((lane) => lane.status === "running");
   const runningTools = runningLanes.reduce(
     (count, lane) => count + lane.tools.filter((tool) => tool.status === "running").length,
     0,
   );
-  if (state.autopilot || state.goal?.state === "continuing") {
+  if (state.autopilot || state.goal?.state === "continuing" || state.goal?.state === "armed") {
     return {
       label: "Autopilot is active",
       detail: state.goal?.turn ? `Goal turn ${state.goal.turn}${state.goal.cap ? ` of ${state.goal.cap}` : ""}` : state.activity,

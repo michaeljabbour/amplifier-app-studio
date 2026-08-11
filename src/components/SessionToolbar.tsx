@@ -32,6 +32,7 @@ export function SessionToolbar(props: {
 export function sessionToolbarStatus(state: SessionViewState): string {
   switch (state.phase) {
     case "starting": return state.bootLabel;
+    case "degraded": return "Restore needs attention";
     case "closing": return "Stopping runtime";
     case "exited": return "Session stopped";
     case "error": return state.error || "Session error";

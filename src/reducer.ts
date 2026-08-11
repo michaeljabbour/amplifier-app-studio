@@ -27,6 +27,8 @@ export function createSessionState(
   input: {
     projectDir: string;
     bundle?: string;
+    model?: string;
+    provider?: string;
     mode?: string;
     resumeId?: string;
     resumeName?: string;
@@ -40,6 +42,8 @@ export function createSessionState(
     capabilityName: input.capabilityName,
     projectDir: input.projectDir,
     requestedBundle: input.bundle,
+    requestedModel: input.model,
+    requestedProvider: input.provider,
     resumeId: input.resumeId,
     title: input.resumeName || input.capabilityName || (input.resumeId ? `Resume ${input.resumeId.slice(0, 8)}` : "New session"),
     bundle: input.bundle || "default bundle",
@@ -48,7 +52,9 @@ export function createSessionState(
     phase: "starting",
     bootLabel: input.resumeId ? "Restoring session" : "Launching runtime",
     busy: false,
+    composerDraft: "",
     autopilot: false,
+    autopilotPending: false,
     activity: "Starting turn",
     replaying: Boolean(input.resumeId),
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
@@ -56,6 +62,7 @@ export function createSessionState(
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
     blocks: [],
     lanes: {},
+    pendingDelegateBriefs: {},
     alerts: [],
     outputs: [],
     queuedSteers: 0,
@@ -108,8 +115,15 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
           ticketId: stringValue(record.ticket_id),
           prompt: stringValue(record.prompt, "Amplifier needs approval"),
           options: stringList(record.options),
+          sessionId: stringValue(record.session_id) || undefined,
+          parentId: stringValue(record.parent_id) || undefined,
+          toolCallId: stringValue(record.tool_call_id) || undefined,
         },
-      }, stringValue(record.prompt));
+      }, {
+        sessionId: stringValue(record.session_id),
+        toolCallId: stringValue(record.tool_call_id),
+        prompt: stringValue(record.prompt),
+      });
     case "context.state":
       return {
         ...next,
@@ -137,11 +151,72 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
           })
         : reconciled;
     }
+    case "goal.state": {
+      const ok = record.ok !== false;
+      const action = stringValue(record.action, "status");
+      const active = ok && record.active === true;
+      const condition = stringValue(record.condition) || next.goal?.condition;
+      const maxTurns = numberValue(record.max_turns);
+      const goal = active
+        ? {
+            state: next.goal?.state === "continuing" ? "continuing" : "armed",
+            condition,
+            turn: next.goal?.turn || 0,
+            continuations: next.goal?.continuations || 0,
+            cap: maxTurns > 0 ? maxTurns : next.goal?.cap,
+            reason: next.goal?.reason,
+            summary: next.goal?.summary,
+            stallDetail: next.goal?.stallDetail,
+            updatedAtMs: Date.now(),
+          }
+        : action === "cleared" && next.goal
+          ? { ...next.goal, state: "cleared", updatedAtMs: Date.now() }
+          : next.goal;
+      const acknowledged = {
+        ...next,
+        autopilot: active,
+        autopilotPending: false,
+        goal,
+        activity: active
+          ? (next.busy ? "Autopilot armed for this run" : "Autopilot running")
+          : action === "cleared"
+            ? (next.busy ? "Finishing current step · Autopilot off" : "Autopilot off")
+            : next.activity,
+      };
+      return ok
+        ? acknowledged
+        : appendBlock(acknowledged, {
+            kind: "notice",
+            level: "error",
+            text: stringValue(record.detail, "Amplifier could not change the autonomous goal"),
+          });
+    }
+    case "goal.result": {
+      const ok = record.ok !== false;
+      const finished = {
+        ...next,
+        busy: false,
+        autopilot: false,
+        autopilotPending: false,
+        pendingPrompt: undefined,
+        liveTail: undefined,
+        queuedSteers: 0,
+        turnStartedAtMs: undefined,
+        activity: ok ? "Autonomous goal stopped" : "Autonomous goal failed",
+      };
+      return ok
+        ? finished
+        : appendBlock(finished, {
+            kind: "notice",
+            level: "error",
+            text: stringValue(record.detail, "Amplifier's autonomous goal stopped with an error"),
+          });
+    }
     case "history.begin":
       return {
         ...next,
         replaying: true,
-        phase: next.restoreProgress ? "starting" : next.phase,
+        phase: next.restoreProgress && next.phase !== "degraded" ? "starting" : next.phase,
         bootLabel: "Replaying durable history",
       };
     case "history.end":
@@ -161,6 +236,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         busy: false,
         pendingPrompt: undefined,
         autopilot: false,
+        autopilotPending: false,
         activity: "Idle",
         liveTail: undefined,
         openThinkingId: undefined,
@@ -176,6 +252,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         busy: false,
         pendingPrompt: undefined,
         autopilot: false,
+        autopilotPending: false,
         liveTail: undefined,
         error: message,
         phase: next.runtimeSessionId ? next.phase : "error",
@@ -196,6 +273,37 @@ export function queueLocalSteer(state: SessionViewState): SessionViewState {
   return { ...state, queuedSteers: Math.min(32, state.queuedSteers + 1) };
 }
 
+export function setComposerDraft(state: SessionViewState, draft: string): SessionViewState {
+  return { ...state, composerDraft: draft };
+}
+
+export function markSteerSubmitted(state: SessionViewState, text: string): SessionViewState {
+  const steer = text.trim();
+  if (!steer) return state;
+  const next = appendBlock(state, { kind: "user", text: steer, mode: "steer" });
+  return {
+    ...next,
+    queuedSteers: Math.min(32, state.queuedSteers + 1),
+    activity: "Course correction queued for Amplifier",
+  };
+}
+
+export function markSteerSendFailed(
+  state: SessionViewState,
+  message: string,
+  optimisticSteerId?: string,
+): SessionViewState {
+  const withoutUndeliveredSteer = optimisticSteerId
+    ? { ...state, blocks: state.blocks.filter((block) => block.id !== optimisticSteerId) }
+    : state;
+  const next = appendBlock(withoutUndeliveredSteer, { kind: "notice", level: "error", text: message });
+  return {
+    ...next,
+    queuedSteers: Math.max(0, state.queuedSteers - 1),
+    activity: "Course correction was not delivered",
+  };
+}
+
 export function markPromptSubmitted(state: SessionViewState, text: string): SessionViewState {
   const prompt = text.trim();
   if (!prompt) return state;
@@ -207,7 +315,7 @@ export function markPromptSubmitted(state: SessionViewState, text: string): Sess
     activity: "Submitting prompt",
     turnStartedAtMs: Date.now(),
     error: undefined,
-    goal: state.goal?.state === "continuing" ? state.goal : undefined,
+    goal: state.goal?.state === "continuing" || state.goal?.state === "armed" ? state.goal : undefined,
     liveTail: undefined,
     openThinkingId: undefined,
   };
@@ -219,17 +327,26 @@ export function markPromptSendFailed(state: SessionViewState, message: string): 
     ...next,
     pendingPrompt: undefined,
     busy: false,
+    autopilotPending: false,
     activity: "Prompt was not sent",
     turnStartedAtMs: undefined,
   };
 }
 
-export function markAutopilotEngaged(state: SessionViewState): SessionViewState {
+export function markAutopilotPending(state: SessionViewState): SessionViewState {
   return {
     ...state,
-    autopilot: true,
-    activity: state.busy ? "Autopilot steering this turn" : "Autopilot starting",
+    autopilotPending: true,
+    activity: state.autopilot ? "Turning Autopilot off" : "Asking Amplifier to manage this goal",
   };
+}
+
+export function markAutopilotSendFailed(state: SessionViewState, message: string): SessionViewState {
+  return appendBlock({
+    ...state,
+    autopilotPending: false,
+    activity: state.busy ? state.activity : "Autopilot change was not delivered",
+  }, { kind: "notice", level: "error", text: message });
 }
 
 export function markEffortPending(state: SessionViewState, effort: string): SessionViewState {
@@ -291,6 +408,7 @@ export function markExited(
     busy: false,
     pendingPrompt: undefined,
     autopilot: false,
+    autopilotPending: false,
     activity: "Idle",
     liveTail: undefined,
     openThinkingId: undefined,
@@ -299,6 +417,77 @@ export function markExited(
     pendingDecision: undefined,
     exitCode: code,
     error: code === 0 ? undefined : message,
+  };
+}
+
+export function markRestoreDegraded(state: SessionViewState, message: string): SessionViewState {
+  if (!state.restoreProgress || (state.restoreProgress.history && state.restoreProgress.status)) return state;
+  const missing = (["history", "status"] as const).filter((step) => !state.restoreProgress?.[step]);
+  return {
+    ...state,
+    phase: "degraded",
+    replaying: false,
+    bootLabel: "Session restore needs attention",
+    restoreIssue: {
+      missing,
+      message,
+      attempt: state.restoreIssue?.attempt || 1,
+    },
+  };
+}
+
+export function retryRestore(state: SessionViewState): SessionViewState {
+  if (!state.restoreProgress) return state;
+  const retryHistory = !state.restoreProgress.history;
+  return {
+    ...state,
+    phase: "starting",
+    bootLabel: retryHistory ? "Retrying conversation history" : "Retrying session status",
+    replaying: retryHistory,
+    restoreIssue: {
+      missing: (["history", "status"] as const).filter((step) => !state.restoreProgress?.[step]),
+      message: "Retrying restoration",
+      attempt: (state.restoreIssue?.attempt || 1) + 1,
+    },
+    ...(retryHistory ? {
+      blocks: [],
+      lanes: {},
+      pendingDelegateBriefs: {},
+      outputs: [],
+      liveTail: undefined,
+      openThinkingId: undefined,
+      nextBlock: 1,
+    } : {}),
+  };
+}
+
+export function openRestoreAnyway(state: SessionViewState): SessionViewState {
+  if (!state.restoreProgress) return state;
+  const missing = (["history", "status"] as const).filter((step) => !state.restoreProgress?.[step]);
+  const label = missing.map((step) => step === "history" ? "durable history" : "runtime status").join(" and ");
+  const base = state.restoreProgress.statusBusy === false ? settleIdleRestoredLanes(state) : state;
+  const next = appendBlock(base, {
+    kind: "notice",
+    level: "warning",
+    text: `Opened without complete ${label}. Missing agent completions remain marked as detached.`,
+  });
+  return {
+    ...next,
+    phase: "ready",
+    replaying: false,
+    busy: state.restoreProgress.statusBusy ?? false,
+    bootLabel: "Session opened with incomplete restore data",
+    restoreProgress: undefined,
+    restoreIssue: undefined,
+  };
+}
+
+export function setThinkingExpanded(state: SessionViewState, blockId: string, expanded: boolean): SessionViewState {
+  return {
+    ...state,
+    blocks: state.blocks.map((block) => block.id === blockId && block.kind === "thinking"
+      ? { ...block, expanded }
+      : block),
   };
 }
 
@@ -327,13 +516,18 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
   if (event.kind === "agent_spawned") {
     const laneId = stringValue(event.sub_session_id, stringValue(event.session_id));
     if (!laneId) return next;
+    const agent = stringValue(event.agent, "delegate");
+    const brief = next.pendingDelegateBriefs[agent];
+    const pendingDelegateBriefs = { ...next.pendingDelegateBriefs };
+    delete pendingDelegateBriefs[agent];
     return {
       ...next,
+      pendingDelegateBriefs,
       lanes: {
         ...next.lanes,
         [laneId]: {
           id: laneId,
-          agent: stringValue(event.agent, "delegate"),
+          agent,
           status: "running",
           activity: "Booting delegate",
           tail: "",
@@ -347,6 +541,9 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
             detail: "Delegate session created by the coordinator",
           }],
           parentId: stringValue(event.parent_session_id, stringValue(event.session_id)),
+          instruction: brief?.instruction,
+          model: brief?.model,
+          startedAtMs: eventTimestampMs(event),
         },
       },
       activity: `Coordinating ${runningAgentCount(next) + 1} agent${runningAgentCount(next) === 0 ? "" : "s"}`,
@@ -390,6 +587,11 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
             status: event.success === false ? "failed" : "completed",
           }),
           parentId: lane?.parentId || stringValue(event.parent_session_id),
+          instruction: lane?.instruction,
+          model: lane?.model,
+          startedAtMs: lane?.startedAtMs,
+          completedAtMs: eventTimestampMs(event),
+          costUsd: lane?.costUsd,
         },
       },
       activity: event.success === false
@@ -451,7 +653,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         return { ...next, activity: blockType === "tool_call" ? "Preparing tool call" : "Writing response" };
       }
       const openThinkingId = `b${next.nextBlock}`;
-      next = appendBlock(next, { kind: "thinking", text: "" });
+      next = appendBlock(next, { kind: "thinking", text: "", expanded: !replay });
       return { ...next, activity: "Thinking", openThinkingId };
     }
     case "content_block_end": {
@@ -467,6 +669,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       } as NewTranscriptBlock);
     }
     case "tool_pre": {
+      if (isDelegateTool(event)) next = rememberDelegateBrief(next, event);
       next = appendBlock(next, {
         kind: "tool",
         toolName: stringValue(event.tool_name, "tool"),
@@ -479,13 +682,14 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     }
     case "tool_post": {
       const status = toolResultFailed(event) ? "failed" : "completed";
+      next = forgetPendingDelegateBrief(next, stringValue(event.tool_call_id));
       return {
         ...captureOutputs(settleTool(next, event, status), event),
         activity: "Reviewing tool result",
       };
     }
     case "tool_error":
-      return { ...settleTool(next, event, "failed"), activity: `Recovering from ${displayToolName(stringValue(event.tool_name, "tool"))} error` };
+      return { ...settleTool(forgetPendingDelegateBrief(next, stringValue(event.tool_call_id)), event, "failed"), activity: `Recovering from ${displayToolName(stringValue(event.tool_name, "tool"))} error` };
     case "prompt_complete":
       next = finalizeAnswer(next, stringValue(event.response).trim());
       return { ...next, busy: replay ? false : next.busy, activity: "Finishing turn", liveTail: undefined };
@@ -577,6 +781,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         ...next,
         goal,
         autopilot: stateName === "continuing",
+        autopilotPending: false,
         activity: stateName === "continuing"
           ? `Goal · turn ${turn}${goal.cap ? `/${goal.cap}` : ""}${reason ? ` · ${truncate(reason, 56)}` : ""}`
           : label,
@@ -601,6 +806,44 @@ function isInternalRuntimeNotice(event: UIEvent): boolean {
     || source === "event-canary"
     || (source.startsWith("hook:") && /^blocked\s*[·:]/i.test(message))
   );
+}
+
+function isDelegateTool(event: UIEvent): boolean {
+  return stringValue(event.tool_name).toLowerCase().includes("delegate");
+}
+
+function rememberDelegateBrief(state: SessionViewState, event: UIEvent): SessionViewState {
+  const input = objectValue(event.tool_input);
+  const agent = stringValue(input.agent, stringValue(input.agent_name));
+  const instruction = stringValue(input.instruction, stringValue(input.prompt, stringValue(input.task)));
+  if (!agent || !instruction) return state;
+  const modelValue = input.model ?? input.model_role;
+  const model = typeof modelValue === "string"
+    ? modelValue
+    : Array.isArray(modelValue)
+      ? modelValue.filter((item): item is string => typeof item === "string").join(" → ")
+      : undefined;
+  return {
+    ...state,
+    pendingDelegateBriefs: {
+      ...state.pendingDelegateBriefs,
+      [agent]: {
+        instruction,
+        model: model || undefined,
+        toolCallId: stringValue(event.tool_call_id) || undefined,
+      },
+    },
+  };
+}
+
+function forgetPendingDelegateBrief(state: SessionViewState, toolCallId: string): SessionViewState {
+  if (!toolCallId) return state;
+  const pendingDelegateBriefs = Object.fromEntries(
+    Object.entries(state.pendingDelegateBriefs).filter(([, brief]) => brief.toolCallId !== toolCallId),
+  );
+  return Object.keys(pendingDelegateBriefs).length === Object.keys(state.pendingDelegateBriefs).length
+    ? state
+    : { ...state, pendingDelegateBriefs };
 }
 
 function configurationRecovery(message: string): { requested: string; fallback: string } | undefined {
@@ -643,13 +886,18 @@ function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewSta
   if (event.kind !== "tool_post") return state;
   const paths = collectOutputPaths(event.result);
   if (!paths.length) return state;
-  const source = displayToolName(stringValue(event.tool_name, "tool"));
+  const toolName = stringValue(event.tool_name);
+  const source = toolName ? displayToolName(toolName) : undefined;
   const additions = paths.map((path) => ({
     id: path,
     kind: outputKind(path),
     title: path.split(/[\\/]/).at(-1) || path,
     path,
     source,
+    laneId: stringValue(event.parent_id) ? stringValue(event.session_id) || undefined : undefined,
+    toolCallId: stringValue(event.tool_call_id) || undefined,
+    eventId: stringValue(event.event_id) || undefined,
+    runtimeHost: stringValue(event.runtime_host) || undefined,
   }));
   const ids = new Set(additions.map((item) => item.id));
   return { ...state, outputs: [...state.outputs.filter((item) => !ids.has(item.id)), ...additions].slice(-80) };
@@ -695,6 +943,8 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
   let tools = previous.tools;
   let events = previous.events || [];
   let status = previous.status;
+  let model = previous.model;
+  let costUsd = previous.costUsd;
   switch (event.kind) {
     case "session_start":
       activity = "Starting delegate session";
@@ -708,6 +958,18 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
     case "execution_start":
       activity = "Waiting for model";
       break;
+    case "provider_response_usage": {
+      model = stringValue(event.model) || model;
+      const reportedCost = typeof event.cost_usd === "number" || typeof event.cost_usd === "string"
+        ? Number(event.cost_usd)
+        : Number.NaN;
+      if (Number.isFinite(reportedCost)) {
+        const total = Number(costUsd || 0) + reportedCost;
+        costUsd = total === 0 ? "0" : total.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+      }
+      activity = "Reviewing model response";
+      break;
+    }
     case "stream_block_start":
       tailKind = stringValue(event.block_type) === "thinking" ? "thinking" : "text";
       activity = tailKind === "thinking" ? "Thinking" : "Writing response";
@@ -818,10 +1080,10 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
   }
   return {
     ...captureOutputs(state, event),
-    activity: summarizeParallelWork(state, laneId, { ...previous, activity, tail, tailKind, thinking, tools, events, status }),
+    activity: summarizeParallelWork(state, laneId, { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd }),
     lanes: {
       ...state.lanes,
-      [laneId]: { ...previous, activity, tail, tailKind, thinking, tools, events, status },
+      [laneId]: { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd },
     },
   };
 }
@@ -840,10 +1102,13 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
   const stateName = stringValue(record.state);
 
   const pendingApproval = stringValue(approval.ticket_id)
-    ? {
+      ? {
         ticketId: stringValue(approval.ticket_id),
         prompt: stringValue(approval.prompt, "Amplifier needs approval"),
         options: stringList(approval.options),
+        sessionId: stringValue(approval.session_id) || undefined,
+        parentId: stringValue(approval.parent_id) || undefined,
+        toolCallId: stringValue(approval.tool_call_id) || undefined,
       }
     : undefined;
   const decisionId = stringValue(firstDecision?.decision_id);
@@ -879,7 +1144,11 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
       costUsd: String(context.cost_usd ?? state.context.costUsd),
     },
   };
-  return pendingApproval ? markLaneAwaitingApproval(next, pendingApproval.prompt) : next;
+  return pendingApproval ? markLaneAwaitingApproval(next, {
+    sessionId: pendingApproval.sessionId,
+    toolCallId: pendingApproval.toolCallId,
+    prompt: pendingApproval.prompt,
+  }) : next;
 }
 
 function markRestoreProgress(
@@ -898,15 +1167,18 @@ function markRestoreProgress(
     ...state,
     restoreProgress,
     replaying: !restoreProgress.history,
-    phase: restored ? "ready" : "starting",
+    phase: restored ? "ready" : state.phase === "degraded" ? "degraded" : "starting",
     busy: restored && restoreProgress.statusBusy !== undefined
       ? restoreProgress.statusBusy
       : state.busy,
     bootLabel: restored
       ? "Session restored"
-      : restoreProgress.history
-        ? "Restoring model, context, and spend"
-        : "Restoring conversation history",
+      : state.phase === "degraded"
+        ? state.bootLabel
+        : restoreProgress.history
+          ? "Restoring model, context, and spend"
+          : "Restoring conversation history",
+    restoreIssue: restored ? undefined : state.restoreIssue,
   };
   return restored && restoreProgress.statusBusy === false
     ? settleIdleRestoredLanes(restoredState)
@@ -929,9 +1201,10 @@ function settleIdleRestoredLanes(state: SessionViewState): SessionViewState {
       lane.status === "running"
         ? {
             ...lane,
-            status: "completed" as const,
-            activity: "Completed before this session became idle",
-            tools: settleRunningLaneTools(lane.tools, "completed"),
+            status: "detached" as const,
+            activity: "Completion was not recorded in durable history",
+            tools: lane.tools.map((tool) => tool.status === "running" ? { ...tool, status: "unknown" as const } : tool),
+            events: lane.events.map((event) => event.status === "running" ? { ...event, status: "unknown" as const } : event),
           }
         : lane,
     ])),
@@ -955,21 +1228,19 @@ function statusActivity(stateName: string, turnActive: boolean, current: string)
 
 function approvalMatches(state: SessionViewState, event: UIEvent): boolean {
   if (!state.pendingApproval) return false;
-  const prompt = stringValue(event.prompt);
-  return Boolean(prompt && prompt === state.pendingApproval.prompt);
+  const ticketId = stringValue(event.ticket_id);
+  return Boolean(ticketId && ticketId === state.pendingApproval.ticketId);
 }
 
-function markLaneAwaitingApproval(state: SessionViewState, prompt: string): SessionViewState {
+function markLaneAwaitingApproval(
+  state: SessionViewState,
+  identity: { sessionId?: string; toolCallId?: string; prompt: string },
+): SessionViewState {
   const lanes = Object.values(state.lanes);
-  const matching = [...lanes].reverse().find((lane) =>
-    lane.tools.some((tool) => {
-      if (tool.status !== "running") return false;
-      const target = tool.label.replace(/^[^ ]+\s+/, "").slice(0, 36).toLowerCase();
-      return target.length >= 6 && prompt.toLowerCase().includes(target);
-    }),
-  ) || (lanes.filter((lane) => lane.status === "running").length === 1
-    ? lanes.find((lane) => lane.status === "running")
-    : undefined);
+  const matching = (identity.sessionId && state.lanes[identity.sessionId])
+    || (identity.toolCallId
+      ? lanes.find((lane) => lane.tools.some((tool) => tool.id === identity.toolCallId))
+      : undefined);
   if (!matching) return state;
   return {
     ...state,
@@ -978,7 +1249,7 @@ function markLaneAwaitingApproval(state: SessionViewState, prompt: string): Sess
       [matching.id]: {
         ...matching,
         status: "attention",
-        activity: `Approval needed · ${truncate(prompt || "tool approval", 52)}`,
+        activity: `Approval needed · ${truncate(identity.prompt || "tool approval", 52)}`,
       },
     },
   };
@@ -986,18 +1257,24 @@ function markLaneAwaitingApproval(state: SessionViewState, prompt: string): Sess
 
 function recordThinking(state: SessionViewState, text: string): SessionViewState {
   if (!state.openThinkingId) {
-    return { ...appendBlock(state, { kind: "thinking", text }), activity: "Thinking" };
+    return { ...appendBlock(state, { kind: "thinking", text, expanded: false }), activity: "Thinking" };
   }
   const index = state.blocks.findIndex((block) => block.id === state.openThinkingId);
   if (index < 0) {
     return {
-      ...appendBlock(state, { kind: "thinking", text }),
+      ...appendBlock(state, { kind: "thinking", text, expanded: false }),
       activity: "Thinking",
       openThinkingId: undefined,
     };
   }
   const blocks = [...state.blocks];
-  blocks[index] = { id: state.openThinkingId, kind: "thinking", text };
+  const previous = blocks[index];
+  blocks[index] = {
+    id: state.openThinkingId,
+    kind: "thinking",
+    text,
+    expanded: previous?.kind === "thinking" ? previous.expanded : false,
+  };
   return { ...state, blocks, activity: "Thinking", openThinkingId: undefined };
 }
 
@@ -1102,6 +1379,12 @@ function truncate(value: string, length: number): string {
 function eventTimeMs(event: UIEvent): number {
   const timestamp = numberValue(event.ts);
   return timestamp > 0 ? timestamp * 1000 : Date.now();
+}
+
+function eventTimestampMs(event: UIEvent): number | undefined {
+  return typeof event.ts === "number" && Number.isFinite(event.ts) && event.ts > 0
+    ? event.ts * 1000
+    : undefined;
 }
 
 function settleTool(
