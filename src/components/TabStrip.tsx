@@ -79,7 +79,7 @@ export function TabStrip(props: Props) {
           disabled={props.updateBlocked || props.update.status === "downloading" || props.update.status === "installing"}
           onClick={props.onUpdate}
           title={props.updateBlocked
-            ? "Finish or interrupt active turns before restarting for the update"
+            ? "Update ready. Finish or interrupt active turns before restarting."
             : props.update.notes || props.update.message || "Install the latest Amplifier Studio release"}
         >
           <span aria-hidden="true" />

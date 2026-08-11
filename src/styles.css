@@ -66,7 +66,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-button { width: 42px; flex: 0 0 42px; color: var(--muted); border-left: 1px solid var(--line); }
 .app-update-button { display: flex; align-items: center; gap: 7px; min-width: 112px; border: 0; border-left: 1px solid var(--line); padding: 0 12px; background: rgba(99,217,154,.045); color: #8fd2ac; font-size: 8px; font-weight: 750; cursor: pointer; white-space: nowrap; }
 .app-update-button:hover:not(:disabled) { background: rgba(99,217,154,.09); color: #b4e6c8; }
-.app-update-button:disabled { cursor: wait; opacity: .72; }
+.app-update-button:disabled { cursor: not-allowed; opacity: .72; }
+.app-update-button.downloading:disabled, .app-update-button.installing:disabled { cursor: progress; }
 .app-update-button > span { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(99,217,154,.6); }
 .app-update-button.downloading > span, .app-update-button.installing > span { border: 1px solid rgba(79,183,255,.3); border-top-color: var(--blue); background: transparent; animation: rotate .8s linear infinite; }
 .app-update-button.error { background: rgba(255,118,127,.045); color: #d99499; }.app-update-button.error > span { background: var(--red); box-shadow: none; }
