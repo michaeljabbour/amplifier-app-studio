@@ -19,8 +19,8 @@ function lane(id: string, status: LaneState["status"], overrides: Partial<LaneSt
 
 describe("agent lane presentation", () => {
   it("puts live work ahead of attention and completed history without reordering peers", () => {
-    const lanes = [lane("done-1", "completed"), lane("live-1", "running"), lane("done-2", "completed"), lane("attention", "attention"), lane("live-2", "running")];
-    expect(orderAgentLanes(lanes).map((item) => item.id)).toEqual(["live-1", "live-2", "attention", "done-1", "done-2"]);
+    const lanes = [lane("detached", "detached"), lane("done-1", "completed"), lane("live-1", "running"), lane("done-2", "completed"), lane("attention", "attention"), lane("live-2", "running")];
+    expect(orderAgentLanes(lanes).map((item) => item.id)).toEqual(["live-1", "live-2", "attention", "done-1", "done-2", "detached"]);
     expect(liveAgentCount(lanes)).toBe(2);
   });
 

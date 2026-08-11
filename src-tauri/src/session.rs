@@ -9,8 +9,8 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, RwLock,
     },
     time::Duration,
 };
@@ -18,18 +18,23 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     sync::Mutex,
-    time::{sleep, Instant},
+    time::{sleep, timeout, Instant},
 };
 
 const STOP_GRACE: Duration = Duration::from_secs(5);
+const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
 
 pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync + 'static>;
+pub type AttachmentId = u64;
+
+type AttachedSink = Arc<RwLock<Option<(AttachmentId, EventSink)>>>;
 
 #[derive(Clone)]
 struct SessionHandle {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    sink: AttachedSink,
     info: LiveSession,
 }
 
@@ -37,6 +42,7 @@ struct SessionHandle {
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionHandle>>>,
     accepting: Arc<AtomicBool>,
+    next_attachment: Arc<AtomicU64>,
 }
 
 impl Default for SessionManager {
@@ -44,6 +50,7 @@ impl Default for SessionManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             accepting: Arc::new(AtomicBool::new(true)),
+            next_attachment: Arc::new(AtomicU64::new(1)),
         }
     }
 }
@@ -54,6 +61,19 @@ impl SessionManager {
         options: StartSessionOptions,
         sink: EventSink,
     ) -> Result<StartSessionResult, String> {
+        self.start_attached(options, sink)
+            .await
+            .map(|(result, _)| result)
+    }
+
+    /// Start a runtime and return the attachment lease for its initial event
+    /// subscriber. Native Tauri callers use [`start`]; the reconnectable web
+    /// bridge keeps this id so a stale socket cannot detach a newer subscriber.
+    pub async fn start_attached(
+        &self,
+        options: StartSessionOptions,
+        sink: EventSink,
+    ) -> Result<(StartSessionResult, AttachmentId), String> {
         if !self.accepting.load(Ordering::SeqCst) {
             return Err(
                 "Amplifier Studio is shutting down and cannot start another runtime".to_owned(),
@@ -165,22 +185,86 @@ impl SessionManager {
             resume_id: options.resume_id.clone(),
             pid,
         };
+        let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
+        let attached_sink = Arc::new(RwLock::new(Some((attachment_id, sink))));
         let handle = SessionHandle {
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(Mutex::new(Some(stdin))),
+            sink: attached_sink.clone(),
             info,
         };
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
 
-        spawn_stdout_reader(sink.clone(), options.gui_id.clone(), stdout);
-        spawn_stderr_reader(sink.clone(), options.gui_id.clone(), stderr);
-        self.spawn_exit_monitor(sink, options.gui_id.clone(), handle.child.clone());
+        let routed_sink = routed_sink(attached_sink);
+        spawn_stdout_reader(routed_sink.clone(), options.gui_id.clone(), stdout);
+        spawn_stderr_reader(routed_sink.clone(), options.gui_id.clone(), stderr);
+        self.spawn_exit_monitor(routed_sink, options.gui_id.clone(), handle.child.clone());
 
-        Ok(StartSessionResult {
-            gui_id: options.gui_id,
-            project_dir: project_dir_string,
-        })
+        Ok((
+            StartSessionResult {
+                gui_id: options.gui_id,
+                project_dir: project_dir_string,
+            },
+            attachment_id,
+        ))
+    }
+
+    /// Replace the current event subscriber without changing the runtime.
+    pub async fn attach(&self, gui_id: &str, sink: EventSink) -> Result<AttachmentId, String> {
+        let handle = self
+            .sessions
+            .lock()
+            .await
+            .get(gui_id)
+            .cloned()
+            .ok_or_else(|| format!("live session '{gui_id}' was not found"))?;
+        let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
+        replace_sink(&handle.sink, Some((attachment_id, sink)))?;
+        Ok(attachment_id)
+    }
+
+    /// Remove a subscriber only if it still owns the current attachment lease.
+    /// The child process, stdin, and durable session remain alive.
+    pub async fn detach(&self, gui_id: &str, attachment_id: AttachmentId) -> Result<bool, String> {
+        let handle = match self.sessions.lock().await.get(gui_id).cloned() {
+            Some(handle) => handle,
+            None => return Ok(false),
+        };
+        let mut slot = handle
+            .sink
+            .write()
+            .map_err(|_| "session event subscriber is unavailable".to_owned())?;
+        if slot
+            .as_ref()
+            .is_some_and(|(current_id, _)| *current_id == attachment_id)
+        {
+            *slot = None;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check that a web connection still owns the active subscriber lease.
+    /// A reconnect replaces the lease, making operations from a stale socket
+    /// harmless instead of creating a second writer.
+    pub async fn attachment_is_current(
+        &self,
+        gui_id: &str,
+        attachment_id: AttachmentId,
+    ) -> Result<bool, String> {
+        let handle = match self.sessions.lock().await.get(gui_id).cloned() {
+            Some(handle) => handle,
+            None => return Ok(false),
+        };
+        let slot = handle
+            .sink
+            .read()
+            .map_err(|_| "session event subscriber is unavailable".to_owned())?;
+        Ok(slot
+            .as_ref()
+            .is_some_and(|(current_id, _)| *current_id == attachment_id))
     }
 
     pub async fn send(&self, gui_id: &str, op: Value) -> Result<(), String> {
@@ -275,10 +359,12 @@ impl SessionManager {
         let results = futures_util::future::join_all(gui_ids.into_iter().map(|gui_id| {
             let manager = self.clone();
             async move {
-                manager
-                    .stop(&gui_id)
-                    .await
-                    .map_err(|error| format!("{gui_id}: {error}"))
+                match timeout(STOP_TASK_GRACE, manager.stop(&gui_id)).await {
+                    Ok(result) => result.map_err(|error| format!("{gui_id}: {error}")),
+                    Err(_) => Err(format!(
+                        "{gui_id}: timed out while draining the Amplifier runtime"
+                    )),
+                }
             }
         }))
         .await;
@@ -295,6 +381,16 @@ impl SessionManager {
                 errors.join("; ")
             ))
         }
+    }
+
+    /// Re-open the manager after an updater failure that happened *after* the
+    /// current runtimes were drained.
+    ///
+    /// Ordinary quit/restart paths never call this: once shutdown begins they
+    /// remain closed. The updater is the sole recovery path because a failed
+    /// install leaves the current Studio process alive and usable.
+    pub fn resume_after_failed_update(&self) {
+        self.accepting.store(true, Ordering::SeqCst);
     }
 
     pub async fn list(&self) -> Vec<LiveSession> {
@@ -344,6 +440,28 @@ impl SessionManager {
             emit_serialized(&sink, &gui_id, "exit", payload);
         });
     }
+}
+
+fn routed_sink(slot: AttachedSink) -> EventSink {
+    Arc::new(move |event| {
+        let sink = slot
+            .read()
+            .ok()
+            .and_then(|current| current.as_ref().map(|(_, sink)| sink.clone()));
+        if let Some(sink) = sink {
+            sink(event);
+        }
+    })
+}
+
+fn replace_sink(
+    slot: &AttachedSink,
+    next: Option<(AttachmentId, EventSink)>,
+) -> Result<(), String> {
+    *slot
+        .write()
+        .map_err(|_| "session event subscriber is unavailable".to_owned())? = next;
+    Ok(())
 }
 
 fn spawn_stdout_reader(sink: EventSink, gui_id: String, stdout: tokio::process::ChildStdout) {
@@ -472,6 +590,7 @@ fn validate_gui_id(gui_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
 
     #[test]
     fn validates_event_safe_gui_ids() {
@@ -521,5 +640,52 @@ mod tests {
             .await
             .unwrap_err()
             .contains("shutting down"));
+    }
+
+    #[tokio::test]
+    async fn failed_update_recovery_reopens_a_drained_manager() {
+        let manager = SessionManager::default();
+        manager.stop_all().await.unwrap();
+        manager.resume_after_failed_update();
+
+        let error = manager
+            .send(
+                "not-running",
+                serde_json::json!({ "op": "submit", "text": "try again" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("not found"));
+        assert!(!error.contains("shutting down"));
+    }
+
+    #[test]
+    fn routed_sink_can_be_replaced_and_stale_detach_is_detectable() {
+        let first_events = Arc::new(StdMutex::new(Vec::new()));
+        let second_events = Arc::new(StdMutex::new(Vec::new()));
+        let first_capture = first_events.clone();
+        let second_capture = second_events.clone();
+        let first: EventSink =
+            Arc::new(move |event| first_capture.lock().unwrap().push(event.gui_id));
+        let second: EventSink =
+            Arc::new(move |event| second_capture.lock().unwrap().push(event.gui_id));
+        let slot = Arc::new(RwLock::new(Some((1, first))));
+        let route = routed_sink(slot.clone());
+
+        route(SessionEvent {
+            gui_id: "one".into(),
+            channel: "record",
+            payload: Value::Null,
+        });
+        replace_sink(&slot, Some((2, second))).unwrap();
+        route(SessionEvent {
+            gui_id: "two".into(),
+            channel: "record",
+            payload: Value::Null,
+        });
+
+        assert_eq!(*first_events.lock().unwrap(), vec!["one"]);
+        assert_eq!(*second_events.lock().unwrap(), vec!["two"]);
+        assert_eq!(slot.read().unwrap().as_ref().map(|(id, _)| *id), Some(2));
     }
 }

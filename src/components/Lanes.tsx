@@ -9,7 +9,7 @@ export function Lanes(props: { lanes: LaneState[] }) {
       <For each={props.lanes}>
         {(lane) => (
           <div class={`lane-row ${lane.status}`}>
-            <span class="lane-state">{lane.status === "running" ? "✳" : lane.status === "completed" ? "✓" : "!"}</span>
+            <span class="lane-state">{lane.status === "running" ? "✳" : lane.status === "completed" ? "✓" : lane.status === "detached" ? "?" : "!"}</span>
             <div>
               <strong>{lane.agent}</strong>
               <span class="lane-activity">{lane.activity}</span>
@@ -17,7 +17,7 @@ export function Lanes(props: { lanes: LaneState[] }) {
                 <div class="lane-tools">
                   <For each={lane.tools.slice(-4)}>{(tool) => (
                     <div class={tool.status}>
-                      <i>{tool.status === "running" ? "◌" : tool.status === "completed" ? "✓" : "!"}</i>
+                      <i>{tool.status === "running" ? "◌" : tool.status === "completed" ? "✓" : tool.status === "unknown" ? "?" : "!"}</i>
                       <code>{tool.label}</code>
                     </div>
                   )}</For>

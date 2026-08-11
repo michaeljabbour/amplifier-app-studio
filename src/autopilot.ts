@@ -1,18 +1,35 @@
-import type { SessionViewState } from "./protocol";
+import type { SessionViewState, UserBlock } from "./protocol";
 
-export const ACTIVE_SESSION_AUTOPILOT_INSTRUCTION = `Autopilot this active session. Continue the current task autonomously from the existing context. Coordinate and delegate parallel work when useful, use the tools already mounted in this runtime, keep concrete progress visible, verify the result, and stop only when the goal is complete or a consequential decision genuinely requires me. Do not start or hand off to a replacement coordinator session.`;
+export const DEFAULT_AUTOPILOT_MAX_TURNS = 32;
 
+function latestUserPrompt(session: Pick<SessionViewState, "blocks">): string | undefined {
+  return [...session.blocks]
+    .reverse()
+    .find((block): block is UserBlock => block.kind === "user")
+    ?.text.trim() || undefined;
+}
+
+/**
+ * Autopilot is Amplifier's native goal loop, scoped to the active runtime.
+ * Studio only declares/clears the goal; loop-streaming owns evaluation,
+ * continuation, stall detection, and completion.
+ */
 export function activeSessionAutopilotOp(
-  session: Pick<SessionViewState, "busy">,
-): Record<string, unknown> {
-  return {
-    op: session.busy ? "steer" : "submit",
-    text: ACTIVE_SESSION_AUTOPILOT_INSTRUCTION,
-  };
+  session: Pick<SessionViewState, "autopilot" | "goal" | "blocks">,
+): Record<string, unknown> | undefined {
+  if (session.autopilot || session.goal?.state === "continuing" || session.goal?.state === "armed") {
+    return { op: "goal.clear" };
+  }
+  const condition = latestUserPrompt(session);
+  return condition
+    ? { op: "goal.set", condition, max_turns: DEFAULT_AUTOPILOT_MAX_TURNS }
+    : undefined;
 }
 
 export function canEngageAutopilot(
-  session: Pick<SessionViewState, "phase"> | undefined,
+  session: Pick<SessionViewState, "phase" | "autopilot" | "goal" | "blocks" | "autopilotPending"> | undefined,
 ): boolean {
-  return session?.phase === "ready";
+  if (!session || session.phase !== "ready" || session.autopilotPending) return false;
+  if (session.autopilot || session.goal?.state === "continuing" || session.goal?.state === "armed") return true;
+  return Boolean(latestUserPrompt(session));
 }

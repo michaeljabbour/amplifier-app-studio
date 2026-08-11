@@ -21,18 +21,19 @@ interface Props {
   onRefreshBundles: () => Promise<void>;
   onCapabilities: () => void;
   onRequestContext: () => void;
+  onOpenOutput?: (path: string) => Promise<void>;
 }
 
 export function Inspector(props: Props) {
   return (
-    <aside class="machine-inspector" aria-label="Machine inspector">
+    <aside class="machine-inspector" aria-label="Session inspector">
       <div class="inspector-heading">
-        <div><span>MACHINE INSPECTOR</span><strong>{props.lane && props.tab === "agent" ? props.lane.agent : props.state.title}</strong></div>
+        <div><span>SESSION INSPECTOR</span><strong>{props.lane && props.tab === "agent" ? props.lane.agent : props.state.title}</strong></div>
       </div>
       <nav class="inspector-tabs" aria-label="Inspector views">
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
-        <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Machine</button>
+        <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Setup</button>
         <button classList={{ active: props.tab === "bundles" }} onClick={() => props.onTab("bundles")}>Bundles</button>
         <button classList={{ active: props.tab === "outputs" }} onClick={() => props.onTab("outputs")}>Outputs</button>
         <button classList={{ active: props.tab === "context" }} onClick={() => props.onTab("context")}>Context</button>
@@ -42,7 +43,7 @@ export function Inspector(props: Props) {
         <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} /></Show>
         <Show when={props.tab === "build"}><BuildPanel {...props} /></Show>
         <Show when={props.tab === "bundles"}><BundlesPanel {...props} /></Show>
-        <Show when={props.tab === "outputs"}><OutputsPanel state={props.state} /></Show>
+        <Show when={props.tab === "outputs"}><OutputsPanel state={props.state} onOpenOutput={props.onOpenOutput} /></Show>
         <Show when={props.tab === "context"}><ContextPanel {...props} /></Show>
       </div>
     </aside>
@@ -53,20 +54,24 @@ function RunPanel(props: Props) {
   const lanes = () => orderAgentLanes(Object.values(props.state.lanes));
   const liveCount = () => liveAgentCount(lanes());
   const complete = () => props.state.blocks.some((block) => block.kind === "answer" && block.final);
+  const detached = () => lanes().filter((lane) => lane.status === "detached").length;
   return (
     <>
       <InspectorSection title="Progress" meta={props.state.busy ? "LIVE" : props.state.phase.toUpperCase()}>
         <div class="progress-list">
           <ProgressRow label="Runtime prepared" status={props.state.phase === "starting" ? "live" : "done"} detail={props.state.bundle} />
           <ProgressRow label="Coordinator" status={props.state.busy ? "live" : complete() ? "done" : "next"} detail={props.state.activity} />
-          <ProgressRow label="This session's agents" status={liveCount() > 0 ? "live" : lanes().length ? "done" : "next"} detail={lanes().length ? `${liveCount()} live · ${lanes().length} total workspace${lanes().length === 1 ? "" : "s"}` : "Created only when useful"} />
-          <ProgressRow label="Final response" status={complete() ? "done" : "next"} detail={complete() ? "Returned to session" : "Waiting on the machine"} />
+          <ProgressRow label="This session's agents" status={liveCount() > 0 ? "live" : lanes().length && !detached() ? "done" : "next"} detail={lanes().length ? `${liveCount()} live · ${lanes().length} total workspace${lanes().length === 1 ? "" : "s"}${detached() ? ` · ${detached()} completion unknown` : ""}` : "Created only when useful"} />
+          <ProgressRow label="Final response" status={complete() ? "done" : "next"} detail={complete() ? "Returned to session" : "Waiting on the run"} />
         </div>
       </InspectorSection>
 
       <Show when={props.state.goal} keyed>{(goal) => (
         <InspectorSection title="Autonomous goal" meta={goal.state.toUpperCase()}>
           <div class={`goal-progress-card ${goal.state}`}>
+            <Show when={goal.condition}>
+              <Markdown compact class="goal-progress-copy" text={goal.condition || ""} />
+            </Show>
             <div class="goal-progress-head">
               <strong>Turn {goal.turn}{goal.cap ? ` of ${goal.cap}` : ""}</strong>
               <span>{goal.continuations} continuation{goal.continuations === 1 ? "" : "s"}</span>
@@ -110,18 +115,34 @@ function RunPanel(props: Props) {
 }
 
 function AgentPanel(props: { lane: LaneState }) {
+  const historical = () => props.lane.status === "completed" || props.lane.status === "detached";
   return (
     <>
       <div class={`agent-inspector-hero ${props.lane.status}`}>
         <span>{props.lane.status}</span><h2>{props.lane.agent}</h2><Markdown compact class="agent-hero-summary" text={props.lane.activity} />
         <code>{props.lane.id}</code>
       </div>
+      <Show when={props.lane.instruction} keyed>{(instruction) => (
+        <InspectorSection title="Requested work" meta="DELEGATED BRIEF">
+          <Markdown class="agent-instruction" text={instruction} />
+        </InspectorSection>
+      )}</Show>
+      <Show when={props.lane.model || props.lane.startedAtMs !== undefined || props.lane.completedAtMs !== undefined || props.lane.costUsd}>
+        <InspectorSection title="Run facts" meta={historical() ? "HISTORICAL" : "CURRENT"}>
+          <dl class="agent-run-facts">
+            <Show when={props.lane.model}><div><dt>Model / role</dt><dd>{props.lane.model}</dd></div></Show>
+            <Show when={props.lane.startedAtMs !== undefined}><div><dt>Started</dt><dd>{formatTimestamp(props.lane.startedAtMs!)}</dd></div></Show>
+            <Show when={props.lane.completedAtMs !== undefined}><div><dt>Completed</dt><dd>{formatTimestamp(props.lane.completedAtMs!)}</dd></div></Show>
+            <Show when={props.lane.costUsd}><div><dt>Attributed cost</dt><dd>${props.lane.costUsd}</dd></div></Show>
+          </dl>
+        </InspectorSection>
+      </Show>
       <Show when={props.lane.tail}>
-        <InspectorSection title={props.lane.tailKind === "thinking" ? "Live reasoning" : "Live response"} meta="LIVE">
+        <InspectorSection title={props.lane.tailKind === "thinking" ? historical() ? "Recorded reasoning" : "Live reasoning" : historical() ? "Recorded response" : "Live response"} meta={historical() ? "HISTORICAL" : "LIVE"}>
           <Markdown class={`agent-live-copy ${props.lane.tailKind}`} text={props.lane.tail} />
         </InspectorSection>
       </Show>
-      <InspectorSection title="Timeline" meta={String(props.lane.events.length)}>
+      <InspectorSection title="Timeline" meta={`${historical() ? "HISTORICAL" : "LIVE"} · ${props.lane.events.length}`}>
         <div class="agent-timeline">
           <For each={[...props.lane.events].reverse()}>{(event) => (
             <details open={event.status === "running"}>
@@ -152,8 +173,8 @@ function BuildPanel(props: Props) {
           <div class="wide"><dt>Execution</dt><dd>{props.transport}</dd></div>
         </dl>
         <div class="inspector-actions">
-          <button class="primary-button" onClick={props.onCapabilities}>Browse machine library</button>
-          <button class="primary-button" onClick={() => props.onStartSibling()}>Start configured sibling</button>
+          <button class="primary-button" onClick={props.onCapabilities}>Browse capabilities</button>
+          <button class="primary-button" onClick={() => props.onStartSibling()}>Start new session with this setup</button>
           <button class="secondary-button" onClick={props.onCycleEffort}>Cycle effort now</button>
         </div>
         <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
@@ -161,7 +182,7 @@ function BuildPanel(props: Props) {
       <InspectorSection title="Providers" meta={String(props.providers.length)}>
         <Show when={props.providers.length} fallback={<p class="inspector-empty">No provider routes were discovered.</p>}>
           <div class="bundle-list provider-list">
-            <For each={props.providers}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>{provider.model || provider.module}</span></button>}</For>
+            <For each={props.providers}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>Start new session with {provider.model || provider.module}</span></button>}</For>
           </div>
         </Show>
       </InspectorSection>
@@ -210,7 +231,7 @@ function BundlesPanel(props: Props) {
           <div class="bundle-list bundle-catalog-list">
             <For each={visible()}>{(bundle) => (
               <button onClick={() => props.onStartSibling(bundle.name)} title={bundle.location}>
-                <span class="bundle-copy"><strong>{bundle.name}</strong><small>{bundle.location || "Amplifier registry"}</small></span>
+                <span class="bundle-copy"><strong>{bundle.name}</strong><small>Start new session with this bundle</small></span>
                 <span classList={{ active: bundle.active }}>{bundle.active ? "Active" : bundle.status || "Available"}</span>
               </button>
             )}</For>
@@ -230,15 +251,21 @@ function BundlesPanel(props: Props) {
   );
 }
 
-function OutputsPanel(props: { state: SessionViewState }) {
+function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (path: string) => Promise<void> }) {
   return (
     <InspectorSection title="Turn outputs" meta={String(props.state.outputs.length)}>
       <Show when={props.state.outputs.length} fallback={
-        <div class="outputs-empty"><strong>A place for what the machine makes</strong><p>Generated images, diagrams, datasets, and files will appear here when tools return concrete output paths.</p></div>
+        <div class="outputs-empty"><strong>Outputs from this run</strong><p>Generated images, diagrams, datasets, and files will appear here when tools return concrete output paths.</p></div>
       }>
         <div class="output-list">
           <For each={[...props.state.outputs].reverse()}>{(output) => (
-            <div class={`output-item ${output.kind}`}><span>{output.kind}</span><strong>{output.title}</strong><code>{output.path}</code><small>via {output.source}</small></div>
+            <div class={`output-item ${output.kind}`}>
+              <span>{output.kind}</span><strong>{output.title}</strong><code>{output.path}</code>
+              <small>{outputProvenance(output)}</small>
+              <Show when={props.onOpenOutput}>
+                <button class="secondary-button" onClick={() => void props.onOpenOutput?.(output.path)}>Open output</button>
+              </Show>
+            </div>
           )}</For>
         </div>
       </Show>
@@ -274,6 +301,20 @@ function ContextPanel(props: Props) {
 
 function InspectorSection(props: { title: string; meta?: string; children: unknown }) {
   return <section class="inspector-section"><div class="inspector-section-title"><h3>{props.title}</h3><span>{props.meta}</span></div>{props.children as never}</section>;
+}
+
+function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+function outputProvenance(output: SessionViewState["outputs"][number]): string {
+  return [
+    output.source ? `via ${output.source}` : undefined,
+    output.laneId ? `agent ${output.laneId}` : undefined,
+    output.toolCallId ? `call ${output.toolCallId}` : undefined,
+    output.eventId ? `event ${output.eventId}` : undefined,
+    output.runtimeHost ? `host ${output.runtimeHost}` : undefined,
+  ].filter(Boolean).join(" · ");
 }
 
 function ProgressRow(props: { label: string; detail: string; status: "done" | "live" | "next" }) {

@@ -5,6 +5,13 @@ import { Markdown } from "./Markdown";
 interface Props {
   state: SessionViewState;
   onInterrupt: () => void;
+  onRetryRestore: () => void;
+  onOpenRestoreAnyway: () => void;
+  onThinkingExpanded: (blockId: string, expanded: boolean) => void;
+  onRetry?: () => void;
+  retryLabel?: string;
+  onResume?: () => void;
+  onExport: () => void;
 }
 
 export function Transcript(props: Props) {
@@ -25,7 +32,7 @@ export function Transcript(props: Props) {
     const started = props.state.turnStartedAtMs;
     return started ? formatDuration(Math.max(0, now() - started)) : "";
   };
-  const activeLanes = () => Object.values(props.state.lanes).filter((lane) => lane.status !== "completed");
+  const activeLanes = () => Object.values(props.state.lanes).filter((lane) => lane.status === "running" || lane.status === "attention");
   const activeOperations = () => activeLanes().flatMap((lane) =>
     lane.tools.filter((tool) => tool.status === "running").map((tool) => ({ agent: lane.agent, ...tool })),
   );
@@ -61,11 +68,27 @@ export function Transcript(props: Props) {
           </div>
         </Show>
 
+        <Show when={props.state.phase === "degraded" && props.state.restoreIssue} keyed>
+          {(issue) => (
+            <div class="restore-card" role="alert">
+              <div class="eyebrow">SESSION RESTORE · ATTEMPT {issue.attempt}</div>
+              <h2>Restoration did not finish</h2>
+              <p>{issue.message}</p>
+              <small>Still waiting for {issue.missing.map((step) => step === "history" ? "durable history" : "runtime status").join(" and ")}.</small>
+              <div class="recovery-actions">
+                <button class="primary-button" onClick={props.onRetryRestore}>Retry restore</button>
+                <button class="secondary-button" onClick={props.onOpenRestoreAnyway}>Open anyway</button>
+              </div>
+              <p class="recovery-caution">Opening anyway keeps unknown agent completions marked as detached and may omit earlier transcript content.</p>
+            </div>
+          )}
+        </Show>
+
         <Show when={props.state.replaying}>
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={props.state.blocks}>{(block) => <BlockView block={block} />}</For>
+        <For each={props.state.blocks}>{(block) => <BlockView block={block} onThinkingExpanded={props.onThinkingExpanded} />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
           {(tail) => (
@@ -127,6 +150,11 @@ export function Transcript(props: Props) {
                 <pre>{props.state.logs.slice(-30).join("\n")}</pre>
               </details>
             </Show>
+            <div class="recovery-actions">
+              <Show when={Boolean(props.onRetry)}><button class="primary-button" onClick={() => props.onRetry?.()}>{props.retryLabel || "Retry"}</button></Show>
+              <Show when={Boolean(props.onResume)}><button class="secondary-button" onClick={() => props.onResume?.()}>Resume last durable session</button></Show>
+              <button class="secondary-button" onClick={props.onExport}>Export diagnostics</button>
+            </div>
           </div>
         </Show>
       </div>
@@ -141,12 +169,12 @@ function formatDuration(milliseconds: number): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-function BlockView(props: { block: TranscriptBlock }) {
+function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId: string, expanded: boolean) => void }) {
   const block = () => props.block;
   return (
     <Show
       when={block().kind !== "tool" && block().kind !== "thinking"}
-      fallback={block().kind === "tool" ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} /> : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} />}
+      fallback={block().kind === "tool" ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} /> : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} onExpanded={props.onThinkingExpanded} />}
     >
       <article class={`block block-${block().kind}`}>
         <div class="block-gutter">
@@ -156,6 +184,16 @@ function BlockView(props: { block: TranscriptBlock }) {
           <Show when={block().kind === "user"}>
             <div class="block-label">YOU · {(block() as Extract<TranscriptBlock, { kind: "user" }>).mode || "auto"}</div>
             <Markdown class="user-text" text={(block() as Extract<TranscriptBlock, { kind: "user" }>).text} />
+            <Show when={(block() as Extract<TranscriptBlock, { kind: "user" }>).images?.length}>
+              <div class="user-images" aria-label="Prompt image attachments">
+                <For each={(block() as Extract<TranscriptBlock, { kind: "user" }>).images}>{(image) => (
+                  <figure>
+                    <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
+                    <figcaption>{image.name}</figcaption>
+                  </figure>
+                )}</For>
+              </div>
+            </Show>
           </Show>
           <Show when={block().kind === "answer"}>
             <div class="block-label">AMPLIFIER · COORDINATOR{(block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
@@ -190,10 +228,16 @@ function ToolView(props: { block: Extract<TranscriptBlock, { kind: "tool" }> }) 
   );
 }
 
-function ThinkingView(props: { block: Extract<TranscriptBlock, { kind: "thinking" }> }) {
+function ThinkingView(props: {
+  block: Extract<TranscriptBlock, { kind: "thinking" }>;
+  onExpanded: (blockId: string, expanded: boolean) => void;
+}) {
   return (
     <article class="tool-row thinking-row">
-      <details>
+      <details
+        open={props.block.expanded}
+        onToggle={(event) => props.onExpanded(props.block.id, event.currentTarget.open)}
+      >
         <summary><span class="tool-status">◇</span><span>Thinking</span><span class="tool-chevron">›</span></summary>
         <Markdown class="thinking-text" text={props.block.text || "Content withheld by provider"} />
       </details>

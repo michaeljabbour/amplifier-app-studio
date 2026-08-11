@@ -15,15 +15,17 @@ one-time roadmap.
 2. **Is Python embedded in the app?** No. The desktop bridge runs the runtime
    out of process. This protects the protocol boundary, but it means the GUI
    and engine currently have separate lifecycles.
-3. **Can Studio set up a clean machine?** On macOS and Linux, yes as an interim
-   source-channel path: the welcome screen can run the donor's hardened
-   installer and verify `amplifier-tui --version`. The long-term distribution
-   target is a signed, versioned runtime pack with an A/B repair slot. Native
-   Windows runtime bootstrap is not release-proven yet.
+3. **Can Studio set up a clean machine?** The welcome screen can run the
+   donor's hardened shell installer on macOS/Linux or its PowerShell installer
+   on Windows, then verifies `amplifier-tui --version`. Windows bootstrap is
+   implemented but remains release-proven only when it passes a clean Windows
+   install/launch test. The long-term target is a signed, versioned runtime
+   pack with an A/B repair slot.
 4. **Who configures providers and keys?** The existing Amplifier runtime owns
-   provider configuration under `~/.amplifier`. Studio does not copy secrets
-   into Web storage. A native setup/diagnostics surface is still needed so a
-   new user does not have to discover terminal commands.
+   provider configuration under `~/.amplifier`. Studio checks that status
+   before enabling the first prompt and offers an explicit setup dialog that
+   passes a newly entered key over stdin. It never overwrites an already
+   configured provider implicitly and does not copy keys into Web storage.
 5. **Can the GUI and runtime drift?** Today, yes. The GUI updater and the
    source-installed runtime are independent. A production runtime pack needs a
    manifest containing runtime revision and supported protocol range, with a
@@ -34,10 +36,11 @@ one-time roadmap.
 6. **Is this a native app on all four targets?** Tauri produces native shells
    for macOS, Windows, iOS, and Android. Only desktop hosts can spawn the local
    Python runtime. Mobile shells are native clients of a Rust runtime host.
-7. **Can a phone connect securely today?** Not by exposing the included server
-   directly. The v0.1 bridge deliberately binds only to loopback because it
-   does not yet implement TLS, device pairing, authentication, tenant
-   isolation, or revocation. An authenticated tunnel is required for testing.
+7. **Can a phone connect securely today?** Only through a trusted TLS tunnel.
+   The v0.1 host binds to loopback, requires a strong bearer token, validates
+   browser origins, and restricts execution to canonical project roots. It
+   still lacks device pairing, per-device revocation, and tenant isolation, so
+   it must not be exposed directly to a LAN or the public Internet.
 8. **Where do code and data execute?** Desktop local mode executes in the
    selected local project. Web/mobile mode executes on the configured bridge
    host. Studio must show placement explicitly before a turn and never imply
@@ -59,17 +62,21 @@ one-time roadmap.
 12. **Do idle tabs cost resources?** Yes. Each live tab owns a resident Python
     process. Logical sessions should eventually become dormant between clean
     turns and reactivate on composition-keyed warm workers.
-13. **Are disconnects durable?** Transcripts are durable, but live Studio tabs
-    are memory-only and a WebSocket disconnect currently stops its child.
-    Reconnect tokens, tab restoration, mobile-background semantics, and
-    durable pending approvals remain open work.
-14. **Is the bridge enterprise-safe?** Loopback binding limits exposure, but
-    the server still lacks authenticated WebSockets, Origin enforcement,
-    project-root authorization, RBAC, quotas, and audit identity. Those are
-    prerequisites for hosted or LAN use.
-15. **Is rendered model content hardened?** Markdown is sanitized and remote
-    images/active elements are blocked. The application CSP is still disabled
-    and must be tightened before calling the WebView hardened.
+13. **Are disconnects durable?** A WebSocket disconnect now detaches without
+    stopping its child, and the same in-memory host can reattach and replay
+    durable history from a conservative cursor. Host restarts, mobile
+    backgrounding, durable tab identity, and approval handoff between devices
+    still need end-to-end proof.
+14. **Is the bridge enterprise-safe?** No. It now has authenticated WebSockets,
+    exact Origin enforcement, bounded fan-out, and symlink-safe project-root
+    authorization. It still lacks per-device principals, RBAC, quotas, budget
+    enforcement, revocation, TLS termination, and Studio-visible audit/lease
+    controls. Loopback plus a trusted authenticated tunnel remains the only
+    supported remote posture.
+15. **Is rendered model content hardened?** Markdown is sanitized, remote
+    images/active elements are blocked, and the native WebView applies a
+    restrictive CSP. The browser host must preserve equivalent response
+    headers when deployed behind a TLS proxy.
 16. **Can sessions be retained, exported, deleted, or placed on legal hold?**
     Not through Studio yet. The current drawer is intentionally read-only.
 
@@ -83,11 +90,13 @@ one-time roadmap.
     large prompt/model cost and synchronous optional-hook latency. Instrument
     and circuit-break hooks first, then add deterministic quick actions and a
     slim request-scoped fast lane.
-19. **Does auto-update work?** The code checks, downloads, installs, and
-    restarts on desktop. A release build must embed the GitHub endpoint, be
-    signed with the Tauri updater key, and have a newer published version in
-    `latest.json`. Local builds intentionally disable checks. Release proof is
-    an older installed binary visibly offering the newer release.
+19. **Does auto-update work?** The code checks, downloads, verifies, drains
+    owned runtimes, installs, restarts, and restores durable sessions on
+    desktop. A release build must embed the GitHub endpoint, be signed with the
+    Tauri updater key, and have a newer published version in a complete
+    cross-platform `latest.json`. Local builds intentionally disable checks.
+    Release proof remains an older installed binary visibly offering and
+    successfully applying the newer release.
 20. **Are packages signed?** macOS local packages are Developer-ID signed with
     a stable designated requirement. Public macOS packages still require Apple
     notarization. Windows needs an Authenticode certificate; Android needs a
@@ -98,5 +107,5 @@ one-time roadmap.
 
 The defensible v0.1 claim is: **a real local macOS and browser Amplifier Studio,
 with cross-platform Tauri clients and a shared Rust transport architecture.**
-Secure hosted/mobile operation, native Windows runtime bootstrap, store-ready
-mobile packages, and enterprise control-plane features remain explicit gates.
+Secure hosted/mobile operation, clean-machine Windows proof, store-ready mobile
+packages, and enterprise control-plane features remain explicit gates.

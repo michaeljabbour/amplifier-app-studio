@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, markAutopilotEngaged, markEffortPending, markPromptSendFailed, markPromptSubmitted, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
+import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -96,6 +96,33 @@ describe("session reducer", () => {
     });
   });
 
+  it("moves an incomplete restore into a bounded degraded state with retry and open-anyway recovery", () => {
+    let state = createSessionState("gui-resume", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 12 });
+    state = markRestoreDegraded(state, "Restore timed out");
+    expect(state).toMatchObject({
+      phase: "degraded",
+      replaying: false,
+      restoreIssue: { missing: ["status"], message: "Restore timed out", attempt: 1 },
+    });
+
+    state = retryRestore(state);
+    expect(state).toMatchObject({
+      phase: "starting",
+      bootLabel: "Retrying session status",
+      restoreIssue: { attempt: 2 },
+    });
+
+    state = openRestoreAnyway(state);
+    expect(state.phase).toBe("ready");
+    expect(state.restoreProgress).toBeUndefined();
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "warning" });
+  });
+
   it("keeps replayed agents inspectable without calling them live after an idle restore", () => {
     let state = createSessionState("gui-resume", {
       projectDir: "/tmp/project",
@@ -109,6 +136,23 @@ describe("session reducer", () => {
       parent_session_id: "runtime-1",
       agent: "foundation:explorer",
     }, true));
+    state = reduceRecord(state, {
+      ...runtime(43, {
+        kind: "tool_pre",
+        tool_name: "bash",
+        tool_call_id: "unfinished-call",
+        tool_input: { command: "git status" },
+      }, true),
+      event: {
+        event_id: "ev-43",
+        session_id: "child-1",
+        parent_id: "runtime-1",
+        kind: "tool_pre",
+        tool_name: "bash",
+        tool_call_id: "unfinished-call",
+        tool_input: { command: "git status" },
+      },
+    });
     state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 42 });
     state = reduceRecord(state, {
       schema_version: 1,
@@ -122,8 +166,9 @@ describe("session reducer", () => {
 
     expect(state.busy).toBe(false);
     expect(state.lanes["child-1"]).toMatchObject({
-      status: "completed",
-      activity: "Completed before this session became idle",
+      status: "detached",
+      activity: "Completion was not recorded in durable history",
+      tools: [expect.objectContaining({ id: "unfinished-call", status: "unknown" })],
     });
   });
 
@@ -180,10 +225,41 @@ describe("session reducer", () => {
     expect(state.activity).toBe("Starting turn");
   });
 
+  it("keeps submitted image attachments with the optimistic user message", () => {
+    const image = {
+      id: "image-1",
+      name: "diagram.png",
+      mediaType: "image/png" as const,
+      data: "iVBORw0KGgo=",
+      size: 8,
+    };
+    const state = markPromptSubmitted(started(), "Review this diagram", [image]);
+
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "user",
+      text: "Review this diagram",
+      images: [image],
+    });
+  });
+
   it("makes a prompt transport failure visible and returns control", () => {
     const state = markPromptSendFailed(markPromptSubmitted(started(), "continue"), "Runtime is closed");
     expect(state).toMatchObject({ busy: false, activity: "Prompt was not sent", pendingPrompt: undefined });
     expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "error", text: "Runtime is closed" });
+  });
+
+  it("keeps a session-scoped composer draft across attention and send failures", () => {
+    let state = setComposerDraft(started(), "Do not lose this draft");
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "approval.required",
+      ticket_id: "approval-1",
+      prompt: "Run command?",
+      options: ["Allow once", "Deny"],
+    });
+    expect(state.composerDraft).toBe("Do not lose this draft");
+    state = markPromptSendFailed(markPromptSubmitted(state, state.composerDraft), "Connection closed");
+    expect(state.composerDraft).toBe("Do not lose this draft");
   });
 
   it("keeps effort pending until the runtime acknowledges the exact state", () => {
@@ -330,6 +406,23 @@ describe("session reducer", () => {
     expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("32 queued steers"))).toBe(true);
   });
 
+  it("echoes a submitted steer immediately while Amplifier keeps working", () => {
+    const state = markSteerSubmitted({ ...started(), busy: true }, "Use the smaller fix");
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "user", mode: "steer", text: "Use the smaller fix" });
+    expect(state.queuedSteers).toBe(1);
+    expect(state.busy).toBe(true);
+  });
+
+  it("removes an optimistic steer when the transport does not deliver it", () => {
+    const submitted = markSteerSubmitted({ ...started(), busy: true }, "Use the smaller fix");
+    const steerId = submitted.blocks.at(-1)?.id;
+    const failed = markSteerSendFailed(submitted, "bridge disconnected", steerId);
+    expect(failed.blocks.some((block) => block.id === steerId)).toBe(false);
+    expect(failed.blocks.at(-1)).toMatchObject({ kind: "notice", level: "error", text: "bridge disconnected" });
+    expect(failed.queuedSteers).toBe(0);
+    expect(failed.activity).toBe("Course correction was not delivered");
+  });
+
   it("captures approval tickets from the broker record", () => {
     const state = reduceRecord(started(), {
       schema_version: 1,
@@ -343,6 +436,37 @@ describe("session reducer", () => {
       prompt: "Run command?",
       options: ["Allow once", "Allow always", "Deny"],
     });
+  });
+
+  it("attributes approval attention only from runtime identity fields", () => {
+    let state = reduceRecord(started(), runtime(2, {
+      kind: "agent_spawned",
+      child_session_id: "child-1",
+      agent: "builder",
+    }));
+    state = reduceRecord(state, childRuntime(3, {
+      kind: "tool_pre",
+      tool_name: "bash",
+      tool_call_id: "call-7",
+      tool_input: { command: "cargo test" },
+    }));
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "approval.required",
+      ticket_id: "approval-7",
+      session_id: "child-1",
+      parent_id: "runtime-1",
+      tool_call_id: "call-7",
+      prompt: "Run cargo test?",
+      options: ["Allow once", "Deny"],
+    });
+    expect(state.pendingApproval).toMatchObject({
+      ticketId: "approval-7",
+      sessionId: "child-1",
+      parentId: "runtime-1",
+      toolCallId: "call-7",
+    });
+    expect(state.lanes["child-1"]?.status).toBe("attention");
   });
 
   it("does not clear a newer approval when an older response finishes", () => {
@@ -402,33 +526,57 @@ describe("session reducer", () => {
   it("tracks every parallel child tool and durable child thinking", () => {
     let state = started();
     state = reduceRecord(state, runtime(2, {
+      kind: "tool_pre",
+      tool_name: "delegate",
+      tool_call_id: "delegate-call",
+      tool_input: {
+        agent: "foundation:explorer",
+        instruction: "Survey the repository and report its architecture.",
+        model_role: "fast",
+      },
+    }));
+    state = reduceRecord(state, runtime(3, {
       kind: "agent_spawned",
       agent: "foundation:explorer",
       sub_session_id: "child-1",
       parent_session_id: "runtime-1",
+      ts: 10,
     }));
-    state = reduceRecord(state, childRuntime(3, {
+    state = reduceRecord(state, childRuntime(4, {
       kind: "tool_pre",
       tool_name: "bash",
       tool_call_id: "child-call-1",
       tool_input: { command: "ls -la" },
     }));
-    state = reduceRecord(state, childRuntime(4, {
+    state = reduceRecord(state, childRuntime(5, {
       kind: "tool_pre",
       tool_name: "bash",
       tool_call_id: "child-call-2",
       tool_input: { command: "find . -maxdepth 2" },
     }));
-    state = reduceRecord(state, childRuntime(5, {
+    state = reduceRecord(state, childRuntime(6, {
       kind: "content_block_end",
       block_type: "thinking",
       block: { thinking: "I should compare the manifests and entry points." },
+    }));
+    state = reduceRecord(state, childRuntime(7, {
+      kind: "provider_response_usage",
+      model: "claude-haiku",
+      input_tokens: 100,
+      output_tokens: 20,
+      cost_usd: "0.0012",
     }));
 
     expect(state.lanes["child-1"]?.tools).toHaveLength(2);
     expect(state.lanes["child-1"]?.tools.every((tool) => tool.status === "running")).toBe(true);
     expect(state.lanes["child-1"]?.thinking).toContain("compare the manifests");
     expect(state.lanes["child-1"]?.events.some((event) => event.kind === "thinking")).toBe(true);
+    expect(state.lanes["child-1"]).toMatchObject({
+      instruction: "Survey the repository and report its architecture.",
+      model: "claude-haiku",
+      costUsd: "0.0012",
+      startedAtMs: 10_000,
+    });
     expect(state.activity).toContain("2 operations");
   });
 
@@ -450,6 +598,8 @@ describe("session reducer", () => {
       title: "flow.dot",
       kind: "diagram",
       path: "/tmp/flow.dot",
+      toolCallId: "output-call",
+      eventId: "ev-3",
     })]);
 
     state = reduceRecord(state, runtime(4, {
@@ -460,6 +610,23 @@ describe("session reducer", () => {
     }));
     expect(state.outputs).toHaveLength(1);
     expect(state.outputs[0]?.id).toBe("/tmp/flow.dot");
+  });
+
+  it("attributes child outputs to the producing lane without inventing a runtime host", () => {
+    let state = started();
+    state = reduceRecord(state, childRuntime(2, {
+      kind: "tool_post",
+      tool_name: "write_file",
+      tool_call_id: "child-output",
+      result: { output_path: "/tmp/child.json" },
+    }));
+    expect(state.outputs[0]).toMatchObject({
+      path: "/tmp/child.json",
+      laneId: "child-1",
+      toolCallId: "child-output",
+      eventId: "ev-2",
+    });
+    expect(state.outputs[0]?.runtimeHost).toBeUndefined();
   });
 
   it("surfaces autonomous goal state and a durable markdown completion notice", () => {
@@ -490,16 +657,39 @@ describe("session reducer", () => {
     });
   });
 
-  it("keeps active-session Autopilot scoped to its current turn", () => {
-    let state = markAutopilotEngaged(started());
-    expect(state.autopilot).toBe(true);
+  it("uses runtime acknowledgements as the source of truth for Autopilot", () => {
+    let state = markAutopilotPending(started());
+    expect(state.autopilot).toBe(false);
+    expect(state.autopilotPending).toBe(true);
     state = reduceRecord(state, {
       schema_version: 1,
-      type: "turn.completed",
+      type: "goal.state",
       session_id: "runtime-1",
-      response: "Done",
+      ok: true,
+      action: "set",
+      active: true,
+      condition: "Ship it",
+      max_turns: 32,
+    });
+    expect(state.autopilot).toBe(true);
+    expect(state.autopilotPending).toBe(false);
+    expect(state.goal).toMatchObject({ state: "armed", condition: "Ship it", cap: 32 });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "goal.state",
+      session_id: "runtime-1",
+      ok: true,
+      action: "cleared",
+      active: false,
     });
     expect(state.autopilot).toBe(false);
+    expect(state.goal?.state).toBe("cleared");
+  });
+
+  it("releases a pending Autopilot control when the command cannot be sent", () => {
+    const state = markAutopilotSendFailed(markAutopilotPending(started()), "Bridge unavailable");
+    expect(state.autopilotPending).toBe(false);
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "error", text: "Bridge unavailable" });
   });
 
   it("keeps a thinking row when the provider withholds its text", () => {
@@ -508,5 +698,23 @@ describe("session reducer", () => {
     state = reduceRecord(state, runtime(3, { kind: "content_block_end", block_type: "thinking", block: {} }));
     expect(state.blocks.at(-1)).toMatchObject({ kind: "thinking", text: "" });
     expect(state.openThinkingId).toBeUndefined();
+  });
+
+  it("preserves the user's thinking disclosure state when streaming completes", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, { kind: "content_block_start", block_type: "thinking" }));
+    const thinking = state.blocks.at(-1);
+    expect(thinking).toMatchObject({ kind: "thinking", expanded: true });
+    state = setThinkingExpanded(state, thinking?.id || "", false);
+    state = reduceRecord(state, runtime(3, {
+      kind: "content_block_end",
+      block_type: "thinking",
+      block: { thinking: "Checked the repository state" },
+    }));
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "thinking",
+      text: "Checked the repository state",
+      expanded: false,
+    });
   });
 });

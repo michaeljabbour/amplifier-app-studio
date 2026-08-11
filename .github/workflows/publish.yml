@@ -1,7 +1,6 @@
 name: Publish Amplifier Studio
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "studio-v*"
@@ -36,8 +35,31 @@ jobs:
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  publish-desktop:
+  release-preflight:
     needs: verify
+    runs-on: ubuntu-22.04
+    environment: release
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+    steps:
+      - name: Require every desktop signing identity before creating a release
+        run: |
+          for name in TAURI_SIGNING_PRIVATE_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL; do
+            test -n "${!name}" || { echo "$name is required for a desktop release" >&2; exit 1; }
+          done
+
+  publish-desktop:
+    needs: [verify, release-preflight]
     permissions:
       contents: write
     environment: release
@@ -94,11 +116,34 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$STUDIO_KEYCHAIN_PATH"
           security import "$STUDIO_CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$STUDIO_KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$STUDIO_KEYCHAIN_PATH"
-          security list-keychain -d user -s "$STUDIO_KEYCHAIN_PATH" login.keychain-db
+          security list-keychains -d user -s "$STUDIO_KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
           STUDIO_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$STUDIO_KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -n 1)"
           test -n "$STUDIO_SIGNING_IDENTITY" || { echo "The imported certificate is not a valid Developer ID Application identity" >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$STUDIO_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+      - name: Import Windows Authenticode certificate
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw "WINDOWS_CERTIFICATE_THUMBPRINT must be a 40-character SHA-1 thumbprint"
+          }
+          $expectedThumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT).ToUpperInvariant()
+          $certificatePath = Join-Path $env:RUNNER_TEMP "amplifier-studio.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword)
+          $certificate = $importedCertificates |
+            Where-Object { ($_.Thumbprint -replace '\s', '').ToUpperInvariant() -eq $expectedThumbprint } |
+            Select-Object -First 1
+          if (-not $certificate) {
+            throw "Imported Authenticode certificate thumbprint does not match WINDOWS_CERTIFICATE_THUMBPRINT"
+          }
       - uses: tauri-apps/tauri-action@v1
+        if: matrix.platform != 'windows-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -114,6 +159,47 @@ jobs:
           releaseBody: See the assets below to install or update Amplifier Studio.
           releaseDraft: true
           prerelease: false
+          uploadUpdaterJson: false
           args: >-
             ${{ matrix.args }}
             --config '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
+      - uses: tauri-apps/tauri-action@v1
+        if: matrix.platform == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_STUDIO_UPDATER_ENABLED: "true"
+        with:
+          tagName: studio-v__VERSION__
+          releaseName: Amplifier Studio v__VERSION__
+          releaseBody: See the assets below to install or update Amplifier Studio.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false
+          args: >-
+            --config '{"bundle":{"createUpdaterArtifacts":true,"windows":{"certificateThumbprint":"${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}","digestAlgorithm":"sha256","timestampUrl":"${{ secrets.WINDOWS_TIMESTAMP_URL }}"}},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
+
+  publish-release:
+    needs: publish-desktop
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG_NAME: ${{ github.ref_name }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Download the complete draft release
+        run: gh release download "$TAG_NAME" --dir release-assets
+      - name: Build one cross-platform updater manifest
+        run: node scripts/merge-update-manifest.mjs "$TAG_NAME" release-assets
+      - name: Replace partial updater metadata and publish exactly one release
+        run: |
+          gh release upload "$TAG_NAME" release-assets/latest.json --clobber
+          gh release edit "$TAG_NAME" --draft=false --latest
