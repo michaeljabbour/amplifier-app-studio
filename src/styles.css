@@ -115,6 +115,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .block-label { margin-bottom: 8px; }
 .user-avatar { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #334860; border-radius: 7px; color: #91a6bd; font-size: 7px; font-weight: 900; letter-spacing: 0.06em; }
 .user-text { color: #f3f7fc; font-size: 15px; line-height: 1.65; white-space: pre-wrap; }
+.user-images { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.user-images figure { width: min(280px, 100%); margin: 0; }
+.user-images img { display: block; width: 100%; max-height: 300px; object-fit: contain; border: 1px solid var(--line-strong); border-radius: 10px; background: #060a10; box-shadow: 0 12px 32px rgba(0,0,0,.24); }
+.user-images figcaption { overflow: hidden; margin-top: 5px; color: var(--dim); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .answer-glyph, .live-spark { color: var(--blue); font-size: 18px; filter: drop-shadow(0 0 7px rgba(79, 183, 255, 0.55)); }
 .answer-text { color: #d8e3ef; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 13px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
 .block-answer { padding-bottom: 2px; }
@@ -159,6 +163,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .input-zone { z-index: 5; width: min(930px, calc(100% - 36px)); margin: 0 auto; padding: 0 0 12px; }
 .composer-shell { position: relative; border: 1px solid var(--line-strong); border-radius: 12px; background: rgba(15, 25, 37, 0.94); box-shadow: 0 -12px 40px rgba(8, 13, 20, 0.7), 0 12px 36px rgba(0, 0, 0, 0.22); overflow: hidden; }
 .composer-shell:focus-within { border-color: rgba(79, 183, 255, 0.42); box-shadow: 0 0 0 1px rgba(79, 183, 255, 0.08), 0 -12px 40px rgba(8, 13, 20, 0.75); }
+.composer-shell.dragging-images { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(79,183,255,.1), 0 18px 48px rgba(0,0,0,.28); }
+.composer-drop-target { position: absolute; inset: 5px; z-index: 8; display: grid; place-items: center; border: 1px dashed rgba(79,183,255,.7); border-radius: 8px; background: rgba(9,20,31,.94); color: #bfe5ff; font-size: 11px; font-weight: 750; letter-spacing: .03em; pointer-events: none; }
+.composer-images { display: flex; flex-wrap: wrap; gap: 7px; padding: 7px 13px 2px; }
+.composer-image { display: grid; grid-template-columns: 38px minmax(0, 112px) 20px; align-items: center; gap: 7px; min-width: 180px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: rgba(6,12,19,.58); }
+.composer-image img { width: 38px; height: 38px; object-fit: cover; border-radius: 5px; background: #05090e; }
+.composer-image > span { min-width: 0; }
+.composer-image strong, .composer-image small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-image strong { color: #afbecd; font-size: 8px; }
+.composer-image small { margin-top: 3px; color: var(--dim); font-size: 7px; }
+.composer-image > button { display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
+.composer-image > button:hover { background: rgba(255,255,255,.06); color: var(--text); }
+.composer-image-error { padding: 5px 14px 0; color: #e59ba0; font-size: 8px; }
 .composer-mode { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 13px 0; color: #6d8095; font-size: 8px; font-weight: 900; letter-spacing: 0.14em; }
 .composer-mode span.steer { color: var(--amber); }.composer-mode small { color: var(--dim); font-size: 8px; letter-spacing: .02em; }
 .composer-intent { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
@@ -238,6 +254,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .home-continue i { position: absolute; right: 15px; top: 50%; color: #657b91; font-style: normal; transform: translateY(-50%); }
 .home-runtime-card { flex: 0 0 auto; margin: 0 0 14px; }
 .home-composer { flex: 0 0 auto; width: min(900px, calc(100% - 42px)); margin-bottom: 13px; border: 1px solid #273a4f; border-radius: 12px; padding: 13px 14px 11px; background: rgba(15,26,39,.95); box-shadow: 0 18px 55px rgba(0,0,0,.26); }
+.home-composer.dragging-images { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(79,183,255,.1), 0 20px 58px rgba(0,0,0,.3); }
 .home-composer-label { display: flex; align-items: center; gap: 7px; color: #6c7e92; font-size: 8px; font-weight: 700; }
 .home-composer-label > span, .home-transport > span { width: 6px; height: 6px; border-radius: 50%; background: #48576a; }
 .home-composer-label > span.active, .home-transport > span.active { background: var(--green); box-shadow: 0 0 8px rgba(99,217,154,.5); }

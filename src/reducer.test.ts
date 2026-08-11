@@ -225,6 +225,23 @@ describe("session reducer", () => {
     expect(state.activity).toBe("Starting turn");
   });
 
+  it("keeps submitted image attachments with the optimistic user message", () => {
+    const image = {
+      id: "image-1",
+      name: "diagram.png",
+      mediaType: "image/png" as const,
+      data: "iVBORw0KGgo=",
+      size: 8,
+    };
+    const state = markPromptSubmitted(started(), "Review this diagram", [image]);
+
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "user",
+      text: "Review this diagram",
+      images: [image],
+    });
+  });
+
   it("makes a prompt transport failure visible and returns control", () => {
     const state = markPromptSendFailed(markPromptSubmitted(started(), "continue"), "Runtime is closed");
     expect(state).toMatchObject({ busy: false, activity: "Prompt was not sent", pendingPrompt: undefined });

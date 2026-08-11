@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import type { StoredSession } from "../protocol";
+import { appendImageFiles, formatImageBytes, hasImageFiles, SUPPORTED_IMAGE_TYPES } from "../imageAttachments";
+import type { ComposerImage, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
 import { storedSessionResumeBlocker } from "../sessionAvailability";
 
@@ -11,7 +12,7 @@ interface Props {
   checking: boolean;
   installing: boolean;
   error?: string;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, images: ComposerImage[]) => Promise<void>;
   onResume: (session: StoredSession) => Promise<void>;
   onNew: () => void;
   onDrawer: () => void;
@@ -23,6 +24,8 @@ interface Props {
 
 export function CoordinatorHome(props: Props) {
   const [text, setText] = createSignal("");
+  const [images, setImages] = createSignal<ComposerImage[]>([]);
+  const [draggingImages, setDraggingImages] = createSignal(false);
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const recent = createMemo(() => props.sessions.slice(0, 24));
@@ -45,9 +48,22 @@ export function CoordinatorHome(props: Props) {
   };
 
   const send = async () => {
-    const value = text().trim();
+    const value = text().trim() || (images().length ? "Please review the attached image(s)." : "");
     if (!value || !ready()) return;
-    await run(() => props.onSend(value));
+    await run(async () => {
+      await props.onSend(value, images());
+      setText("");
+      setImages([]);
+    });
+  };
+
+  const addImageFiles = async (files: File[]) => {
+    try {
+      setImages(await appendImageFiles(images(), files));
+      setLocalError(undefined);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Could not read the dropped image.");
+    }
   };
 
   return (
@@ -131,7 +147,34 @@ export function CoordinatorHome(props: Props) {
           </div>
         </Show>
 
-        <div class="home-composer">
+        <div
+          class="home-composer"
+          classList={{ "dragging-images": draggingImages() }}
+          onDragEnter={(event) => {
+            const transfer = event.dataTransfer;
+            if (transfer && hasImageFiles(transfer)) {
+              event.preventDefault();
+              setDraggingImages(true);
+            }
+          }}
+          onDragOver={(event) => {
+            const transfer = event.dataTransfer;
+            if (transfer && hasImageFiles(transfer)) {
+              event.preventDefault();
+              transfer.dropEffect = "copy";
+              setDraggingImages(true);
+            }
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDraggingImages(false);
+            void addImageFiles(Array.from(event.dataTransfer?.files || []));
+          }}
+        >
+          <Show when={draggingImages()}><div class="composer-drop-target">Drop images to start with</div></Show>
           <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting coordinator…" : ready() ? "Ready when you are" : props.checking ? "Checking runtime…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : "Runtime setup required"}</div>
           <textarea
             value={text()}
@@ -139,6 +182,13 @@ export function CoordinatorHome(props: Props) {
             placeholder={ready() ? "Tell Amplifier what you want to build, investigate, or organize…" : runtimeAvailable() && !providerStatusAvailable() ? "Update Amplifier to verify provider readiness" : runtimeAvailable() ? "Configure a model provider to start a run" : "Install or connect the Amplifier runtime to start"}
             aria-label="Message Amplifier"
             onInput={(event) => setText(event.currentTarget.value)}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData?.files || []).filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
+              if (files.length) {
+                event.preventDefault();
+                void addImageFiles(files);
+              }
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
                 event.preventDefault();
@@ -146,9 +196,20 @@ export function CoordinatorHome(props: Props) {
               }
             }}
           />
+          <Show when={images().length}>
+            <div class="composer-images" aria-label="Attached images">
+              <For each={images()}>{(image) => (
+                <div class="composer-image">
+                  <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
+                  <span><strong>{image.name}</strong><small>{formatImageBytes(image.size)}</small></span>
+                  <button type="button" aria-label={`Remove ${image.name}`} onClick={() => setImages((items) => items.filter((item) => item.id !== image.id))}>×</button>
+                </div>
+              )}</For>
+            </div>
+          </Show>
           <div class="home-composer-actions">
             <div><button type="button" onClick={props.onNew}>Configure session</button><span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span></div>
-            <button type="button" disabled={!text().trim() || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
+            <button type="button" disabled={(!text().trim() && !images().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
           </div>
           <Show when={localError() || props.error}><small class="home-composer-error">{localError() || props.error}</small></Show>
         </div>

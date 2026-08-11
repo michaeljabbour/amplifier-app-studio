@@ -15,7 +15,7 @@ import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
-import type { CapabilityCatalog, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
+import type { CapabilityCatalog, ComposerImage, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
   addProcessLog,
@@ -36,6 +36,7 @@ import {
   resolveAttention,
   retryRestore,
   setComposerDraft,
+  setComposerImages,
   setThinkingExpanded,
 } from "./reducer";
 import {
@@ -92,7 +93,7 @@ export default function App() {
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
-  const pendingInitialPrompts = new Map<string, string>();
+  const pendingInitialPrompts = new Map<string, { text: string; images: ComposerImage[] }>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -161,23 +162,29 @@ export default function App() {
       const initialPrompt = pendingInitialPrompts.get(guiId);
       if (initialPrompt) {
         pendingInitialPrompts.delete(guiId);
-        void sendOp(guiId, { op: "submit", text: initialPrompt }).catch((error) => {
+        void sendOp(guiId, {
+          op: "submit",
+          text: initialPrompt.text,
+          ...(initialPrompt.images.length
+            ? { attachments: initialPrompt.images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
+            : {}),
+        }).catch((error) => {
           update(guiId, (state) => markPromptSendFailed(state, cleanError(error)));
         });
       }
     }
   };
 
-  const start = async (input: NewSessionInput, initialPrompt?: string) => {
+  const start = async (input: NewSessionInput, initialPrompt?: string, initialImages: ComposerImage[] = []) => {
     if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another run");
     const guiId = createGuiId();
     const state = initialPrompt?.trim()
-      ? markPromptSubmitted(createSessionState(guiId, input), initialPrompt)
+      ? markPromptSubmitted(createSessionState(guiId, input), initialPrompt, initialImages)
       : createSessionState(guiId, input);
     setSessions((items) => [...items, state]);
     setActiveId(guiId);
     setDialog(undefined);
-    if (initialPrompt?.trim()) pendingInitialPrompts.set(guiId, initialPrompt.trim());
+    if (initialPrompt?.trim()) pendingInitialPrompts.set(guiId, { text: initialPrompt.trim(), images: initialImages });
     try {
       const connection = await launchSession(
         { guiId, ...input },
@@ -227,7 +234,7 @@ export default function App() {
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
   };
 
-  const submit = async (text: string) => {
+  const submit = async (text: string, images: ComposerImage[] = []) => {
     const session = active();
     if (!session) return false;
     if (updateInProgress()) {
@@ -235,6 +242,14 @@ export default function App() {
       return false;
     }
     if (session.busy) {
+      if (images.length) {
+        update(session.guiId, (state) => addLocalNotice(
+          state,
+          "Image attachments can start a new turn, but cannot be added to a mid-turn steer yet.",
+          "warning",
+        ));
+        return false;
+      }
       if (session.queuedSteers >= 32) {
         update(session.guiId, (state) => addLocalNotice(state, "Steering queue is full (32 items)", "warning"));
         return false;
@@ -253,9 +268,15 @@ export default function App() {
       }
       return true;
     }
-    update(session.guiId, (state) => markPromptSubmitted(state, text));
+    update(session.guiId, (state) => markPromptSubmitted(state, text, images));
     try {
-      await sendOp(session.guiId, { op: "submit", text });
+      await sendOp(session.guiId, {
+        op: "submit",
+        text,
+        ...(images.length
+          ? { attachments: images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
+          : {}),
+      });
     } catch (error) {
       update(session.guiId, (state) => markPromptSendFailed(state, cleanError(error)));
       return false;
@@ -594,6 +615,7 @@ export default function App() {
                     state={session()}
                     onSend={submit}
                     onDraft={(draft) => update(session().guiId, (state) => setComposerDraft(state, draft))}
+                    onImages={(images) => update(session().guiId, (state) => setComposerImages(state, images))}
                     onAutopilot={() => void engageAutopilot()}
                     autopilotActive={autopilotActive()}
                     autopilotAvailable={canEngageAutopilot(active())}
@@ -717,10 +739,10 @@ export default function App() {
     }
   }
 
-  async function startFromHome(text: string) {
+  async function startFromHome(text: string, images: ComposerImage[]) {
     const projectDir = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
-    await start({ projectDir }, text);
+    await start({ projectDir }, text, images);
   }
 
   async function resumeStored(session: StoredSession) {

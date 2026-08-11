@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 import type { SessionViewState } from "../protocol";
 import type { AppUpdateState } from "../updater";
+import { startNativeWindowDrag } from "../windowDrag";
 
 interface Props {
   sessions: SessionViewState[];
@@ -20,7 +21,7 @@ interface Props {
 
 export function TabStrip(props: Props) {
   return (
-    <header class="tab-strip" data-tauri-drag-region>
+    <header class="tab-strip" data-tauri-drag-region onMouseDown={startNativeWindowDrag}>
       <div class="traffic-light-space" data-tauri-drag-region />
       <button class="icon-button drawer-button" aria-label="Open session drawer" onClick={props.onDrawer}>
         <span aria-hidden="true">☰</span>

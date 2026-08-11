@@ -6,6 +6,7 @@ import {
   type LaneEventState,
   type LaneState,
   type LaneToolState,
+  type ComposerImage,
   numberValue,
   type ProtocolRecord,
   safeJson,
@@ -53,6 +54,7 @@ export function createSessionState(
     bootLabel: input.resumeId ? "Restoring session" : "Launching runtime",
     busy: false,
     composerDraft: "",
+    composerImages: [],
     autopilot: false,
     autopilotPending: false,
     activity: "Starting turn",
@@ -277,6 +279,10 @@ export function setComposerDraft(state: SessionViewState, draft: string): Sessio
   return { ...state, composerDraft: draft };
 }
 
+export function setComposerImages(state: SessionViewState, images: ComposerImage[]): SessionViewState {
+  return { ...state, composerImages: images };
+}
+
 export function markSteerSubmitted(state: SessionViewState, text: string): SessionViewState {
   const steer = text.trim();
   if (!steer) return state;
@@ -304,10 +310,19 @@ export function markSteerSendFailed(
   };
 }
 
-export function markPromptSubmitted(state: SessionViewState, text: string): SessionViewState {
+export function markPromptSubmitted(
+  state: SessionViewState,
+  text: string,
+  images: ComposerImage[] = [],
+): SessionViewState {
   const prompt = text.trim();
   if (!prompt) return state;
-  const next = appendBlock(state, { kind: "user", text: prompt, mode: state.mode });
+  const next = appendBlock(state, {
+    kind: "user",
+    text: prompt,
+    mode: state.mode,
+    images: images.length ? images : undefined,
+  });
   return {
     ...next,
     pendingPrompt: { text: prompt, mode: state.mode },
