@@ -47,6 +47,7 @@ export function createSessionState(
     phase: "starting",
     bootLabel: input.resumeId ? "Restoring session" : "Launching runtime",
     busy: false,
+    autopilot: false,
     activity: "Starting turn",
     replaying: false,
     context: { tokens: 0, window: 0, percent: 0, costUsd: "0" },
@@ -135,6 +136,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         busy: false,
+        autopilot: false,
         activity: "Idle",
         liveTail: undefined,
         openThinkingId: undefined,
@@ -148,6 +150,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         busy: false,
+        autopilot: false,
         liveTail: undefined,
         error: message,
         phase: next.runtimeSessionId ? next.phase : "error",
@@ -166,6 +169,14 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
 
 export function queueLocalSteer(state: SessionViewState): SessionViewState {
   return { ...state, queuedSteers: Math.min(32, state.queuedSteers + 1) };
+}
+
+export function markAutopilotEngaged(state: SessionViewState): SessionViewState {
+  return {
+    ...state,
+    autopilot: true,
+    activity: state.busy ? "Autopilot steering this turn" : "Autopilot starting",
+  };
 }
 
 export function resolveAttention(
@@ -221,6 +232,7 @@ export function markExited(
     ...next,
     phase: code === 0 ? "exited" : "error",
     busy: false,
+    autopilot: false,
     activity: "Idle",
     liveTail: undefined,
     openThinkingId: undefined,
@@ -506,6 +518,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       next = {
         ...next,
         goal,
+        autopilot: stateName === "continuing",
         activity: stateName === "continuing"
           ? `Goal · turn ${turn}${goal.cap ? `/${goal.cap}` : ""}${reason ? ` · ${truncate(reason, 56)}` : ""}`
           : label,

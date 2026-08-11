@@ -310,6 +310,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .top-workbench-actions { display: flex; align-items: stretch; border-left: 1px solid var(--line); }
 .top-workbench-actions button { min-width: 72px; border: 0; border-right: 1px solid var(--line); padding: 0 12px; background: transparent; color: #718297; cursor: pointer; font-size: 9px; font-weight: 700; }
 .top-workbench-actions button:hover, .top-workbench-actions button.active { background: rgba(255, 255, 255, .04); color: #c7d5e3; }
+.top-workbench-actions button:disabled { cursor: default; opacity: .34; }
+.top-workbench-actions .autopilot-button.active { background: rgba(99,217,154,.055); color: var(--green); box-shadow: inset 0 -2px 0 rgba(99,217,154,.72); }
 .top-workbench-actions button.attention { color: var(--amber); }
 .top-workbench-actions strong { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin-left: 5px; border: 1px solid var(--line-strong); border-radius: 5px; color: #a9bdd1; font-size: 8px; }
 
@@ -550,7 +552,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 @media (max-width: 760px) {
-  .top-workbench-actions button:nth-child(2) { display: none; }
+  .top-workbench-actions button:nth-child(4) { display: none; }
   .app-update-button { min-width: 46px; max-width: 46px; overflow: hidden; padding: 0 20px; color: transparent; }
   .app-update-button > span { flex: 0 0 6px; }
   .top-workbench-actions button { min-width: 58px; }

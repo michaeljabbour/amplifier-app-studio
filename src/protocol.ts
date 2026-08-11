@@ -153,6 +153,7 @@ export interface SessionViewState {
   phase: SessionPhase;
   bootLabel: string;
   busy: boolean;
+  autopilot: boolean;
   activity: string;
   turnStartedAtMs?: number;
   replaying: boolean;

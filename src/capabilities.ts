@@ -2,7 +2,6 @@ import type { CapabilityCatalog, NewSessionInput } from "./protocol";
 
 export type StudioCapabilityId =
   | "coordinator"
-  | "app-use"
   | "browser"
   | "terminal"
   | "imagen"
@@ -36,19 +35,6 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: "Uses your active Amplifier composition.",
     accent: "blue",
-  },
-  {
-    id: "app-use",
-    name: "App Use",
-    eyebrow: "AUTOPILOT",
-    outcome: "Let Amplifier see and operate desktop interfaces, including Studio.",
-    description: "Runs the native computer-use bundle in an isolated auto-mode session with Amplifier's normal approval boundaries.",
-    action: "Launch Autopilot",
-    bundle: "computer-use",
-    catalogNames: ["computer-use", "computer-use-behavior"],
-    mode: "auto",
-    requirements: "Requires a computer-use provider and OS screen/accessibility permission.",
-    accent: "green",
   },
   {
     id: "browser",

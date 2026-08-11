@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
+import { createSessionState, markAutopilotEngaged, queueLocalSteer, reduceRecord, resolveAttention } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -334,6 +334,18 @@ describe("session reducer", () => {
       kind: "notice",
       text: expect.stringContaining("**desktop and mobile**"),
     });
+  });
+
+  it("keeps active-session Autopilot scoped to its current turn", () => {
+    let state = markAutopilotEngaged(started());
+    expect(state.autopilot).toBe(true);
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "turn.completed",
+      session_id: "runtime-1",
+      response: "Done",
+    });
+    expect(state.autopilot).toBe(false);
   });
 
   it("keeps a thinking row when the provider withholds its text", () => {

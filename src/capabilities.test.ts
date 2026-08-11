@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { capabilityReadiness, capabilitySessionInput, STUDIO_CAPABILITIES } from "./capabilities";
 
 describe("Studio capabilities", () => {
-  it("pins the image studio and launches app use in auto mode", () => {
+  it("pins the image studio without presenting Autopilot as another machine", () => {
     const imagen = STUDIO_CAPABILITIES.find((item) => item.id === "imagen")!;
-    const appUse = STUDIO_CAPABILITIES.find((item) => item.id === "app-use")!;
     expect(imagen.bundle).toContain("@v2.0.0");
-    expect(capabilitySessionInput(appUse, "/tmp/project")).toMatchObject({
+    expect(capabilitySessionInput(imagen, "/tmp/project")).toMatchObject({
       projectDir: "/tmp/project",
-      bundle: "computer-use",
+      bundle: imagen.bundle,
       mode: "auto",
-      capabilityId: "app-use",
+      capabilityId: "imagen",
     });
+    expect(STUDIO_CAPABILITIES.some((item) => item.id === ("app-use" as never))).toBe(false);
   });
 
   it("does not claim an on-demand bundle is installed", () => {

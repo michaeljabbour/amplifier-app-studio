@@ -62,9 +62,11 @@ cross this boundary.
 - Installed bundle and provider discovery through the Rust bridge; selecting a
   different composition opens an isolated sibling runtime without stopping the
   current machine
-- An outcome-first Machine Library for Coordinator, App Use/Autopilot, Browser
-  Use, built-in Terminal Use, Imagen, and Attractor, grounded in Amplifier's
-  canonical `MODULES.md` catalog
+- Active-session Autopilot: it continues an idle coordinator or steers the
+  coordinator's current turn, and never creates a replacement session
+- An outcome-first Machine Library for Coordinator, Browser Use, built-in
+  Terminal Use, Imagen, and Attractor, grounded in Amplifier's canonical
+  `MODULES.md` catalog; app control remains a capability of the active runtime
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
 - Recoverable setup conditions (such as a missing stored bundle) live in the

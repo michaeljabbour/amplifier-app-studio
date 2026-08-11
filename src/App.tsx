@@ -12,6 +12,7 @@ import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
+import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
 import type { CapabilityCatalog, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -19,6 +20,7 @@ import {
   createSessionState,
   dismissAlert,
   markClosing,
+  markAutopilotEngaged,
   markExited,
   queueLocalSteer,
   reduceRecord,
@@ -74,7 +76,7 @@ export default function App() {
   const availableBundles = createMemo(() => catalog().bundles.map((bundle) => bundle.name));
   const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "closing"));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
-  const autopilotActive = createMemo(() => active()?.capabilityId === "app-use" && active()?.mode === "auto" && active()?.phase !== "exited");
+  const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
 
   createEffect(() => {
     const laneId = selectedLaneId();
@@ -295,9 +297,36 @@ export default function App() {
     ));
   };
 
-  const openAutopilot = () => {
-    const capability = STUDIO_CAPABILITIES.find((item) => item.id === "app-use");
-    if (capability) openCapability(capability);
+  const engageAutopilot = async () => {
+    const session = active();
+    if (!session || !canEngageAutopilot(session)) return;
+    if (autopilotActive()) {
+      openInspector("run");
+      return;
+    }
+    if (session.pendingApproval || session.pendingDecision) {
+      update(session.guiId, (state) => addLocalNotice(
+        state,
+        "Autopilot is waiting at a consequential decision. Resolve it before autonomous work continues.",
+        "warning",
+      ));
+      openInspector("run");
+      return;
+    }
+    if (session.busy && session.queuedSteers >= 32) {
+      update(session.guiId, (state) => addLocalNotice(state, "Steering queue is full (32 items)", "warning"));
+      return;
+    }
+    try {
+      await sendOp(session.guiId, activeSessionAutopilotOp(session));
+      update(session.guiId, (state) => {
+        const engaged = markAutopilotEngaged(state);
+        return session.busy ? queueLocalSteer(engaged) : engaged;
+      });
+      openInspector("run");
+    } catch (error) {
+      reportSendError(session.guiId, error);
+    }
   };
 
   const openInspector = (tab: InspectorTab) => {
@@ -360,8 +389,9 @@ export default function App() {
         onAgents={() => openInspector("run")}
         onOutputs={() => openInspector("outputs")}
         onCapabilities={() => setCapabilitiesOpen(true)}
-        onAutopilot={openAutopilot}
+        onAutopilot={() => void engageAutopilot()}
         autopilotActive={autopilotActive()}
+        autopilotAvailable={canEngageAutopilot(active())}
         onToggleInspector={() => setRightOpen((value) => !value)}
         update={appUpdate()}
         updateBlocked={updateBlocked()}

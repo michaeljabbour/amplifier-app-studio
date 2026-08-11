@@ -18,6 +18,7 @@ interface Props {
   onCapabilities: () => void;
   onAutopilot: () => void;
   autopilotActive: boolean;
+  autopilotAvailable: boolean;
   onToggleInspector: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
@@ -70,8 +71,18 @@ export function TabStrip(props: Props) {
       </div>
       <div class="top-workbench-actions">
         <button onClick={props.onCapabilities}>Machines</button>
-        <button classList={{ active: props.autopilotActive }} onClick={props.onAutopilot}>
-          {props.autopilotActive ? "Autopilot on" : "Autopilot"}
+        <button
+          class="autopilot-button"
+          classList={{ active: props.autopilotActive }}
+          disabled={!props.autopilotAvailable}
+          onClick={props.onAutopilot}
+          title={props.autopilotAvailable
+            ? props.autopilotActive
+              ? "Autopilot is directing the active coordinator; open its progress"
+              : "Continue autonomously in the active coordinator"
+            : "Open a ready session to use Autopilot"}
+        >
+          {props.autopilotActive ? "Autopilot · active" : "Autopilot"}
         </button>
         <button classList={{ attention: props.alertCount > 0 }} onClick={props.onAgents}>
           Agents <strong>{props.agentCount}</strong>

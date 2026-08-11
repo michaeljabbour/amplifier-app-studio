@@ -48,8 +48,8 @@ export function CapabilityPalette(props: Props) {
         </div>
 
         <div class="capability-footnote">
-          <strong>Amplifier ecosystem aware</strong>
-          <span>Curated from Amplifier's MODULES.md. Raw bundles, providers, models, and modes remain available under Advanced composition.</span>
+          <strong>Active-session Autopilot</strong>
+          <span>Autopilot directs the coordinator already open. Desktop control is a capability mounted into that runtime, not a separate coordinator session.</span>
         </div>
       </section>
     </div>
