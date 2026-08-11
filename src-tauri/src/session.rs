@@ -8,7 +8,10 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{
@@ -30,9 +33,19 @@ struct SessionHandle {
     info: LiveSession,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionHandle>>>,
+    accepting: Arc<AtomicBool>,
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            accepting: Arc::new(AtomicBool::new(true)),
+        }
+    }
 }
 
 impl SessionManager {
@@ -41,6 +54,11 @@ impl SessionManager {
         options: StartSessionOptions,
         sink: EventSink,
     ) -> Result<StartSessionResult, String> {
+        if !self.accepting.load(Ordering::SeqCst) {
+            return Err(
+                "Amplifier Studio is shutting down and cannot start another runtime".to_owned(),
+            );
+        }
         let options = options.trimmed();
         validate_gui_id(&options.gui_id)?;
         if options.project_dir.is_empty() {
@@ -98,6 +116,31 @@ impl SessionManager {
                 binary.display()
             )
         })?;
+        // Serialize the post-spawn gate and insertion with stop_all's map
+        // snapshot. If shutdown won the race, this child never becomes owned
+        // state; if insertion won, stop_all necessarily sees it.
+        let mut sessions = self.sessions.lock().await;
+        if !self.accepting.load(Ordering::SeqCst) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err("Amplifier Studio is shutting down and stopped the new runtime".to_owned());
+        }
+        if sessions.contains_key(&options.gui_id) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(format!("session '{}' already exists", options.gui_id));
+        }
+        if let Some(resume_id) = options.resume_id.as_deref() {
+            let duplicate = sessions.values().any(|handle| {
+                handle.info.project_dir == project_dir_string
+                    && handle.info.resume_id.as_deref() == Some(resume_id)
+            });
+            if duplicate {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err("That stored session is already open in Amplifier Studio".to_owned());
+            }
+        }
         let stdin = child
             .stdin
             .take()
@@ -127,10 +170,8 @@ impl SessionManager {
             stdin: Arc::new(Mutex::new(Some(stdin))),
             info,
         };
-        self.sessions
-            .lock()
-            .await
-            .insert(options.gui_id.clone(), handle.clone());
+        sessions.insert(options.gui_id.clone(), handle.clone());
+        drop(sessions);
 
         spawn_stdout_reader(sink.clone(), options.gui_id.clone(), stdout);
         spawn_stderr_reader(sink.clone(), options.gui_id.clone(), stderr);
@@ -143,6 +184,11 @@ impl SessionManager {
     }
 
     pub async fn send(&self, gui_id: &str, op: Value) -> Result<(), String> {
+        if !self.accepting.load(Ordering::SeqCst) {
+            return Err(
+                "Amplifier Studio is shutting down and cannot accept more operations".to_owned(),
+            );
+        }
         require_object(&op)?;
         let handle = self
             .sessions
@@ -207,6 +253,48 @@ impl SessionManager {
             .await
             .map_err(|error| format!("Could not stop amplifier-tui: {error}"))?;
         Ok(true)
+    }
+
+    /// Stop every runtime owned by this Studio process.
+    ///
+    /// Tauri restarts replace the GUI process. If its children are not
+    /// explicitly drained first, an attachable `amplifier-tui serve` process
+    /// can survive with stdout still pointing at the departed GUI. A later
+    /// Studio process then attaches to a live-but-unreadable owner and appears
+    /// to accept messages without ever receiving their events.
+    pub async fn stop_all(&self) -> Result<(), String> {
+        self.accepting.store(false, Ordering::SeqCst);
+        let gui_ids = self
+            .sessions
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let results = futures_util::future::join_all(gui_ids.into_iter().map(|gui_id| {
+            let manager = self.clone();
+            async move {
+                manager
+                    .stop(&gui_id)
+                    .await
+                    .map_err(|error| format!("{gui_id}: {error}"))
+            }
+        }))
+        .await;
+
+        let errors = results
+            .into_iter()
+            .filter_map(Result::err)
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Could not stop every Amplifier runtime: {}",
+                errors.join("; ")
+            ))
+        }
     }
 
     pub async fn list(&self) -> Vec<LiveSession> {
@@ -397,5 +485,41 @@ mod tests {
         assert!(exit_message(Some(2)).contains("not found"));
         assert!(exit_message(Some(3)).contains("more than one"));
         assert!(exit_message(Some(4)).contains("damaged"));
+    }
+
+    #[tokio::test]
+    async fn stopping_an_empty_manager_is_safe() {
+        SessionManager::default().stop_all().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn draining_manager_rejects_new_starts_and_operations() {
+        let manager = SessionManager::default();
+        manager.stop_all().await.unwrap();
+        let sink: EventSink = Arc::new(|_| {});
+        let error = manager
+            .start(
+                StartSessionOptions {
+                    gui_id: "late-start".to_owned(),
+                    project_dir: "/unused".to_owned(),
+                    bundle: None,
+                    model: None,
+                    provider: None,
+                    mode: None,
+                    resume_id: None,
+                },
+                sink,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("shutting down"));
+        assert!(manager
+            .send(
+                "late-start",
+                serde_json::json!({ "op": "submit", "text": "no" })
+            )
+            .await
+            .unwrap_err()
+            .contains("shutting down"));
     }
 }

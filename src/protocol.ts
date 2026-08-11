@@ -140,6 +140,8 @@ export interface SessionOutput {
 
 export interface SessionViewState {
   guiId: string;
+  capabilityId?: string;
+  capabilityName?: string;
   runtimeSessionId?: string;
   projectDir: string;
   requestedBundle?: string;
@@ -181,6 +183,8 @@ export interface NewSessionInput {
   mode?: string;
   resumeId?: string;
   resumeName?: string;
+  capabilityId?: string;
+  capabilityName?: string;
 }
 
 export interface StoredSession {

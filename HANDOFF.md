@@ -3,7 +3,7 @@
 Date: 2026-08-10
 Working dirs:
 - Source of truth studied: `~/dev/amplifier-app-tui` (read-only for this effort)
-- New app being built: `~/dev/amplifier-app-webtui` (this repo)
+- New app: `~/dev/amplifier-app-studio` (repository `amplifier-app-studio`)
 
 ## Goal
 
@@ -105,7 +105,7 @@ Design principles carried over from the donor repo:
 ## What exists right now (all scaffold, none verified yet)
 
 ```
-~/dev/amplifier-app-webtui/
+~/dev/amplifier-app-studio/
 ├── package.json          solid-js + vite + @tauri-apps/api v2 (+ cli)
 ├── tsconfig.json         strict, jsx preserve → solid
 ├── vite.config.ts        port 1420 strictPort (Tauri dev contract)

@@ -29,14 +29,18 @@ export function createSessionState(
     mode?: string;
     resumeId?: string;
     resumeName?: string;
+    capabilityId?: string;
+    capabilityName?: string;
   },
 ): SessionViewState {
   return {
     guiId,
+    capabilityId: input.capabilityId,
+    capabilityName: input.capabilityName,
     projectDir: input.projectDir,
     requestedBundle: input.bundle,
     resumeId: input.resumeId,
-    title: input.resumeName || (input.resumeId ? `Resume ${input.resumeId.slice(0, 8)}` : "New session"),
+    title: input.resumeName || input.capabilityName || (input.resumeId ? `Resume ${input.resumeId.slice(0, 8)}` : "New session"),
     bundle: input.bundle || "default bundle",
     model: "starting…",
     mode: input.mode || "auto",
@@ -71,7 +75,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         runtimeSessionId: stringValue(record.session_id),
-        title: next.resumeId ? next.title : `Session ${stringValue(record.session_id).slice(0, 8)}`,
+        title: next.resumeId || next.capabilityName ? next.title : `Session ${stringValue(record.session_id).slice(0, 8)}`,
         bundle: stringValue(record.bundle, next.bundle),
         model: stringValue(record.model, next.model),
         phase: "ready",

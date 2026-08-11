@@ -62,6 +62,9 @@ cross this boundary.
 - Installed bundle and provider discovery through the Rust bridge; selecting a
   different composition opens an isolated sibling runtime without stopping the
   current machine
+- An outcome-first Machine Library for Coordinator, App Use/Autopilot, Browser
+  Use, built-in Terminal Use, Imagen, and Attractor, grounded in Amplifier's
+  canonical `MODULES.md` catalog
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
 - Recoverable setup conditions (such as a missing stored bundle) live in the
@@ -190,8 +193,10 @@ To publish, update the version in `package.json`, `src-tauri/Cargo.toml`, and
 `src-tauri/tauri.conf.json`, then push a matching tag such as `studio-v0.2.0`.
 The workflow creates a draft GitHub Release. Review its artifacts and publish
 the release; `releases/latest/download/latest.json` then becomes the update
-feed automatically. Local builds leave update checks disabled, so development
-does not produce noisy network errors.
+feed automatically. Production desktop builds check the canonical Amplifier
+Studio feed by default; set `VITE_STUDIO_UPDATER_ENABLED=false` for a local or
+forked production build that must not check upstream. Development builds leave
+updates disabled unless the flag is explicitly set to `true`.
 
 Android and iOS updates should continue through Google Play and the App Store;
 desktop-style binary replacement is intentionally limited to Windows, macOS,

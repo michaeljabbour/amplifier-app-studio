@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { AttentionBar } from "./components/AttentionBar";
 import { BridgeSettingsDialog } from "./components/BridgeSettingsDialog";
+import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
 import { Footer } from "./components/Footer";
 import { Inspector, type InspectorTab } from "./components/Inspector";
@@ -10,6 +11,7 @@ import { SessionDrawer } from "./components/SessionDrawer";
 import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
+import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
 import type { CapabilityCatalog, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -50,6 +52,7 @@ export default function App() {
   const [storedError, setStoredError] = createSignal<string>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = createSignal(false);
   const [transport, setTransport] = createSignal(transportLabel());
   const [catalog, setCatalog] = createSignal<CapabilityCatalog>({ bundles: [], providers: [] });
   const [selectedLaneId, setSelectedLaneId] = createSignal<string>();
@@ -70,6 +73,8 @@ export default function App() {
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
   const availableBundles = createMemo(() => catalog().bundles.map((bundle) => bundle.name));
   const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "closing"));
+  const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
+  const autopilotActive = createMemo(() => active()?.capabilityId === "app-use" && active()?.mode === "auto" && active()?.phase !== "exited");
 
   createEffect(() => {
     const laneId = selectedLaneId();
@@ -127,6 +132,7 @@ export default function App() {
   };
 
   const start = async (input: NewSessionInput) => {
+    if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another machine");
     const guiId = createGuiId();
     const state = createSessionState(guiId, input);
     setSessions((items) => [...items, state]);
@@ -180,6 +186,10 @@ export default function App() {
   const submit = async (text: string) => {
     const session = active();
     if (!session) return;
+    if (updateInProgress()) {
+      update(session.guiId, (state) => addLocalNotice(state, "Amplifier Studio is updating; this runtime is being prepared for a clean restart", "warning"));
+      return;
+    }
     if (session.busy) {
       if (session.queuedSteers >= 32) {
         update(session.guiId, (state) => addLocalNotice(state, "Steering queue is full (32 items)", "warning"));
@@ -272,6 +282,24 @@ export default function App() {
     });
   };
 
+  const openCapability = (capability: StudioCapability) => {
+    const session = active();
+    const remembered = session?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const provider = catalog().providers.find((item) => item.model === session?.model)
+      || catalog().providers.find((item) => item.active);
+    setCapabilitiesOpen(false);
+    setDialog(capabilitySessionInput(
+      capability,
+      remembered,
+      provider ? { provider: provider.name, model: provider.model } : undefined,
+    ));
+  };
+
+  const openAutopilot = () => {
+    const capability = STUDIO_CAPABILITIES.find((item) => item.id === "app-use");
+    if (capability) openCapability(capability);
+  };
+
   const openInspector = (tab: InspectorTab) => {
     setInspectorTab(tab);
     setRightOpen(true);
@@ -331,6 +359,9 @@ export default function App() {
         inspectorOpen={rightOpen()}
         onAgents={() => openInspector("run")}
         onOutputs={() => openInspector("outputs")}
+        onCapabilities={() => setCapabilitiesOpen(true)}
+        onAutopilot={openAutopilot}
+        autopilotActive={autopilotActive()}
         onToggleInspector={() => setRightOpen((value) => !value)}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
@@ -402,6 +433,7 @@ export default function App() {
               onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
               onCycleEffort={() => void cycleEffort()}
               onStartSibling={openSibling}
+              onCapabilities={() => setCapabilitiesOpen(true)}
               onRequestContext={() => void requestContextForActive()}
             />
           </div>
@@ -410,6 +442,9 @@ export default function App() {
 
       <Show when={dialog()} keyed>
         {(initial) => <NewSessionDialog initial={initial} catalog={catalog()} onCancel={() => setDialog(undefined)} onStart={start} />}
+      </Show>
+      <Show when={capabilitiesOpen()}>
+        <CapabilityPalette catalog={catalog()} onClose={() => setCapabilitiesOpen(false)} onLaunch={openCapability} />
       </Show>
       <Show when={drawerOpen()}>
         <SessionDrawer

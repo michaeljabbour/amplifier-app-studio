@@ -15,6 +15,9 @@ interface Props {
   inspectorOpen: boolean;
   onAgents: () => void;
   onOutputs: () => void;
+  onCapabilities: () => void;
+  onAutopilot: () => void;
+  autopilotActive: boolean;
   onToggleInspector: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
@@ -66,6 +69,10 @@ export function TabStrip(props: Props) {
         </button>
       </div>
       <div class="top-workbench-actions">
+        <button onClick={props.onCapabilities}>Machines</button>
+        <button classList={{ active: props.autopilotActive }} onClick={props.onAutopilot}>
+          {props.autopilotActive ? "Autopilot on" : "Autopilot"}
+        </button>
         <button classList={{ attention: props.alertCount > 0 }} onClick={props.onAgents}>
           Agents <strong>{props.agentCount}</strong>
         </button>

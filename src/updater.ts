@@ -28,9 +28,11 @@ type DownloadEvent =
 
 export function appUpdatesEnabled(): boolean {
   const mobileWebView = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const override = import.meta.env.VITE_STUDIO_UPDATER_ENABLED;
   return isTauriRuntime()
     && !mobileWebView
-    && import.meta.env.VITE_STUDIO_UPDATER_ENABLED === "true";
+    && override !== "false"
+    && (import.meta.env.PROD || override === "true");
 }
 
 export async function checkForAppUpdate(): Promise<AppUpdateState> {
@@ -52,6 +54,7 @@ export async function installAppUpdate(
 ): Promise<void> {
   let downloaded = 0;
   let total: number | undefined;
+  onState({ ...update, status: "downloading", progress: 0 });
   const unlisten = await listen<DownloadEvent>("app://update/progress", ({ payload }) => {
     if (payload.event === "Started") {
       total = payload.data.contentLength;

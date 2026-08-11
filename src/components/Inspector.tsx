@@ -16,6 +16,7 @@ interface Props {
   onDismissAlert: (id: string) => void;
   onCycleEffort: () => void;
   onStartSibling: (bundle?: string, provider?: ProviderOption) => void;
+  onCapabilities: () => void;
   onRequestContext: () => void;
 }
 
@@ -28,7 +29,7 @@ export function Inspector(props: Props) {
       <nav class="inspector-tabs" aria-label="Inspector views">
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
-        <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Build</button>
+        <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Machine</button>
         <button classList={{ active: props.tab === "outputs" }} onClick={() => props.onTab("outputs")}>Outputs</button>
         <button classList={{ active: props.tab === "context" }} onClick={() => props.onTab("context")}>Context</button>
       </nav>
@@ -145,6 +146,7 @@ function BuildPanel(props: Props) {
           <div class="wide"><dt>Execution</dt><dd>{props.transport}</dd></div>
         </dl>
         <div class="inspector-actions">
+          <button class="primary-button" onClick={props.onCapabilities}>Browse machine library</button>
           <button class="primary-button" onClick={() => props.onStartSibling()}>Start configured sibling</button>
           <button class="secondary-button" onClick={props.onCycleEffort}>Cycle effort now</button>
         </div>

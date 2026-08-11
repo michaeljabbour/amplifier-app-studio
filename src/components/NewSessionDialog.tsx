@@ -39,6 +39,8 @@ export function NewSessionDialog(props: Props) {
         mode: mode() || undefined,
         resumeId: props.initial.resumeId,
         resumeName: props.initial.resumeName,
+        capabilityId: props.initial.capabilityId,
+        capabilityName: props.initial.capabilityName,
       });
     } catch (caught) {
       setError(String(caught));
@@ -64,13 +66,23 @@ export function NewSessionDialog(props: Props) {
           </div>
         </Show>
 
+        <Show when={props.initial.capabilityName}>
+          <div class="capability-selection">
+            <span>SELECTED MACHINE</span>
+            <strong>{props.initial.capabilityName}</strong>
+            <p>Studio will start this capability as an isolated Amplifier runtime. Your coordinator and other sessions stay available.</p>
+          </div>
+        </Show>
+
         <label class="field full-field">
           <span>Project directory</span>
           <input value={projectDir()} onInput={(event) => setProjectDir(event.currentTarget.value)} placeholder="/Users/you/dev/project" autofocus />
           <small>The child process runs here; Amplifier’s existing filesystem boundaries still apply.</small>
         </label>
 
-        <div class="field-grid">
+        <details class="advanced-composition" open={!props.initial.capabilityName && !props.initial.resumeId}>
+          <summary>Advanced composition <span>bundle · mode · provider · model</span></summary>
+          <div class="field-grid">
           <label class="field">
             <span>Bundle <em>optional</em></span>
             <input list="amplifier-bundles" value={bundle()} onInput={(event) => setBundle(event.currentTarget.value)} placeholder={props.initial.resumeId ? "Use stored bundle" : "Use active bundle"} />
@@ -110,7 +122,8 @@ export function NewSessionDialog(props: Props) {
             <span>Model override <em>optional</em></span>
             <input value={model()} onInput={(event) => setModel(event.currentTarget.value)} placeholder="claude-fable-5" />
           </label>
-        </div>
+          </div>
+        </details>
 
         <Show when={error()}><div class="form-error">{error()}</div></Show>
 
