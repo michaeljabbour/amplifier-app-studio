@@ -6,7 +6,7 @@ import {
   type LaneEventState,
   type LaneState,
   type LaneToolState,
-  type ComposerImage,
+  type ComposerAttachment,
   type PlanItemState,
   type PipelineNodeState,
   type PipelineState,
@@ -22,6 +22,7 @@ import {
   type UIEvent,
 } from "./protocol";
 import { estimateRunPodCost, mergeCostBasis, type CostBasis } from "./costEstimate";
+import { splitDocumentAttachments } from "./attachments";
 
 type NewTranscriptBlock = TranscriptBlock extends infer Block
   ? Block extends { id: string }
@@ -60,7 +61,7 @@ export function createSessionState(
     bootLabel: input.resumeId ? "Restoring session" : "Launching runtime",
     busy: false,
     composerDraft: "",
-    composerImages: [],
+    composerAttachments: [],
     autopilot: false,
     autopilotPending: false,
     activity: "Starting turn",
@@ -292,14 +293,23 @@ export function setComposerDraft(state: SessionViewState, draft: string): Sessio
   return { ...state, composerDraft: draft };
 }
 
-export function setComposerImages(state: SessionViewState, images: ComposerImage[]): SessionViewState {
-  return { ...state, composerImages: images };
+export function setComposerAttachments(state: SessionViewState, attachments: ComposerAttachment[]): SessionViewState {
+  return { ...state, composerAttachments: attachments };
 }
 
-export function markSteerSubmitted(state: SessionViewState, text: string): SessionViewState {
+export function markSteerSubmitted(
+  state: SessionViewState,
+  text: string,
+  attachments: ComposerAttachment[] = [],
+): SessionViewState {
   const steer = text.trim();
   if (!steer) return state;
-  const next = appendBlock(state, { kind: "user", text: steer, mode: "steer" });
+  const next = appendBlock(state, {
+    kind: "user",
+    text: steer,
+    mode: "steer",
+    attachments: attachments.length ? attachments : undefined,
+  });
   return {
     ...next,
     queuedSteers: Math.min(32, state.queuedSteers + 1),
@@ -326,7 +336,8 @@ export function markSteerSendFailed(
 export function markPromptSubmitted(
   state: SessionViewState,
   text: string,
-  images: ComposerImage[] = [],
+  attachments: ComposerAttachment[] = [],
+  runtimeText = text,
 ): SessionViewState {
   const prompt = text.trim();
   if (!prompt) return state;
@@ -334,11 +345,11 @@ export function markPromptSubmitted(
     kind: "user",
     text: prompt,
     mode: state.mode,
-    images: images.length ? images : undefined,
+    attachments: attachments.length ? attachments : undefined,
   });
   return {
     ...next,
-    pendingPrompt: { text: prompt, mode: state.mode },
+    pendingPrompt: { text: prompt, runtimeText, mode: state.mode },
     busy: true,
     activity: "Submitting prompt",
     turnStartedAtMs: Date.now(),
@@ -648,8 +659,15 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     case "prompt_submit": {
       const mode = stringValue(event.mode, next.mode);
       const prompt = stringValue(event.prompt);
-      if (next.pendingPrompt?.text !== prompt) {
-        next = appendBlock(next, { kind: "user", text: prompt, mode });
+      const decoded = splitDocumentAttachments(prompt);
+      const reconcilesPending = next.pendingPrompt?.runtimeText === prompt || next.pendingPrompt?.text === decoded.text;
+      if (!reconcilesPending) {
+        next = appendBlock(next, {
+          kind: "user",
+          text: decoded.text,
+          mode,
+          attachments: decoded.attachments.length ? decoded.attachments : undefined,
+        });
       }
       return {
         ...next,

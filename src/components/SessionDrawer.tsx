@@ -8,7 +8,7 @@ interface Props {
   error?: string;
   onClose: () => void;
   onRefresh: () => void;
-  onResume: (session: StoredSession) => void;
+  onResume: (session: StoredSession) => void | Promise<void>;
 }
 
 export function SessionDrawer(props: Props) {
@@ -50,7 +50,7 @@ export function SessionDrawer(props: Props) {
               const blocker = () => storedSessionResumeBlocker(session, false);
               const note = () => blocker() || storedSessionWarning(session);
               return (
-                <button class="stored-row" disabled={Boolean(blocker())} title={note()} onClick={() => props.onResume(session)}>
+                <button class="stored-row" disabled={Boolean(blocker())} title={note()} onClick={() => void props.onResume(session)}>
                   <div class="stored-topline">
                     <strong>{session.name || `Session ${session.sessionId.slice(0, 8)}`}</strong>
                     <span>{timeAgo(session.mtimeMs)}</span>

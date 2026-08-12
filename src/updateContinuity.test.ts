@@ -24,7 +24,7 @@ function session(guiId: string, runtimeSessionId?: string, phase: SessionViewSta
     bootLabel: "ready",
     busy: false,
     composerDraft: "",
-    composerImages: [],
+    composerAttachments: [],
     autopilot: false,
     autopilotPending: false,
     activity: "ready",

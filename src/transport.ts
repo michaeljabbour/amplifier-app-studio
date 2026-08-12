@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { CapabilityCatalog, NewSessionInput, ProtocolRecord, StoredSession } from "./protocol";
+import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, StoredSession } from "./protocol";
 import { isRecord } from "./protocol";
+import type { RuntimeSettingScope } from "./settingsSchema";
 
 export interface ProcessLog {
   stream: string;
@@ -38,17 +39,35 @@ export interface RuntimeStatus {
   message: string;
 }
 
-export interface NativeImageAttachment {
-  name: string;
-  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-  data: string;
-  size: number;
+type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
+export type NativeAttachment = WithoutId<ComposerAttachment>;
+
+export interface RuntimeSettingValue {
+  path: string;
+  display: string;
+  source: string;
+  sourceLabel: string;
 }
 
-export type NativeImageDropEvent =
+export interface RuntimeSettingsSnapshot {
+  projectDir: string;
+  values: RuntimeSettingValue[];
+  version: string;
+  paths: Record<string, unknown>;
+  recentChanges: Record<string, unknown>[];
+}
+
+export interface RuntimeSettingChange {
+  path: string;
+  action: "set" | "unset";
+  value?: string;
+  scope: RuntimeSettingScope;
+}
+
+export type NativeAttachmentDropEvent =
   | { type: "enter" }
   | { type: "leave" }
-  | { type: "drop"; images: NativeImageAttachment[] }
+  | { type: "drop"; attachments: NativeAttachment[] }
   | { type: "error"; message: string };
 
 interface BridgeConnection extends SessionConnection {
@@ -164,11 +183,32 @@ export function transportLabel(): string {
   return "Native desktop · local Rust bridge";
 }
 
-export async function listenNativeImageDrops(
-  handler: (event: NativeImageDropEvent) => void,
+export function localRuntimeSettingsAvailable(): boolean {
+  return isTauriRuntime() && !usesWebBridge();
+}
+
+export async function readRuntimeSettings(projectDir: string): Promise<RuntimeSettingsSnapshot> {
+  if (!localRuntimeSettingsAvailable()) {
+    throw new Error("Durable Amplifier settings are edited on the local desktop runtime");
+  }
+  return invoke<RuntimeSettingsSnapshot>("read_runtime_settings", { projectDir });
+}
+
+export async function applyRuntimeSettings(
+  projectDir: string,
+  changes: RuntimeSettingChange[],
+): Promise<RuntimeSettingsSnapshot> {
+  if (!localRuntimeSettingsAvailable()) {
+    throw new Error("Durable Amplifier settings are edited on the local desktop runtime");
+  }
+  return invoke<RuntimeSettingsSnapshot>("apply_runtime_settings", { projectDir, changes });
+}
+
+export async function listenNativeAttachmentDrops(
+  handler: (event: NativeAttachmentDropEvent) => void,
 ): Promise<UnlistenFn> {
   if (!isTauriRuntime() || usesWebBridge()) return () => undefined;
-  return listen<NativeImageDropEvent>("app://native-image-drop", (event) => handler(event.payload));
+  return listen<NativeAttachmentDropEvent>("app://native-attachment-drop", (event) => handler(event.payload));
 }
 
 export async function openLocalOutput(projectDir: string, path: string): Promise<void> {

@@ -96,11 +96,13 @@ export function TabStrip(props: Props) {
           {updateLabel(props.update)}
         </button>
       </Show>
-      <button class="icon-button settings-button" aria-label="Bridge settings" onClick={props.onSettings} title="Bridge settings">
+      <button class="icon-button settings-button" aria-label="Studio settings" onClick={props.onSettings} title="Studio and Amplifier settings">
         <span aria-hidden="true">⚙</span>
       </button>
       <div class="brand-mark" data-tauri-drag-region>
         <span class="brand-diamond" aria-hidden="true" />
+        <span class="brand-wordmark">AMPLIFIER</span>
+        <span class="brand-ticks" aria-hidden="true"><i /><i /><i /><i /></span>
       </div>
     </header>
   );

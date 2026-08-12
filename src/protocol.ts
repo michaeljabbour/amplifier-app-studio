@@ -62,13 +62,26 @@ export interface GoalProgressState {
   updatedAtMs: number;
 }
 
-export interface ComposerImage {
+export interface ComposerImageAttachment {
+  kind: "image";
   id: string;
   name: string;
   mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
   data: string;
   size: number;
 }
+
+export interface ComposerDocumentAttachment {
+  kind: "document";
+  id: string;
+  name: string;
+  mediaType: string;
+  text: string;
+  size: number;
+  truncated: boolean;
+}
+
+export type ComposerAttachment = ComposerImageAttachment | ComposerDocumentAttachment;
 
 export type SessionPhase = "starting" | "degraded" | "ready" | "closing" | "exited" | "error";
 
@@ -80,7 +93,7 @@ export interface UserBlock extends BaseBlock {
   kind: "user";
   text: string;
   mode?: string;
-  images?: ComposerImage[];
+  attachments?: ComposerAttachment[];
 }
 
 export interface AnswerBlock extends BaseBlock {
@@ -295,10 +308,11 @@ export interface SessionViewState {
   busy: boolean;
   pendingPrompt?: {
     text: string;
+    runtimeText?: string;
     mode: string;
   };
   composerDraft: string;
-  composerImages: ComposerImage[];
+  composerAttachments: ComposerAttachment[];
   autopilot: boolean;
   autopilotPending: boolean;
   activity: string;

@@ -1,6 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { AttentionBar } from "./components/AttentionBar";
-import { BridgeSettingsDialog } from "./components/BridgeSettingsDialog";
 import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
 import { CoordinatorHome } from "./components/CoordinatorHome";
@@ -10,13 +9,21 @@ import { NewSessionDialog } from "./components/NewSessionDialog";
 import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
 import { SessionToolbar } from "./components/SessionToolbar";
 import { SessionDrawer } from "./components/SessionDrawer";
+import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
 import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
-import { appendComposerImages, appendImageFiles, hasImageFiles } from "./imageAttachments";
-import type { CapabilityCatalog, ComposerImage, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
+import {
+  appendAttachmentFiles,
+  appendComposerAttachments,
+  hasAttachmentFiles,
+  imageAttachments,
+  promptWithDocumentAttachments,
+} from "./attachments";
+import { nativeProjectPickerAvailable, pickAttachments, pickProjectDirectory } from "./nativePickers";
+import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
   addProcessLog,
@@ -37,7 +44,7 @@ import {
   resolveAttention,
   retryRestore,
   setComposerDraft,
-  setComposerImages,
+  setComposerAttachments,
   setThinkingExpanded,
 } from "./reducer";
 import {
@@ -50,7 +57,8 @@ import {
   getRuntimeStatus,
   openLocalOutput,
   installRuntime,
-  listenNativeImageDrops,
+  listenNativeAttachmentDrops,
+  localRuntimeSettingsAvailable,
   launchSession,
   listCatalog,
   listStoredSessions,
@@ -61,12 +69,13 @@ import {
   transportLabel,
   usesWebBridge,
   type RuntimeStatus,
-  type NativeImageDropEvent,
+  type NativeAttachmentDropEvent,
   type SessionConnection,
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
 import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 import { toolContractFailure } from "./providerSafety";
+import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 
@@ -80,6 +89,7 @@ export default function App() {
   const [storedError, setStoredError] = createSignal<string>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [studioTheme, setStudioTheme] = createSignal<StudioTheme>(loadStudioTheme());
   const [providerSetupOpen, setProviderSetupOpen] = createSignal(false);
   const [capabilitiesOpen, setCapabilitiesOpen] = createSignal(false);
   const [transport, setTransport] = createSignal(transportLabel());
@@ -88,8 +98,8 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
-  const [workspaceImageDrag, setWorkspaceImageDrag] = createSignal(false);
-  const [homeImages, setHomeImages] = createSignal<ComposerImage[]>([]);
+  const [workspaceAttachmentDrag, setWorkspaceAttachmentDrag] = createSignal(false);
+  const [homeAttachments, setHomeAttachments] = createSignal<ComposerAttachment[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
@@ -99,7 +109,7 @@ export default function App() {
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
-  const pendingInitialPrompts = new Map<string, { text: string; images: ComposerImage[] }>();
+  const pendingInitialPrompts = new Map<string, { runtimeText: string; attachments: ComposerAttachment[] }>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -133,10 +143,10 @@ export default function App() {
     document.addEventListener("visibilitychange", visibility);
     queueMicrotask(() => void restoreAfterUpdate());
     let nativeDropDisposed = false;
-    let unlistenNativeImageDrops: (() => void) | undefined;
-    void listenNativeImageDrops(handleNativeImageDrop).then((unlisten) => {
+    let unlistenNativeAttachmentDrops: (() => void) | undefined;
+    void listenNativeAttachmentDrops(handleNativeAttachmentDrop).then((unlisten) => {
       if (nativeDropDisposed) unlisten();
-      else unlistenNativeImageDrops = unlisten;
+      else unlistenNativeAttachmentDrops = unlisten;
     }).catch((error) => setRuntimeError(cleanError(error)));
     onCleanup(() => {
       nativeDropDisposed = true;
@@ -144,7 +154,7 @@ export default function App() {
       document.removeEventListener("visibilitychange", visibility);
       if (updateTimer !== undefined) window.clearTimeout(updateTimer);
       if (updateInterval !== undefined) window.clearInterval(updateInterval);
-      unlistenNativeImageDrops?.();
+      unlistenNativeAttachmentDrops?.();
     });
   });
 
@@ -178,10 +188,10 @@ export default function App() {
         pendingInitialPrompts.delete(guiId);
         void sendOp(guiId, {
           op: "submit",
-          text: initialPrompt.text,
+          text: initialPrompt.runtimeText,
           manage_project_plan: true,
-          ...(initialPrompt.images.length
-            ? { attachments: initialPrompt.images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
+          ...(imageAttachments(initialPrompt.attachments).length
+            ? { attachments: imageAttachments(initialPrompt.attachments).map((image) => ({ media_type: image.mediaType, data: image.data })) }
             : {}),
         }).catch((error) => {
           update(guiId, (state) => markPromptSendFailed(state, cleanError(error)));
@@ -190,16 +200,24 @@ export default function App() {
     }
   };
 
-  const start = async (input: NewSessionInput, initialPrompt?: string, initialImages: ComposerImage[] = []) => {
+  const start = async (input: NewSessionInput, initialPrompt?: string, initialAttachments: ComposerAttachment[] = []) => {
     if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another run");
     const guiId = createGuiId();
     const state = initialPrompt?.trim()
-      ? markPromptSubmitted(createSessionState(guiId, input), initialPrompt, initialImages)
+      ? markPromptSubmitted(
+          createSessionState(guiId, input),
+          initialPrompt,
+          initialAttachments,
+          promptWithDocumentAttachments(initialPrompt, initialAttachments),
+        )
       : createSessionState(guiId, input);
     setSessions((items) => [...items, state]);
     setActiveId(guiId);
     setDialog(undefined);
-    if (initialPrompt?.trim()) pendingInitialPrompts.set(guiId, { text: initialPrompt.trim(), images: initialImages });
+    if (initialPrompt?.trim()) pendingInitialPrompts.set(guiId, {
+      runtimeText: promptWithDocumentAttachments(initialPrompt, initialAttachments),
+      attachments: initialAttachments,
+    });
     try {
       const connection = await launchSession(
         { guiId, ...input },
@@ -249,7 +267,7 @@ export default function App() {
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
   };
 
-  const submit = async (text: string, images: ComposerImage[] = []) => {
+  const submit = async (text: string, attachments: ComposerAttachment[] = []) => {
     const session = active();
     if (!session) return false;
     const effectiveProvider = session.requestedProvider
@@ -265,10 +283,10 @@ export default function App() {
       return false;
     }
     if (session.busy) {
-      if (images.length) {
+      if (imageAttachments(attachments).length) {
         update(session.guiId, (state) => addLocalNotice(
           state,
-          "Image attachments can start a new turn, but cannot be added to a mid-turn steer yet.",
+          "Image attachments can start a new turn, but cannot be added to a mid-turn steer yet. Documents can be steered in.",
           "warning",
         ));
         return false;
@@ -279,26 +297,27 @@ export default function App() {
       }
       let optimisticSteerId: string | undefined;
       update(session.guiId, (state) => {
-        const next = markSteerSubmitted(state, text);
+        const next = markSteerSubmitted(state, text, attachments);
         optimisticSteerId = next.blocks.at(-1)?.id;
         return next;
       });
       try {
-        await sendOp(session.guiId, { op: "steer", text });
+        await sendOp(session.guiId, { op: "steer", text: promptWithDocumentAttachments(text, attachments) });
       } catch (error) {
         update(session.guiId, (state) => markSteerSendFailed(state, cleanError(error), optimisticSteerId));
         return false;
       }
       return true;
     }
-    update(session.guiId, (state) => markPromptSubmitted(state, text, images));
+    const runtimeText = promptWithDocumentAttachments(text, attachments);
+    update(session.guiId, (state) => markPromptSubmitted(state, text, attachments, runtimeText));
     try {
       await sendOp(session.guiId, {
         op: "submit",
-        text,
+        text: runtimeText,
         manage_project_plan: true,
-        ...(images.length
-          ? { attachments: images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
+        ...(imageAttachments(attachments).length
+          ? { attachments: imageAttachments(attachments).map((image) => ({ media_type: image.mediaType, data: image.data })) }
           : {}),
       });
     } catch (error) {
@@ -308,12 +327,12 @@ export default function App() {
     return true;
   };
 
-  const attachImagesToSession = async (guiId: string, files: File[]) => {
+  const attachFilesToSession = async (guiId: string, files: File[]) => {
     const session = sessions().find((item) => item.guiId === guiId);
     if (!session) return;
     try {
-      const images = await appendImageFiles(session.composerImages, files);
-      update(guiId, (state) => setComposerImages(state, images));
+      const attachments = await appendAttachmentFiles(session.composerAttachments, files);
+      update(guiId, (state) => setComposerAttachments(state, attachments));
     } catch (error) {
       update(guiId, (state) => addLocalNotice(state, cleanError(error), "warning"));
     }
@@ -383,16 +402,28 @@ export default function App() {
   };
 
   const openNew = () => {
+    void openNewDialog();
+  };
+
+  const openNewDialog = async () => {
     const remembered = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
-    setDialog({ projectDir: remembered });
+    const projectDir = await selectProjectFolder(remembered);
+    if (nativeProjectPickerAvailable() && !projectDir) return;
+    setDialog({ projectDir: projectDir || remembered });
   };
 
   const openSibling = (bundle?: string, provider?: ProviderOption) => {
     if (provider?.toolCompatible === false) return;
+    void openSiblingDialog(bundle, provider);
+  };
+
+  const openSiblingDialog = async (bundle?: string, provider?: ProviderOption) => {
     const session = active();
     const remembered = session?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const projectDir = await selectProjectFolder(remembered);
+    if (nativeProjectPickerAvailable() && !projectDir) return;
     setDialog({
-      projectDir: remembered,
+      projectDir: projectDir || remembered,
       bundle: bundle || (session?.bundle && session.bundle !== "default bundle" ? session.bundle : undefined),
       provider: provider?.name,
       model: provider?.model,
@@ -407,14 +438,20 @@ export default function App() {
       if (active()) openInspector("run");
       return;
     }
+    void openCapabilityDialog(capability);
+  };
+
+  const openCapabilityDialog = async (capability: StudioCapability) => {
     const session = active();
     const remembered = session?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const projectDir = await selectProjectFolder(remembered);
+    if (nativeProjectPickerAvailable() && !projectDir) return;
     const provider = catalog().providers.find((item) => item.model === session?.model)
       || catalog().providers.find((item) => item.active);
     setCapabilitiesOpen(false);
     setDialog(capabilitySessionInput(
       capability,
-      remembered,
+      projectDir || remembered,
       provider ? { provider: provider.name, model: provider.model } : undefined,
     ));
   };
@@ -517,8 +554,12 @@ export default function App() {
 
   const relaunchFailedSession = async (session: SessionViewState, resumeLatest: boolean) => {
     const resumeId = resumeLatest ? session.runtimeSessionId || session.resumeId : session.resumeId;
+    const projectDir = resumeId
+      ? await selectProjectFolder(session.projectDir)
+      : session.projectDir;
+    if (resumeId && nativeProjectPickerAvailable() && !projectDir) return;
     const input: NewSessionInput = {
-      projectDir: session.projectDir,
+      projectDir: projectDir || session.projectDir,
       bundle: session.requestedBundle,
       model: session.requestedModel,
       provider: session.requestedProvider,
@@ -595,7 +636,7 @@ export default function App() {
         onUpdate={() => void applyAppUpdate()}
       />
 
-      <Show when={workspaceImageDrag()}><div class="native-drop-target">Drop images to attach</div></Show>
+      <Show when={workspaceAttachmentDrag()}><div class="native-drop-target">Drop files to attach</div></Show>
 
       <Show
         when={active()}
@@ -609,15 +650,16 @@ export default function App() {
             installing={runtimeInstalling()}
             error={runtimeError()}
             onSend={startFromHome}
-            onResume={resumeStored}
+            onResume={prepareStoredResume}
             onNew={openNew}
             onDrawer={openDrawer}
             onInstall={() => void installLocalRuntime()}
             onConfigureProvider={() => setProviderSetupOpen(true)}
             providerSetupSupported={!usesWebBridge()}
             onSettings={() => setSettingsOpen(true)}
-            images={homeImages()}
-            onImages={setHomeImages}
+            attachments={homeAttachments()}
+            onAttachments={setHomeAttachments}
+            onPickAttachments={pickAttachments}
           />
         }
       >
@@ -628,29 +670,29 @@ export default function App() {
             onDragEnter={(event) => {
               const transfer = event.dataTransfer;
               const target = event.target as HTMLElement | null;
-              if (transfer && hasImageFiles(transfer) && !target?.closest(".composer-shell")) {
+              if (transfer && hasAttachmentFiles(transfer) && !target?.closest(".composer-shell")) {
                 event.preventDefault();
-                setWorkspaceImageDrag(true);
+                setWorkspaceAttachmentDrag(true);
               }
             }}
             onDragOver={(event) => {
               const transfer = event.dataTransfer;
               const target = event.target as HTMLElement | null;
-              if (transfer && hasImageFiles(transfer) && !target?.closest(".composer-shell")) {
+              if (transfer && hasAttachmentFiles(transfer) && !target?.closest(".composer-shell")) {
                 event.preventDefault();
                 transfer.dropEffect = "copy";
-                setWorkspaceImageDrag(true);
+                setWorkspaceAttachmentDrag(true);
               }
             }}
             onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWorkspaceImageDrag(false);
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWorkspaceAttachmentDrag(false);
             }}
             onDrop={(event) => {
               const target = event.target as HTMLElement | null;
               if (target?.closest(".composer-shell")) return;
               event.preventDefault();
-              setWorkspaceImageDrag(false);
-              void attachImagesToSession(session().guiId, Array.from(event.dataTransfer?.files || []));
+              setWorkspaceAttachmentDrag(false);
+              void attachFilesToSession(session().guiId, Array.from(event.dataTransfer?.files || []));
             }}
           >
             <WorkspaceSidebar
@@ -687,7 +729,8 @@ export default function App() {
                     state={session()}
                     onSend={submit}
                     onDraft={(draft) => update(session().guiId, (state) => setComposerDraft(state, draft))}
-                    onImages={(images) => update(session().guiId, (state) => setComposerImages(state, images))}
+                    onAttachments={(attachments) => update(session().guiId, (state) => setComposerAttachments(state, attachments))}
+                    onPickAttachments={pickAttachments}
                     onAutopilot={() => void engageAutopilot()}
                     autopilotActive={autopilotActive()}
                     autopilotAvailable={canEngageAutopilot(active())}
@@ -735,7 +778,14 @@ export default function App() {
       </Show>
 
       <Show when={dialog()} keyed>
-        {(initial) => <NewSessionDialog initial={initial} catalog={catalog()} onCancel={() => setDialog(undefined)} onStart={start} />}
+        {(initial) => <NewSessionDialog
+          initial={initial}
+          catalog={catalog()}
+          nativeProjectPicker={nativeProjectPickerAvailable()}
+          onCancel={() => setDialog(undefined)}
+          onPickProjectDir={pickProjectDirectory}
+          onStart={start}
+        />}
       </Show>
       <Show when={capabilitiesOpen()}>
         <CapabilityPalette catalog={catalog()} onClose={() => setCapabilitiesOpen(false)} onLaunch={openCapability} />
@@ -747,27 +797,30 @@ export default function App() {
           error={storedError()}
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
-          onResume={(session) => {
-            setDrawerOpen(false);
-            setDialog({
-              projectDir: session.projectDir || "",
-              resumeId: session.sessionId,
-              resumeName: session.name || `Session ${session.sessionId.slice(0, 8)}`,
-            });
-          }}
+          onResume={(session) => void prepareStoredResume(session)}
         />
       </Show>
       <Show when={settingsOpen()}>
-        <BridgeSettingsDialog
+        <StudioSettingsDialog
+          initialProjectDir={active()?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir()}
+          initialTheme={studioTheme()}
           initialUrl={configuredBridgeUrl()}
           initialToken={configuredBridgeToken()}
-          locked={sessions().length > 0}
+          bridgeLocked={sessions().length > 0}
+          runtimeSettingsAvailable={localRuntimeSettingsAvailable()}
+          nativeProjectPicker={nativeProjectPickerAvailable()}
+          onPickProjectDir={pickProjectDirectory}
+          onThemePreview={(theme) => {
+            setStudioTheme(theme);
+            applyStudioTheme(theme);
+          }}
           onCancel={() => setSettingsOpen(false)}
-          onSave={(url, token) => {
+          onSaveStudio={(theme, url, token) => {
             saveBridgeUrl(url);
             saveBridgeToken(token, url);
+            saveStudioTheme(theme);
+            setStudioTheme(theme);
             setTransport(transportLabel());
-            setSettingsOpen(false);
             void defaultProjectDir()
               .then((projectDir) => {
                 setDefaultDir(projectDir);
@@ -799,35 +852,35 @@ export default function App() {
     update(guiId, (state) => addLocalNotice(state, cleanError(error), "error"));
   }
 
-  function handleNativeImageDrop(event: NativeImageDropEvent) {
+  function handleNativeAttachmentDrop(event: NativeAttachmentDropEvent) {
     if (event.type === "enter") {
-      setWorkspaceImageDrag(true);
+      setWorkspaceAttachmentDrag(true);
       return;
     }
     if (event.type === "leave") {
-      setWorkspaceImageDrag(false);
+      setWorkspaceAttachmentDrag(false);
       return;
     }
-    setWorkspaceImageDrag(false);
+    setWorkspaceAttachmentDrag(false);
     if (event.type === "error") {
       const session = active();
       if (session) update(session.guiId, (state) => addLocalNotice(state, event.message, "warning"));
       else setRuntimeError(event.message);
       return;
     }
-    const images = event.images.map((image, index): ComposerImage => ({
-      ...image,
-      id: globalThis.crypto?.randomUUID?.() || `native-image-${Date.now()}-${index}`,
+    const attachments = event.attachments.map((attachment, index): ComposerAttachment => ({
+      ...attachment,
+      id: globalThis.crypto?.randomUUID?.() || `native-attachment-${Date.now()}-${index}`,
     }));
     const session = active();
     try {
       if (session) {
-        update(session.guiId, (state) => setComposerImages(
+        update(session.guiId, (state) => setComposerAttachments(
           state,
-          appendComposerImages(state.composerImages, images),
+          appendComposerAttachments(state.composerAttachments, attachments),
         ));
       } else {
-        setHomeImages(appendComposerImages(homeImages(), images));
+        setHomeAttachments(appendComposerAttachments(homeAttachments(), attachments));
         setRuntimeError(undefined);
       }
     } catch (error) {
@@ -848,19 +901,34 @@ export default function App() {
     }
   }
 
-  async function startFromHome(text: string, images: ComposerImage[]) {
-    const projectDir = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+  async function startFromHome(text: string, attachments: ComposerAttachment[]) {
+    const remembered = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const projectDir = await selectProjectFolder(remembered);
+    if (nativeProjectPickerAvailable() && !projectDir) throw new Error("Project folder selection was cancelled");
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
-    await start({ projectDir }, text, images);
+    await start({ projectDir }, text, attachments);
   }
 
-  async function resumeStored(session: StoredSession) {
-    if (!session.projectDir) throw new Error("Choose the original project folder before resuming this session");
-    await start({
-      projectDir: session.projectDir,
+  async function prepareStoredResume(session: StoredSession) {
+    const remembered = session.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const projectDir = await selectProjectFolder(remembered);
+    if (nativeProjectPickerAvailable() && !projectDir) return;
+    setDrawerOpen(false);
+    setDialog({
+      projectDir: projectDir || "",
       resumeId: session.sessionId,
       resumeName: session.name || `Session ${session.sessionId.slice(0, 8)}`,
     });
+  }
+
+  async function selectProjectFolder(remembered?: string): Promise<string | undefined> {
+    if (!nativeProjectPickerAvailable()) return remembered?.trim() || undefined;
+    try {
+      return await pickProjectDirectory(remembered);
+    } catch (error) {
+      setRuntimeError(cleanError(error));
+      return undefined;
+    }
   }
 
   async function restoreAfterUpdate() {
