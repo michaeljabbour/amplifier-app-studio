@@ -16,6 +16,8 @@ import {
   type SessionViewState,
   stringList,
   stringValue,
+  type TurnLoopPhase,
+  type TurnLoopState,
   type TranscriptBlock,
   type UIEvent,
 } from "./protocol";
@@ -80,6 +82,7 @@ export function createSessionState(
     lanes: {},
     pendingDelegateBriefs: {},
     plans: {},
+    turnLoop: emptyTurnLoop(),
     alerts: [],
     outputs: [],
     queuedSteers: 0,
@@ -550,6 +553,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     ? Boolean(planKeyForCall(next, stringValue(event.tool_call_id)))
     : Boolean(planKeyBefore);
   if (isPipelineEvent(event)) return reducePipelineEvent(next, event);
+  if (!isChildEvent(next, event)) next = reduceTurnLoopEvent(next, event);
   if (event.kind === "agent_spawned") {
     const laneId = stringValue(event.sub_session_id, stringValue(event.session_id));
     if (!laneId) return next;
@@ -841,6 +845,254 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     default:
       return next;
   }
+}
+
+function emptyTurnLoop(): TurnLoopState {
+  return {
+    phase: "idle",
+    detail: "Waiting for a prompt",
+    iteration: 0,
+    modelPasses: 0,
+    toolCalls: 0,
+    toolResults: 0,
+    toolFailures: 0,
+    delegates: 0,
+    completedDelegates: 0,
+    responseBlocks: 0,
+    awaitingModelPass: false,
+    activeTools: {},
+    activeDelegates: {},
+    transitions: [],
+    appliedEvents: {},
+  };
+}
+
+function reduceTurnLoopEvent(state: SessionViewState, event: UIEvent): SessionViewState {
+  const key = turnLoopEventKey(event);
+  if (state.turnLoop.appliedEvents[key]) return state;
+  const appliedEvents = { ...state.turnLoop.appliedEvents, [key]: true as const };
+  let loop = { ...state.turnLoop, appliedEvents };
+
+  switch (event.kind) {
+    case "prompt_submit": {
+      loop = {
+        ...emptyTurnLoop(),
+        phase: "prompt",
+        detail: "Prompt accepted by Amplifier",
+        startedAtMs: eventTimeMs(event),
+        appliedEvents: { [key]: true },
+      };
+      loop = appendTurnLoopTransition(loop, event, "prompt", "Prompt accepted", "Turn entered Amplifier", "completed");
+      break;
+    }
+    case "execution_start": {
+      const pass = Math.max(1, loop.modelPasses);
+      loop = {
+        ...loop,
+        phase: "model",
+        detail: `Model pass ${pass}`,
+        iteration: pass,
+        modelPasses: pass,
+        awaitingModelPass: false,
+      };
+      loop = appendTurnLoopTransition(loop, event, "model", `Model pass ${pass}`, "Provider request started");
+      break;
+    }
+    case "content_block_start": {
+      const blockType = stringValue(event.block_type, "text");
+      if (!["thinking", "text", "tool_call"].includes(blockType)) break;
+      const nextPass = loop.modelPasses === 0
+        ? 1
+        : loop.awaitingModelPass
+          ? loop.modelPasses + 1
+          : loop.modelPasses;
+      const beganPass = loop.modelPasses === 0 || loop.awaitingModelPass;
+      loop = {
+        ...loop,
+        phase: "model",
+        detail: blockType === "thinking"
+          ? `Model pass ${nextPass} · reasoning`
+          : blockType === "tool_call"
+            ? `Model pass ${nextPass} · selecting tools`
+            : `Model pass ${nextPass} · producing output`,
+        iteration: nextPass,
+        modelPasses: nextPass,
+        awaitingModelPass: false,
+      };
+      if (beganPass) {
+        loop = appendTurnLoopTransition(loop, event, "model", `Model pass ${nextPass}`, "Tool results and context entered the model");
+      }
+      break;
+    }
+    case "content_block_end": {
+      const blockType = stringValue(event.block_type, "text");
+      if (blockType === "text") loop = { ...loop, responseBlocks: loop.responseBlocks + 1 };
+      break;
+    }
+    case "tool_pre": {
+      const id = stringValue(event.tool_call_id, key);
+      if (loop.activeTools[id]) break;
+      const delegate = isDelegateTool(event);
+      const name = stringValue(event.tool_name, "tool");
+      loop = {
+        ...loop,
+        phase: delegate ? "delegates" : "tools",
+        detail: delegate ? "Delegating work to an Amplifier agent" : `Running ${displayToolName(name)}`,
+        toolCalls: loop.toolCalls + 1,
+        activeTools: { ...loop.activeTools, [id]: { id, name, delegate } },
+      };
+      loop = appendTurnLoopTransition(
+        loop,
+        event,
+        delegate ? "delegates" : "tools",
+        delegate ? "Delegate requested" : displayToolName(name),
+        delegate ? "Coordinator opened a child-agent workspace" : "Tool call started",
+      );
+      break;
+    }
+    case "agent_spawned": {
+      const id = stringValue(event.sub_session_id, stringValue(event.session_id, key));
+      if (loop.activeDelegates[id]) break;
+      const agent = stringValue(event.agent, "delegate");
+      loop = {
+        ...loop,
+        phase: "delegates",
+        detail: `${agent} is running`,
+        delegates: loop.delegates + 1,
+        activeDelegates: { ...loop.activeDelegates, [id]: true },
+      };
+      loop = appendTurnLoopTransition(loop, event, "delegates", `${agent} started`, "Child session is executing");
+      break;
+    }
+    case "agent_completed": {
+      const id = stringValue(event.sub_session_id, stringValue(event.session_id));
+      const activeDelegates = { ...loop.activeDelegates };
+      const wasActive = Boolean(activeDelegates[id]);
+      delete activeDelegates[id];
+      loop = {
+        ...loop,
+        phase: Object.keys(loop.activeTools).length ? "delegates" : "model",
+        detail: event.success === false ? "Delegate returned an error" : "Delegate result returned to coordinator",
+        completedDelegates: loop.completedDelegates + (wasActive ? 1 : 0),
+        activeDelegates,
+        awaitingModelPass: Object.keys(loop.activeTools).length === 0,
+      };
+      loop = appendTurnLoopTransition(
+        loop,
+        event,
+        "delegates",
+        event.success === false ? "Delegate failed" : "Delegate completed",
+        "Child result returned to the coordinator",
+        event.success === false ? "failed" : "completed",
+      );
+      break;
+    }
+    case "tool_post":
+    case "tool_error": {
+      const id = stringValue(event.tool_call_id);
+      const active = loop.activeTools[id];
+      if (!active) break;
+      const activeTools = { ...loop.activeTools };
+      delete activeTools[id];
+      const failed = event.kind === "tool_error" || toolResultFailed(event);
+      const stillRunning = Object.values(activeTools);
+      const phase: TurnLoopPhase = stillRunning.some((tool) => tool.delegate) || Object.keys(loop.activeDelegates).length
+        ? "delegates"
+        : stillRunning.length
+          ? "tools"
+          : "model";
+      loop = {
+        ...loop,
+        phase,
+        detail: stillRunning.length
+          ? `${stillRunning.length} tool call${stillRunning.length === 1 ? "" : "s"} still running`
+          : "Tool results returned to the model",
+        toolResults: loop.toolResults + 1,
+        toolFailures: loop.toolFailures + (failed ? 1 : 0),
+        activeTools,
+        awaitingModelPass: stillRunning.length === 0,
+      };
+      loop = appendTurnLoopTransition(
+        loop,
+        event,
+        phase,
+        failed ? `${displayToolName(active.name)} failed` : "Result returned",
+        failed ? "Amplifier can recover on the next model pass" : `${displayToolName(active.name)} completed`,
+        failed ? "failed" : "completed",
+      );
+      break;
+    }
+    case "execution_end":
+      loop = {
+        ...loop,
+        phase: "response",
+        detail: "Final model output recorded",
+        awaitingModelPass: false,
+      };
+      loop = appendTurnLoopTransition(loop, event, "response", "Final response", "Amplifier closed the execution loop");
+      break;
+    case "orchestrator_complete": {
+      const status = stringValue(event.status, "success");
+      loop = {
+        ...loop,
+        phase: status === "success" ? "response" : "complete",
+        detail: status === "success" ? "Orchestrator completed successfully" : `Orchestrator ${status}`,
+        completedAtMs: status === "success" ? loop.completedAtMs : eventTimeMs(event),
+      };
+      if (status !== "success") {
+        loop = appendTurnLoopTransition(loop, event, "complete", `Turn ${status}`, "Orchestrator stopped before success", "failed");
+      }
+      break;
+    }
+    case "prompt_complete":
+      loop = {
+        ...loop,
+        phase: "complete",
+        detail: loop.toolFailures ? `Complete · ${loop.toolFailures} tool failure${loop.toolFailures === 1 ? "" : "s"} handled` : "Turn complete",
+        completedAtMs: eventTimeMs(event),
+        awaitingModelPass: false,
+        activeTools: {},
+        activeDelegates: {},
+      };
+      loop = appendTurnLoopTransition(loop, event, "complete", "Turn complete", "Final response returned", "completed");
+      break;
+    default:
+      break;
+  }
+  return { ...state, turnLoop: loop };
+}
+
+function appendTurnLoopTransition(
+  loop: TurnLoopState,
+  event: UIEvent,
+  phase: TurnLoopPhase,
+  label: string,
+  detail: string,
+  status: "running" | "completed" | "failed" = "running",
+): TurnLoopState {
+  const transition = {
+    id: `${turnLoopEventKey(event)}:${phase}:${loop.transitions.length}`,
+    phase,
+    label,
+    detail,
+    iteration: loop.iteration,
+    atMs: eventTimeMs(event),
+    status,
+  };
+  return { ...loop, transitions: [...loop.transitions, transition].slice(-30) };
+}
+
+function turnLoopEventKey(event: UIEvent): string {
+  const eventId = stringValue(event.event_id);
+  const timestamp = numberValue(event.ts);
+  if (eventId) return `${eventId}:${timestamp}`;
+  return [
+    event.kind,
+    stringValue(event.tool_call_id),
+    stringValue(event.sub_session_id),
+    stringValue(event.block_index),
+    String(timestamp),
+  ].join(":");
 }
 
 function isPipelineEvent(event: UIEvent): boolean {

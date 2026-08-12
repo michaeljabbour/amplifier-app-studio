@@ -1,0 +1,75 @@
+<svg width="196pt" height="260pt" viewBox="0.00 0.00 196.00 260.00" xmlns="http://www.w3.org/2000/svg">
+  <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(5.76 254.26)">
+    <title>AmplifierTurnLoop</title>
+    <g id="node1" class="node">
+      <title>prompt</title>
+      <path fill="#101d29" stroke="#40556a" d="M114.73,-248.5C114.73,-248.5 84.73,-248.5 84.73,-248.5 78.73,-248.5 72.73,-242.5 72.73,-236.5 72.73,-236.5 72.73,-224.5 72.73,-224.5 72.73,-218.5 78.73,-212.5 84.73,-212.5 84.73,-212.5 114.73,-212.5 114.73,-212.5 120.73,-212.5 126.73,-218.5 126.73,-224.5 126.73,-224.5 126.73,-236.5 126.73,-236.5 126.73,-242.5 120.73,-248.5 114.73,-248.5"/>
+      <text text-anchor="middle" x="99.73" y="-227" font-family="Arial" font-size="10" fill="#9fb2c4">Prompt</text>
+    </g>
+    <g id="node2" class="node">
+      <title>model</title>
+      <path fill="#101d29" stroke="#40556a" d="M135.72,-183.5C135.72,-183.5 63.75,-183.5 63.75,-183.5 57.75,-183.5 51.75,-177.5 51.75,-171.5 51.75,-171.5 51.75,-159.5 51.75,-159.5 51.75,-153.5 57.75,-147.5 63.75,-147.5 63.75,-147.5 135.72,-147.5 135.72,-147.5 141.72,-147.5 147.72,-153.5 147.72,-159.5 147.72,-159.5 147.72,-171.5 147.72,-171.5 147.72,-177.5 141.72,-183.5 135.72,-183.5"/>
+      <text text-anchor="middle" x="99.73" y="-162" font-family="Arial" font-size="10" fill="#9fb2c4">Model / reasoning</text>
+    </g>
+    <g id="edge1" class="edge">
+      <title>prompt-&gt;model</title>
+      <path fill="none" stroke="#344a5e" d="M99.73,-212.28C99.73,-205.9 99.73,-198.51 99.73,-191.56"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="102.01,-191.71 99.74,-185.21 97.46,-191.71 102.01,-191.71"/>
+    </g>
+    <g id="node3" class="node">
+      <title>tools</title>
+      <path fill="#101d29" stroke="#40556a" d="M71.73,-109.75C71.73,-109.75 41.73,-109.75 41.73,-109.75 35.73,-109.75 29.73,-103.75 29.73,-97.75 29.73,-97.75 29.73,-85.75 29.73,-85.75 29.73,-79.75 35.73,-73.75 41.73,-73.75 41.73,-73.75 71.73,-73.75 71.73,-73.75 77.73,-73.75 83.73,-79.75 83.73,-85.75 83.73,-85.75 83.73,-97.75 83.73,-97.75 83.73,-103.75 77.73,-109.75 71.73,-109.75"/>
+      <text text-anchor="middle" x="56.73" y="-88.25" font-family="Arial" font-size="10" fill="#9fb2c4">Tools</text>
+    </g>
+    <g id="edge2" class="edge">
+      <title>model-&gt;tools</title>
+      <path fill="none" stroke="#344a5e" d="M89.33,-147.13C83.87,-138.03 77.11,-126.75 71.16,-116.82"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="73.27,-115.91 67.98,-111.51 69.37,-118.25 73.27,-115.91"/>
+      <text text-anchor="middle" x="93.93" y="-125.9" font-family="Arial" font-size="8" fill="#657a8d">tool call</text>
+    </g>
+    <g id="node5" class="node">
+      <title>response</title>
+      <path fill="#101d29" stroke="#40556a" d="M172.97,-109.75C172.97,-109.75 114.5,-109.75 114.5,-109.75 108.5,-109.75 102.5,-103.75 102.5,-97.75 102.5,-97.75 102.5,-85.75 102.5,-85.75 102.5,-79.75 108.5,-73.75 114.5,-73.75 114.5,-73.75 172.97,-73.75 172.97,-73.75 178.97,-73.75 184.97,-79.75 184.97,-85.75 184.97,-85.75 184.97,-97.75 184.97,-97.75 184.97,-103.75 178.97,-109.75 172.97,-109.75"/>
+      <text text-anchor="middle" x="143.74" y="-88.25" font-family="Arial" font-size="10" fill="#9fb2c4">Final response</text>
+    </g>
+    <g id="edge6" class="edge">
+      <title>model-&gt;response</title>
+      <path fill="none" stroke="#344a5e" d="M110.39,-147.13C115.97,-138.03 122.89,-126.75 128.97,-116.82"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="130.78,-118.23 132.24,-111.5 126.9,-115.85 130.78,-118.23"/>
+      <text text-anchor="middle" x="131.49" y="-125.9" font-family="Arial" font-size="8" fill="#657a8d">final</text>
+    </g>
+    <g id="edge5" class="edge">
+      <title>tools-&gt;model</title>
+      <path fill="none" stroke="#344a5e" d="M84.02,-106.31C86.93,-107.55 89.87,-108.73 92.73,-109.75 116.89,-118.38 132.95,-103.53 148.74,-123.75 153.9,-130.36 151.71,-136.63 146.06,-142.18"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="144.83,-140.25 141.2,-146.11 147.69,-143.79 144.83,-140.25"/>
+      <text text-anchor="middle" x="161.4" y="-125.9" font-family="Arial" font-size="8" fill="#657a8d">result</text>
+    </g>
+    <g id="node4" class="node">
+      <title>delegates</title>
+      <path fill="#101d29" stroke="#40556a" d="M61.47,-36C61.47,-36 12,-36 12,-36 6,-36 0,-30 0,-24 0,-24 0,-12 0,-12 0,-6 6,0 12,0 12,0 61.47,0 61.47,0 67.47,0 73.47,-6 73.47,-12 73.47,-12 73.47,-24 73.47,-24 73.47,-30 67.47,-36 61.47,-36"/>
+      <text text-anchor="middle" x="36.73" y="-14.5" font-family="Arial" font-size="10" fill="#9fb2c4">Child agents</text>
+    </g>
+    <g id="edge3" class="edge">
+      <title>tools-&gt;delegates</title>
+      <path fill="none" stroke="#344a5e" d="M29.27,-76.09C23.52,-71.65 18.23,-66.2 14.98,-59.75 12.25,-54.31 13.05,-48.51 15.53,-43.05"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="17.36,-44.42 18.67,-37.66 13.43,-42.13 17.36,-44.42"/>
+      <text text-anchor="middle" x="30.36" y="-52.15" font-family="Arial" font-size="8" fill="#657a8d">delegate</text>
+    </g>
+    <g id="edge4" class="edge">
+      <title>delegates-&gt;tools</title>
+      <path fill="none" stroke="#344a5e" d="M41.84,-36.36C43.13,-40.8 44.5,-45.57 45.73,-50 47.17,-55.12 48.67,-60.61 50.09,-65.85"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="47.81,-66.13 51.7,-71.82 52.21,-64.95 47.81,-66.13"/>
+      <text text-anchor="middle" x="57.95" y="-52.15" font-family="Arial" font-size="8" fill="#657a8d">result</text>
+    </g>
+    <g id="node6" class="node">
+      <title>complete</title>
+      <path fill="#101d29" stroke="#40556a" d="M172.22,-36C172.22,-36 115.25,-36 115.25,-36 109.25,-36 103.25,-30 103.25,-24 103.25,-24 103.25,-12 103.25,-12 103.25,-6 109.25,0 115.25,0 115.25,0 172.22,0 172.22,0 178.22,0 184.22,-6 184.22,-12 184.22,-12 184.22,-24 184.22,-24 184.22,-30 178.22,-36 172.22,-36"/>
+      <text text-anchor="middle" x="143.74" y="-14.5" font-family="Arial" font-size="10" fill="#9fb2c4">Turn complete</text>
+    </g>
+    <g id="edge7" class="edge">
+      <title>response-&gt;complete</title>
+      <path fill="none" stroke="#344a5e" d="M143.74,-73.38C143.74,-64.63 143.74,-53.86 143.74,-44.22"/>
+      <polygon fill="#344a5e" stroke="#344a5e" points="146.01,-44.47 143.74,-37.97 141.46,-44.47 146.01,-44.47"/>
+    </g>
+  </g>
+</svg>

@@ -179,6 +179,7 @@ export default function App() {
         void sendOp(guiId, {
           op: "submit",
           text: initialPrompt.text,
+          manage_project_plan: true,
           ...(initialPrompt.images.length
             ? { attachments: initialPrompt.images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
             : {}),
@@ -295,6 +296,7 @@ export default function App() {
       await sendOp(session.guiId, {
         op: "submit",
         text,
+        manage_project_plan: true,
         ...(images.length
           ? { attachments: images.map((image) => ({ media_type: image.mediaType, data: image.data })) }
           : {}),

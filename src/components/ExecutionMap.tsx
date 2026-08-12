@@ -1,15 +1,9 @@
 import DOMPurify from "dompurify";
 import { createMemo, createResource, For, Show } from "solid-js";
-import type { PipelineState, SessionViewState, ToolBlock } from "../protocol";
+import type { PipelineState, SessionViewState, TurnLoopPhase, TurnLoopState } from "../protocol";
+import turnLoopSvgSource from "../assets/amplifier-turn-loop.svg?raw";
 
-export type ObservedStageStatus = "not_observed" | "pending" | "running" | "completed" | "failed";
-
-export interface ObservedExecutionStage {
-  id: "prompt" | "plan" | "agents_tools" | "verify" | "respond";
-  label: string;
-  status: ObservedStageStatus;
-  detail: string;
-}
+export type TurnLoopNodeStatus = "pending" | "active" | "completed" | "skipped";
 
 interface Props {
   state: SessionViewState;
@@ -32,11 +26,11 @@ export function ExecutionMap(props: Props) {
     };
   });
   const [svg] = createResource(graphInput, async (input) => renderPipelineSvg(input.dot, input.pipeline));
-  const stages = createMemo(() => observedExecutionStages(props.state));
+  const loopSvg = createMemo(() => pipeline() ? undefined : sanitizeAndAnnotateTurnLoopSvg(turnLoopSvgSource, props.state.turnLoop));
 
   return (
     <div class="execution-map-panel">
-      <Show when={graphInput()} fallback={<GenericExecutionLoop stages={stages()} />}>
+      <Show when={graphInput()} fallback={<TurnLoop loop={props.state.turnLoop} svg={loopSvg()} />}>
         <div class="execution-map-heading">
           <div><span>ATTRACTOR PIPELINE</span><strong>{pipeline()?.graphName || "Pipeline"}</strong></div>
           <span class={`execution-map-state ${pipeline()?.status || "running"}`}>{pipeline()?.status || "running"}</span>
@@ -57,6 +51,7 @@ export function ExecutionMap(props: Props) {
 
 export function ExecutionPresence(props: { state?: SessionViewState; onOpen: () => void }) {
   const pipeline = () => props.state?.pipeline;
+  const loop = () => props.state?.turnLoop;
   const active = () => pipeline()?.status === "running" || Boolean(props.state?.busy);
   return (
     <button
@@ -64,41 +59,111 @@ export function ExecutionPresence(props: { state?: SessionViewState; onOpen: () 
       classList={{ active: active(), failed: pipeline()?.status === "failed" }}
       disabled={!props.state}
       onClick={props.onOpen}
-      title="Open the observed execution map"
+      title={pipeline()?.dotSource ? "Open the Attractor pipeline" : "Open the live Amplifier turn loop"}
     >
-      <span>MAP</span>
-      <strong>{pipeline()?.dotSource ? "Pipeline" : active() ? "Live" : "Flow"}</strong>
-      <small>{pipeline()?.dotSource ? `${Object.keys(pipeline()?.nodes || {}).length} observed nodes` : "Observed stages"}</small>
+      <span>{pipeline()?.dotSource ? "PIPELINE" : "LOOP"}</span>
+      <strong>{pipeline()?.dotSource ? "Attractor" : turnLoopPhaseLabel(loop()?.phase || "idle")}</strong>
+      <small>{pipeline()?.dotSource
+        ? `${Object.keys(pipeline()?.nodes || {}).length} observed nodes`
+        : `${loop()?.modelPasses || 0} model · ${loop()?.toolCalls || 0} tools`}</small>
     </button>
   );
 }
 
-function GenericExecutionLoop(props: { stages: ObservedExecutionStage[] }) {
-  const observed = () => props.stages.filter((stage) => stage.status !== "not_observed");
-  const gaps = () => props.stages.filter((stage) => stage.status === "not_observed");
+function TurnLoop(props: { loop: TurnLoopState; svg?: string }) {
+  const transitions = () => props.loop.transitions.slice(-10);
   return (
     <>
       <div class="execution-map-heading">
-        <div><span>SESSION EVIDENCE MAP</span><strong>Recorded Amplifier activity</strong></div>
-        <span class="execution-map-state observed">evidence only</span>
+        <div><span>AMPLIFIER TURN LOOP</span><strong>{props.loop.detail}</strong></div>
+        <span class={`execution-map-state ${props.loop.phase}`}>{turnLoopPhaseLabel(props.loop.phase)}</span>
       </div>
-      <p class="execution-map-guidance">Only runtime evidence appears in this path. It does not invent a hidden plan or place unrecorded stages into the flow.</p>
-      <ol class="generic-execution-flow">
-        <For each={observed()}>{(stage, index) => (
-          <li class={stage.status}>
-            <span class="flow-node-state" aria-hidden="true" />
-            <div><small>{String(index() + 1).padStart(2, "0")}</small><strong>{stage.label}</strong><p>{stage.detail}</p></div>
-          </li>
-        )}</For>
-      </ol>
-      <Show when={gaps().length}>
-        <div class="execution-evidence-gaps">
-          <strong>Not recorded</strong>
-          <For each={gaps()}>{(stage) => <span>{stage.label}: {stage.detail}</span>}</For>
-        </div>
+      <p class="execution-map-guidance">This is the recorded Amplifier orchestrator cycle: the model can call tools or delegates, their results return to the model, and the loop repeats until a final response closes the turn.</p>
+      <div class="turn-loop-graph" aria-label="Amplifier model and tool execution loop">
+        <Show when={props.svg} fallback={<p class="execution-map-error">The Amplifier loop could not be rendered.</p>}>
+          <div class="turn-loop-svg" innerHTML={props.svg || ""} />
+        </Show>
+      </div>
+      <div class="turn-loop-stats">
+        <span>{props.loop.modelPasses} model pass{props.loop.modelPasses === 1 ? "" : "es"}</span>
+        <span>{props.loop.toolResults}/{props.loop.toolCalls} tool results</span>
+        <span>{props.loop.completedDelegates}/{props.loop.delegates} delegates</span>
+        <Show when={props.loop.toolFailures}><span class="failed">{props.loop.toolFailures} recovered failure{props.loop.toolFailures === 1 ? "" : "s"}</span></Show>
+      </div>
+      <Show when={transitions().length} fallback={<p class="execution-map-guidance turn-loop-empty">No turn events recorded yet.</p>}>
+        <ol class="turn-loop-ledger">
+          <For each={transitions()}>{(transition) => (
+            <li class={transition.status}>
+              <span>{turnLoopPhaseLabel(transition.phase)}</span>
+              <div><strong>{transition.label}</strong><small>{transition.detail}</small></div>
+            </li>
+          )}</For>
+        </ol>
       </Show>
     </>
   );
+}
+
+export function turnLoopNodeStatuses(loop: TurnLoopState): Record<string, TurnLoopNodeStatus> {
+  const beyondPrompt = loop.phase !== "idle" && loop.phase !== "prompt";
+  const modelObserved = loop.modelPasses > 0;
+  const complete = loop.phase === "complete";
+  return {
+    prompt: loop.phase === "prompt" ? "active" : beyondPrompt ? "completed" : "pending",
+    model: loop.phase === "model" ? "active" : modelObserved ? "completed" : "pending",
+    tools: loop.phase === "tools" ? "active" : loop.toolCalls > 0 ? "completed" : complete ? "skipped" : "pending",
+    delegates: loop.phase === "delegates" ? "active" : loop.delegates > 0 ? "completed" : complete ? "skipped" : "pending",
+    response: loop.phase === "response" ? "active" : complete ? "completed" : "pending",
+    complete: complete ? "active" : "pending",
+  };
+}
+
+function turnLoopPhaseLabel(phase: TurnLoopPhase | "idle"): string {
+  const labels: Record<TurnLoopPhase | "idle", string> = {
+    idle: "Ready",
+    prompt: "Prompt",
+    model: "Model",
+    tools: "Tools",
+    delegates: "Delegates",
+    response: "Response",
+    complete: "Complete",
+  };
+  return labels[phase];
+}
+
+export async function renderTurnLoopSvg(loop: TurnLoopState): Promise<string> {
+  return sanitizeAndAnnotateTurnLoopSvg(turnLoopSvgSource, loop);
+}
+
+export function sanitizeAndAnnotateTurnLoopSvg(raw: string, loop: TurnLoopState): string {
+  const clean = sanitizeSvg(raw);
+  const documentNode = new DOMParser().parseFromString(clean, "image/svg+xml");
+  const svg = documentNode.documentElement;
+  if (svg.tagName.toLowerCase() !== "svg" || documentNode.querySelector("parsererror")) return "";
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `Amplifier turn loop, current state ${turnLoopPhaseLabel(loop.phase)}`);
+  const statuses = turnLoopNodeStatuses(loop);
+  documentNode.querySelectorAll("g.node").forEach((group) => {
+    const id = group.querySelector("title")?.textContent?.trim() || "";
+    group.classList.add(`loop-${statuses[id] || "pending"}`);
+  });
+  const activeEdge = loop.phase === "tools"
+    ? "model->tools"
+    : loop.phase === "delegates"
+      ? "tools->delegates"
+      : loop.phase === "model" && loop.modelPasses > 1
+        ? "tools->model"
+        : loop.phase === "model"
+          ? "prompt->model"
+          : loop.phase === "response"
+            ? "model->response"
+            : loop.phase === "complete"
+              ? "response->complete"
+              : "";
+  documentNode.querySelectorAll("g.edge").forEach((group) => {
+    if (group.querySelector("title")?.textContent?.trim() === activeEdge) group.classList.add("loop-active-edge");
+  });
+  return new XMLSerializer().serializeToString(svg);
 }
 
 function PipelineLedger(props: { pipeline: PipelineState }) {
@@ -125,68 +190,11 @@ function PipelineLedger(props: { pipeline: PipelineState }) {
   );
 }
 
-export function observedExecutionStages(state: SessionViewState): ObservedExecutionStage[] {
-  const userSeen = state.blocks.some((block) => block.kind === "user");
-  const answerSeen = state.blocks.some((block) => block.kind === "answer" && block.final);
-  const plans = Object.values(state.plans);
-  const planItems = plans.flatMap((plan) => plan.items);
-  const directTools = state.blocks.filter((block): block is ToolBlock => block.kind === "tool");
-  const lanes = Object.values(state.lanes);
-  const delegateTools = lanes.flatMap((lane) => lane.tools);
-  const tools = [
-    ...directTools.map((tool) => ({ name: tool.toolName, label: tool.summary, status: tool.status })),
-    ...delegateTools.map((tool) => ({ name: tool.name, label: tool.label, status: tool.status })),
-  ];
-  const workSeen = tools.length > 0 || lanes.length > 0;
-  const workFailed = tools.some((tool) => tool.status === "failed") || lanes.some((lane) => lane.status === "attention");
-  const workRunning = tools.some((tool) => tool.status === "running") || lanes.some((lane) => lane.status === "running");
-  const verification = tools.filter((tool) => /\b(test|pytest|cargo check|npm run build|lint|verify|validate|typecheck)\b/i.test(`${tool.name} ${tool.label}`));
-  const verificationFailed = verification.some((tool) => tool.status === "failed");
-  const verificationRunning = verification.some((tool) => tool.status === "running");
-  const planFailed = plans.some((plan) => plan.updateStatus === "degraded");
-  const planRunning = planItems.some((item) => item.status === "in_progress") || plans.some((plan) => plan.updateStatus === "pending");
-
-  return [
-    {
-      id: "prompt",
-      label: "Prompt",
-      status: state.pendingPrompt ? "running" : userSeen ? "completed" : "pending",
-      detail: state.pendingPrompt ? "Waiting for the runtime to accept the prompt" : userSeen ? "Prompt recorded" : "No prompt observed",
-    },
-    {
-      id: "plan",
-      label: "Plan",
-      status: !plans.length ? "not_observed" : planFailed ? "failed" : planRunning ? "running" : "completed",
-      detail: !plans.length ? "No structured plan event observed" : `${planItems.filter((item) => item.status === "completed").length}/${planItems.length} recorded steps complete`,
-    },
-    {
-      id: "agents_tools",
-      label: "Amplifier work",
-      status: !workSeen ? "not_observed" : workFailed ? "failed" : workRunning ? "running" : "completed",
-      detail: !workSeen
-        ? "No agent or tool activity observed"
-        : `${directTools.length} coordinator tool call${directTools.length === 1 ? "" : "s"} · ${lanes.length} delegate${lanes.length === 1 ? "" : "s"} · ${delegateTools.length} delegate tool call${delegateTools.length === 1 ? "" : "s"}`,
-    },
-    {
-      id: "verify",
-      label: "Verify",
-      status: !verification.length ? "not_observed" : verificationFailed ? "failed" : verificationRunning ? "running" : "completed",
-      detail: !verification.length ? "No explicit verification activity observed" : `${verification.length} verification action${verification.length === 1 ? "" : "s"} observed`,
-    },
-    {
-      id: "respond",
-      label: "Respond",
-      status: answerSeen ? "completed" : state.liveTail ? "running" : state.busy ? "pending" : "not_observed",
-      detail: answerSeen ? "Final response recorded" : state.liveTail ? "Response is streaming" : state.busy ? "Waiting for a response" : "No final response observed",
-    },
-  ];
-}
-
 export async function renderPipelineSvg(dot: string, pipeline: PipelineState): Promise<string> {
   try {
     vizPromise ||= loadViz();
     const viz = await vizPromise;
-    const raw = viz.renderSVGElement(dot, { engine: "dot" }).outerHTML;
+    const raw = viz.renderString(dot, { engine: "dot", format: "svg" });
     return sanitizeAndAnnotateSvg(raw, pipeline);
   } catch {
     return "";
