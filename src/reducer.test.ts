@@ -42,6 +42,110 @@ function childRuntime(sequence: number, event: Record<string, unknown>): Protoco
 }
 
 describe("session reducer", () => {
+  it("folds the real Amplifier model-tool-result loop and highlights its current phase", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, { kind: "prompt_submit", prompt: "Fix it", mode: "auto" }));
+    expect(state.turnLoop.phase).toBe("prompt");
+    state = reduceRecord(state, runtime(3, { kind: "execution_start" }));
+    state = reduceRecord(state, runtime(4, { kind: "content_block_start", block_type: "thinking", block_index: 0 }));
+    expect(state.turnLoop).toMatchObject({ phase: "model", modelPasses: 1, iteration: 1 });
+
+    state = reduceRecord(state, runtime(5, {
+      kind: "tool_pre",
+      tool_name: "bash",
+      tool_call_id: "tool-1",
+      tool_input: { command: "npm test" },
+    }));
+    expect(state.turnLoop).toMatchObject({ phase: "tools", toolCalls: 1 });
+    expect(Object.keys(state.turnLoop.activeTools)).toEqual(["tool-1"]);
+
+    state = reduceRecord(state, runtime(6, {
+      kind: "tool_post",
+      tool_name: "bash",
+      tool_call_id: "tool-1",
+      result: { status: "ok" },
+    }));
+    expect(state.turnLoop).toMatchObject({ phase: "model", toolResults: 1, awaitingModelPass: true });
+    state = reduceRecord(state, runtime(7, { kind: "content_block_start", block_type: "text", block_index: 0 }));
+    expect(state.turnLoop).toMatchObject({ phase: "model", modelPasses: 2, iteration: 2, awaitingModelPass: false });
+
+    state = reduceRecord(state, runtime(8, { kind: "execution_end" }));
+    expect(state.turnLoop.phase).toBe("response");
+    state = reduceRecord(state, runtime(9, { kind: "orchestrator_complete", status: "success" }));
+    state = reduceRecord(state, runtime(10, { kind: "prompt_complete", response: "Done" }));
+    expect(state.turnLoop).toMatchObject({
+      phase: "complete",
+      modelPasses: 2,
+      toolCalls: 1,
+      toolResults: 1,
+      detail: "Turn complete",
+    });
+    expect(state.turnLoop.transitions.map((transition) => transition.label)).toEqual(expect.arrayContaining([
+      "Prompt accepted",
+      "Model pass 1",
+      "bash",
+      "Result returned",
+      "Model pass 2",
+      "Final response",
+      "Turn complete",
+    ]));
+  });
+
+  it("tracks child agents as the delegate branch of the coordinator loop", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, { kind: "prompt_submit", prompt: "Survey it" }));
+    state = reduceRecord(state, runtime(3, { kind: "execution_start" }));
+    state = reduceRecord(state, runtime(4, {
+      kind: "tool_pre",
+      tool_name: "delegate",
+      tool_call_id: "delegate-1",
+      tool_input: { agent: "foundation:explorer", instruction: "Survey the repo" },
+    }));
+    state = reduceRecord(state, runtime(5, {
+      kind: "agent_spawned",
+      sub_session_id: "child-1",
+      parent_session_id: "runtime-1",
+      agent: "foundation:explorer",
+    }));
+    expect(state.turnLoop).toMatchObject({ phase: "delegates", delegates: 1 });
+    state = reduceRecord(state, runtime(6, {
+      kind: "agent_completed",
+      sub_session_id: "child-1",
+      agent: "foundation:explorer",
+      success: true,
+    }));
+    state = reduceRecord(state, runtime(7, {
+      kind: "tool_post",
+      tool_name: "delegate",
+      tool_call_id: "delegate-1",
+      result: { status: "ok" },
+    }));
+    expect(state.turnLoop).toMatchObject({
+      phase: "model",
+      delegates: 1,
+      completedDelegates: 1,
+      toolResults: 1,
+      awaitingModelPass: true,
+    });
+  });
+
+  it("treats reused runtime event ids after resume as new when their timestamps differ", () => {
+    let state = started();
+    state = reduceRecord(state, {
+      ...runtime(2, { kind: "prompt_submit", prompt: "First", ts: 10 }),
+      event: { event_id: "ev2", session_id: "runtime-1", parent_id: null, kind: "prompt_submit", prompt: "First", ts: 10 },
+    });
+    state = reduceRecord(state, runtime(3, { kind: "execution_start", ts: 11 }));
+    expect(state.turnLoop.modelPasses).toBe(1);
+
+    state = reduceRecord(state, {
+      ...runtime(4, { kind: "prompt_submit", prompt: "Second", ts: 20 }),
+      event: { event_id: "ev2", session_id: "runtime-1", parent_id: null, kind: "prompt_submit", prompt: "Second", ts: 20 },
+    });
+    expect(state.turnLoop).toMatchObject({ phase: "prompt", modelPasses: 0, toolCalls: 0 });
+    expect(state.turnLoop.transitions.map((transition) => transition.label)).toEqual(["Prompt accepted"]);
+  });
+
   it("folds durable pipeline events before child-lane routing and ignores replay duplicates", () => {
     let state = started();
     state = reduceRecord(state, runtime(2, {

@@ -48,15 +48,24 @@ export function Transcript(props: Props) {
     scrollFrame = window.requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "auto" }));
   });
 
+  const detachFromLatest = () => {
+    window.cancelAnimationFrame(scrollFrame);
+    setFollowing(false);
+  };
+
   const updateFollowing = () => {
     if (!scroller) return;
-    setFollowing(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96);
+    if (transcriptAtBottom(scroller.scrollHeight, scroller.scrollTop, scroller.clientHeight)) {
+      setFollowing(true);
+    } else {
+      detachFromLatest();
+    }
   };
 
   const jumpToLatest = () => {
-    setFollowing(true);
     window.cancelAnimationFrame(scrollFrame);
-    scrollFrame = window.requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    setFollowing(true);
   };
 
   return (
@@ -66,10 +75,10 @@ export function Transcript(props: Props) {
       tabIndex={0}
       aria-label="Amplifier coordinator transcript"
       onWheel={(event) => {
-        if (event.deltaY < 0) setFollowing(false);
+        if (event.deltaY < 0) detachFromLatest();
       }}
       onKeyDown={(event) => {
-        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) setFollowing(false);
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) detachFromLatest();
       }}
       onScroll={updateFollowing}
     >
@@ -194,6 +203,10 @@ export function transcriptScrollMarker(state: SessionViewState): string {
         ? last.text
         : "";
   return `${state.blocks.length}:${last?.kind || "none"}:${content.length}:${state.liveTail?.blockType || ""}:${state.liveTail?.text.length || 0}`;
+}
+
+export function transcriptAtBottom(scrollHeight: number, scrollTop: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight <= 0.5;
 }
 
 function formatDuration(milliseconds: number): string {

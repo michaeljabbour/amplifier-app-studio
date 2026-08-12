@@ -175,6 +175,44 @@ export interface PlanOwnerState {
   updatedAtMs?: number;
 }
 
+export type TurnLoopPhase = "idle" | "prompt" | "model" | "tools" | "delegates" | "response" | "complete";
+
+export interface TurnLoopTransition {
+  id: string;
+  phase: TurnLoopPhase;
+  label: string;
+  detail: string;
+  iteration: number;
+  atMs: number;
+  status: "running" | "completed" | "failed";
+}
+
+export interface TurnLoopToolState {
+  id: string;
+  name: string;
+  delegate: boolean;
+}
+
+export interface TurnLoopState {
+  phase: TurnLoopPhase;
+  detail: string;
+  iteration: number;
+  modelPasses: number;
+  toolCalls: number;
+  toolResults: number;
+  toolFailures: number;
+  delegates: number;
+  completedDelegates: number;
+  responseBlocks: number;
+  awaitingModelPass: boolean;
+  activeTools: Record<string, TurnLoopToolState>;
+  activeDelegates: Record<string, true>;
+  transitions: TurnLoopTransition[];
+  appliedEvents: Record<string, true>;
+  startedAtMs?: number;
+  completedAtMs?: number;
+}
+
 export type PipelineNodeStatus = "pending" | "running" | "completed" | "failed" | "checkpointed";
 
 export interface PipelineNodeState {
@@ -289,6 +327,7 @@ export interface SessionViewState {
   lanes: Record<string, LaneState>;
   pendingDelegateBriefs: Record<string, PendingDelegateBrief>;
   plans: Record<string, PlanOwnerState>;
+  turnLoop: TurnLoopState;
   pipeline?: PipelineState;
   alerts: SessionAlert[];
   outputs: SessionOutput[];

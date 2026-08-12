@@ -35,7 +35,7 @@ export function Inspector(props: Props) {
       </div>
       <nav class="inspector-tabs" aria-label="Inspector views">
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
-        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>Map</button>
+        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>{props.state.pipeline?.dotSource ? "Pipeline" : "Loop"}</button>
         <button classList={{ active: props.tab === "plan" }} onClick={() => props.onTab("plan")}>Plan</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
         <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Setup</button>

@@ -25,7 +25,6 @@ export function countPlanSteps(plans: Record<string, PlanOwnerState>): PlanCount
 
 export function PlanPresence(props: PlanPresenceProps) {
   const counts = () => countPlanSteps(props.state?.plans || {});
-  const observedAgents = () => Object.keys(props.state?.lanes || {}).length;
   return (
     <button
       class="plan-presence"
@@ -43,10 +42,10 @@ export function PlanPresence(props: PlanPresenceProps) {
           ? `${counts().degraded} plan update${counts().degraded === 1 ? "" : "s"} need attention`
           : "Show coordinator and agent plans"}
     >
-      <span>Steps</span>
+      <span>Plan</span>
       <strong>{counts().total ? `${counts().completed}/${counts().total}` : "—"}</strong>
       <Show when={counts().owners > 1} fallback={
-        <Show when={!counts().total}><small>{observedAgents() ? `${observedAgents()} agents worked` : "not published"}</small></Show>
+        <Show when={!counts().total}><small>todo plan not published</small></Show>
       }><small>{counts().owners} plans</small></Show>
     </button>
   );
@@ -58,31 +57,19 @@ export function PlanPanel(props: { state: SessionViewState }) {
     return ownerLabel(props.state, left).localeCompare(ownerLabel(props.state, right));
   });
   const counts = () => countPlanSteps(props.state.plans);
-  const observedLanes = () => Object.values(props.state.lanes);
-  const observedTools = () => props.state.blocks.filter((block) => block.kind === "tool").length
-    + observedLanes().reduce((total, lane) => total + lane.tools.length, 0);
+  const active = () => Object.values(props.state.plans)
+    .reduce((count, plan) => count + plan.items.filter((item) => item.status === "in_progress").length, 0);
   return (
     <section class="plan-inspector" aria-label="Session plan">
       <div class="plan-inspector-summary">
-        <div><span>Published steps</span><strong>{counts().total ? `${counts().completed}/${counts().total}` : "None"}</strong></div>
-        <div><span>Observed workers</span><strong>{observedLanes().length || (props.state.busy ? 1 : 0)}</strong></div>
+        <div><span>Project plan</span><strong>{counts().total ? `${counts().completed}/${counts().total}` : "None"}</strong></div>
+        <div><span>Active steps</span><strong>{active()}</strong></div>
         <div classList={{ degraded: counts().degraded > 0 }}><span>Updates needing attention</span><strong>{counts().degraded}</strong></div>
       </div>
       <Show when={plans().length} fallback={
         <div class="plan-empty">
-          <strong>No explicit todo plan was published</strong>
-          <p>The Amplifier runtime is connected, but this coordinator did not call <code>todo</code> or <code>update_plan</code>. Studio will not invent steps that the runtime did not record.</p>
-          <Show when={observedLanes().length || observedTools()}>
-            <div class="observed-work-summary">
-              <span>{observedLanes().length} delegate{observedLanes().length === 1 ? "" : "s"}</span>
-              <span>{observedTools()} recorded tool call{observedTools() === 1 ? "" : "s"}</span>
-            </div>
-            <ul class="observed-work-list">
-              <For each={observedLanes()}>{(lane) => (
-                <li><span class={lane.status} aria-hidden="true" /><div><strong>{lane.agent}</strong><small>{lane.activity}</small></div></li>
-              )}</For>
-            </ul>
-          </Show>
+          <strong>No Amplifier todo plan in this session</strong>
+          <p>Plans here come directly from the coordinator and child agents calling Amplifier’s mounted <code>todo</code> capability. Studio now asks project turns to publish concrete steps and keep their status current; it does not infer a plan from unrelated tool activity.</p>
         </div>
       }>
         <div class="plan-owner-list">

@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createSessionState } from "../reducer";
-import { transcriptScrollMarker } from "./Transcript";
+import { transcriptAtBottom, transcriptScrollMarker } from "./Transcript";
 
 describe("transcript following", () => {
+  it("detaches as soon as the reader moves up instead of fighting within a bottom threshold", () => {
+    expect(transcriptAtBottom(1_000, 600, 400)).toBe(true);
+    expect(transcriptAtBottom(1_000, 599.75, 400)).toBe(true);
+    expect(transcriptAtBottom(1_000, 599, 400)).toBe(false);
+    expect(transcriptAtBottom(1_000, 597, 400)).toBe(false);
+    expect(transcriptAtBottom(1_000, 520, 400)).toBe(false);
+  });
+
   it("does not treat background session status changes as new transcript content", () => {
     const state = {
       ...createSessionState("gui", { projectDir: "/tmp/project" }),

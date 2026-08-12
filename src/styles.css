@@ -541,6 +541,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .execution-map-state.completed { border-color: rgba(99,217,154,.22); color: var(--green); }
 .execution-map-state.failed { border-color: rgba(255,118,127,.24); color: var(--red); }
 .execution-map-state.observed { border-color: var(--line); color: #65798c; }
+.execution-map-state.prompt, .execution-map-state.model, .execution-map-state.tools, .execution-map-state.delegates, .execution-map-state.response { border-color: rgba(79,183,255,.3); color: var(--blue); }
+.execution-map-state.complete { border-color: rgba(99,217,154,.28); color: var(--green); }
 .execution-map-goal, .execution-map-guidance { margin: 0 0 13px; color: #61768a; font-size: 8px; line-height: 1.55; }
 .pipeline-graph { min-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; padding: 10px; background: rgba(5,10,16,.35); }
 .pipeline-svg svg { display: block; width: 100%; height: auto; min-width: 260px; }
@@ -552,6 +554,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .pipeline-svg .node.pipeline-failed ellipse, .pipeline-svg .node.pipeline-failed polygon, .pipeline-svg .node.pipeline-failed path { fill: rgba(255,118,127,.1) !important; stroke: var(--red) !important; stroke-width: 2px; }
 .pipeline-svg .node.pipeline-checkpointed ellipse, .pipeline-svg .node.pipeline-checkpointed polygon, .pipeline-svg .node.pipeline-checkpointed path { stroke: var(--amber) !important; stroke-dasharray: 4 3; }
 .pipeline-svg .edge.pipeline-selected path { stroke: var(--blue) !important; stroke-width: 2px; }.pipeline-svg .edge.pipeline-selected polygon { fill: var(--blue) !important; stroke: var(--blue) !important; }
+.turn-loop-graph { min-height: 245px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; padding: 10px; background: rgba(5,10,16,.35); }
+.turn-loop-svg svg { display: block; width: 100%; height: auto; min-width: 250px; }
+.turn-loop-svg .node text, .turn-loop-svg .edge text { fill: #9fb2c4 !important; }
+.turn-loop-svg .node polygon, .turn-loop-svg .node path { fill: #101d29 !important; stroke: #40556a !important; }
+.turn-loop-svg .edge path { stroke: #344a5e !important; }.turn-loop-svg .edge polygon { fill: #344a5e !important; stroke: #344a5e !important; }
+.turn-loop-svg .node.loop-active polygon, .turn-loop-svg .node.loop-active path { fill: rgba(79,183,255,.15) !important; stroke: var(--blue) !important; stroke-width: 2px; filter: drop-shadow(0 0 4px rgba(79,183,255,.28)); }
+.turn-loop-svg .node.loop-completed polygon, .turn-loop-svg .node.loop-completed path { fill: rgba(99,217,154,.08) !important; stroke: rgba(99,217,154,.68) !important; }
+.turn-loop-svg .node.loop-skipped { opacity: .45; }.turn-loop-svg .node.loop-skipped polygon, .turn-loop-svg .node.loop-skipped path { stroke-dasharray: 4 3; }
+.turn-loop-svg .edge.loop-active-edge path { stroke: var(--blue) !important; stroke-width: 2px; }.turn-loop-svg .edge.loop-active-edge polygon { fill: var(--blue) !important; stroke: var(--blue) !important; }
+.turn-loop-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.turn-loop-stats span { border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; color: #657a8d; font: 7px ui-monospace, monospace; }.turn-loop-stats span.failed { border-color: rgba(244,185,95,.2); color: var(--amber); }
+.turn-loop-ledger { display: grid; gap: 0; margin: 12px 0 0; padding: 0; list-style: none; }.turn-loop-ledger li { display: grid; grid-template-columns: 52px minmax(0,1fr); gap: 8px; border-top: 1px solid var(--line); padding: 8px 1px; }.turn-loop-ledger li > span { color: #587084; font: 6px ui-monospace, monospace; text-transform: uppercase; }.turn-loop-ledger strong, .turn-loop-ledger small { display: block; }.turn-loop-ledger strong { color: #9eb0c0; font-size: 8px; }.turn-loop-ledger small { margin-top: 3px; color: #566b7e; font-size: 7px; line-height: 1.35; }.turn-loop-ledger li.failed strong { color: var(--amber); }.turn-loop-empty { margin-top: 12px; }
 .execution-map-loading, .execution-map-error { margin: 52px 10px; color: #60758a; font-size: 8px; text-align: center; }.execution-map-error { color: var(--amber); }
 .pipeline-ledger { margin-top: 12px; }
 .pipeline-ledger-summary { display: flex; gap: 7px; flex-wrap: wrap; }

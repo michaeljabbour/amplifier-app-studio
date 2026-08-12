@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { createSessionState } from "../reducer";
 import type { PipelineState } from "../protocol";
-import { observedExecutionStages, sanitizeAndAnnotateSvg } from "./ExecutionMap";
+import { renderTurnLoopSvg, sanitizeAndAnnotateSvg, sanitizeAndAnnotateTurnLoopSvg, turnLoopNodeStatuses } from "./ExecutionMap";
 
 function pipeline(): PipelineState {
   return {
@@ -45,53 +45,74 @@ describe("execution map", () => {
     expect(rendered).toContain('role="img"');
   });
 
-  it("labels generic stages only from observed session evidence", () => {
+  it("keeps the Amplifier loop pending before a turn and highlights its live runtime phase", () => {
     const state = createSessionState("gui", { projectDir: "/tmp/project" });
-    const empty = observedExecutionStages(state);
-    expect(empty.map((stage) => stage.status)).toEqual(["pending", "not_observed", "not_observed", "not_observed", "not_observed"]);
-
-    const observed = observedExecutionStages({
-      ...state,
-      busy: true,
-      liveTail: { blockType: "text", text: "Almost done" },
-      blocks: [
-        { id: "u1", kind: "user", text: "Fix it" },
-        { id: "t1", kind: "tool", toolName: "bash", toolCallId: "c1", status: "completed", summary: "npm test", detail: "" },
-      ],
+    expect(turnLoopNodeStatuses(state.turnLoop)).toEqual({
+      prompt: "pending",
+      model: "pending",
+      tools: "pending",
+      delegates: "pending",
+      response: "pending",
+      complete: "pending",
     });
-    expect(observed.find((stage) => stage.id === "prompt")?.status).toBe("completed");
-    expect(observed.find((stage) => stage.id === "verify")?.status).toBe("completed");
-    expect(observed.find((stage) => stage.id === "respond")?.status).toBe("running");
+
+    expect(turnLoopNodeStatuses({
+      ...state.turnLoop,
+      phase: "tools",
+      modelPasses: 1,
+      toolCalls: 1,
+    })).toMatchObject({ prompt: "completed", model: "completed", tools: "active" });
   });
 
-  it("includes delegate tool evidence instead of reporting coordinator calls only", () => {
+  it("marks optional branches skipped when a tool-free turn completes", () => {
     const state = createSessionState("gui", { projectDir: "/tmp/project" });
-    const observed = observedExecutionStages({
-      ...state,
-      blocks: [
-        { id: "u1", kind: "user", text: "Audit it" },
-        { id: "t1", kind: "tool", toolName: "grep", toolCallId: "c1", status: "completed", summary: "grep issues", detail: "" },
-      ],
-      lanes: {
-        child: {
-          id: "child",
-          agent: "foundation:explorer",
-          status: "completed",
-          activity: "complete",
-          tail: "",
-          tailKind: "text",
-          thinking: "",
-          tools: [
-            { id: "a", name: "bash", label: "Inspect files", status: "completed" },
-            { id: "b", name: "bash", label: "npm test", status: "completed" },
-          ],
-          events: [],
-        },
-      },
+    expect(turnLoopNodeStatuses({
+      ...state.turnLoop,
+      phase: "complete",
+      modelPasses: 1,
+      responseBlocks: 1,
+    })).toEqual({
+      prompt: "completed",
+      model: "completed",
+      tools: "skipped",
+      delegates: "skipped",
+      response: "completed",
+      complete: "active",
     });
+  });
 
-    expect(observed.find((stage) => stage.id === "agents_tools")?.detail)
-      .toBe("1 coordinator tool call · 1 delegate · 2 delegate tool calls");
-    expect(observed.find((stage) => stage.id === "verify")?.status).toBe("completed");
+  it("sanitizes and annotates the active loop node and edge", () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    const rendered = sanitizeAndAnnotateTurnLoopSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
+        <script>alert(1)</script>
+        <g class="node"><title>prompt</title><polygon points="0,0 1,1" /></g>
+        <g class="node"><title>model</title><polygon points="0,0 1,1" /></g>
+        <g class="node"><title>tools</title><polygon points="0,0 1,1" /></g>
+        <g class="edge"><title>model-&gt;tools</title><path d="M0 0" /></g>
+      </svg>
+    `, { ...state.turnLoop, phase: "tools", modelPasses: 1, toolCalls: 1 });
+
+    expect(rendered).not.toContain("script");
+    expect(rendered).not.toContain("onload");
+    expect(rendered).toContain("loop-completed");
+    expect(rendered).toContain("loop-active");
+    expect(rendered).toContain("loop-active-edge");
+  });
+
+  it("lays out the built-in Amplifier loop as an annotated SVG", async () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    const rendered = await renderTurnLoopSvg({
+      ...state.turnLoop,
+      phase: "complete",
+      modelPasses: 3,
+      toolCalls: 4,
+      toolResults: 4,
+      delegates: 2,
+      completedDelegates: 2,
+    });
+    expect(rendered).toContain("<svg");
+    expect(rendered).toContain("loop-active");
+    expect(rendered).toContain("Amplifier turn loop");
   });
 });
