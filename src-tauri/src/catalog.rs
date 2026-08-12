@@ -18,6 +18,14 @@ pub struct ProviderOption {
     pub module: String,
     pub model: String,
     pub active: bool,
+    #[serde(default = "provider_tool_compatible")]
+    pub tool_compatible: bool,
+    #[serde(default)]
+    pub warning: Option<String>,
+}
+
+fn provider_tool_compatible() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,8 +41,27 @@ pub fn list_catalog(project_dir: Option<String>) -> Result<CapabilityCatalog, St
     let providers = run_cli(&cwd, &["provider", "list", "--format", "json"])?;
     Ok(CapabilityCatalog {
         bundles: parse_json(&bundles, "bundle")?,
-        providers: parse_json(&providers, "provider")?,
+        providers: annotate_providers(parse_json(&providers, "provider")?),
     })
+}
+
+fn annotate_providers(mut providers: Vec<ProviderOption>) -> Vec<ProviderOption> {
+    for provider in &mut providers {
+        let unsafe_reason = match provider.name.as_str() {
+            "runpod-kimi" => Some(
+                "Gateway experiment only: Kimi-K3 pads exact tool arguments and cannot run Amplifier tools reliably.",
+            ),
+            "runpod-glm" | "runpod-next" => Some(
+                "Gateway experiment only: this GLM route can duplicate forced tool calls and is unsafe for Amplifier execution.",
+            ),
+            _ => None,
+        };
+        if let Some(reason) = unsafe_reason {
+            provider.tool_compatible = false;
+            provider.warning = Some(reason.to_owned());
+        }
+    }
+    providers
 }
 
 pub fn add_bundle(
@@ -170,7 +197,22 @@ mod tests {
         let parsed: Vec<ProviderOption> = parse_json(rows, "provider").unwrap();
         assert_eq!(parsed[0].model, "claude-opus-5");
         assert!(parsed[0].active);
+        assert!(parsed[0].tool_compatible);
         assert_eq!(parsed[1].name, "openai");
+    }
+
+    #[test]
+    fn marks_known_runpod_experiments_unsafe_for_agent_tools() {
+        let providers = annotate_providers(vec![ProviderOption {
+            name: "runpod-kimi".to_owned(),
+            module: "provider-vllm".to_owned(),
+            model: "moonshotai/Kimi-K3".to_owned(),
+            active: false,
+            tool_compatible: true,
+            warning: None,
+        }]);
+        assert!(!providers[0].tool_compatible);
+        assert!(providers[0].warning.as_deref().unwrap().contains("pads"));
     }
 
     #[test]

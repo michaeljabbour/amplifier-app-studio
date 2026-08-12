@@ -2,6 +2,8 @@ import { For, Show } from "solid-js";
 import type { SessionViewState } from "../protocol";
 import type { AppUpdateState } from "../updater";
 import { startNativeWindowDrag } from "../windowDrag";
+import { PlanPresence } from "./Plan";
+import { ExecutionPresence } from "./ExecutionMap";
 
 interface Props {
   sessions: SessionViewState[];
@@ -14,12 +16,15 @@ interface Props {
   inspectorOpen: boolean;
   inspectorAvailable: boolean;
   onToggleInspector: () => void;
+  onOpenPlan: () => void;
+  onOpenExecution: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
   onUpdate: () => void;
 }
 
 export function TabStrip(props: Props) {
+  const active = () => props.sessions.find((session) => session.guiId === props.activeId);
   return (
     <header class="tab-strip" data-tauri-drag-region onMouseDown={startNativeWindowDrag}>
       <div class="traffic-light-space" data-tauri-drag-region />
@@ -64,13 +69,15 @@ export function TabStrip(props: Props) {
         </button>
       </div>
       <div class="top-workbench-actions">
+        <ExecutionPresence state={active()} onOpen={props.onOpenExecution} />
+        <PlanPresence state={active()} onOpen={props.onOpenPlan} />
         <button
           class="inspector-toggle"
           classList={{ active: props.inspectorAvailable && props.inspectorOpen }}
           disabled={!props.inspectorAvailable}
           onClick={props.onToggleInspector}
           aria-label={!props.inspectorAvailable ? "Session inspector unavailable without an open session" : props.inspectorOpen ? "Hide session inspector" : "Show session inspector"}
-          title={!props.inspectorAvailable ? "Open or start a session to inspect its run" : props.inspectorOpen ? "Hide session inspector" : "Show run, setup, outputs, and context"}
+          title={!props.inspectorAvailable ? "Open or start a session to inspect its run" : props.inspectorOpen ? "Hide session inspector" : "Show run, plan, agents, setup, outputs, and context"}
         >
           <span class="inspector-toggle-glyph" aria-hidden="true"><i /><i /><i /></span>
           <span>Inspect</span>

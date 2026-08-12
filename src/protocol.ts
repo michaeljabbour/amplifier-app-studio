@@ -157,6 +157,68 @@ export interface PendingDelegateBrief {
   toolCallId?: string;
 }
 
+export type PlanItemStatus = "pending" | "in_progress" | "completed";
+
+export interface PlanItemState {
+  content: string;
+  activeForm?: string;
+  status: PlanItemStatus;
+}
+
+export interface PlanOwnerState {
+  ownerId: string;
+  ownerKind: "coordinator" | "agent";
+  items: PlanItemState[];
+  toolCallId: string;
+  updateStatus: "pending" | "applied" | "degraded";
+  message?: string;
+  updatedAtMs?: number;
+}
+
+export type PipelineNodeStatus = "pending" | "running" | "completed" | "failed" | "checkpointed";
+
+export interface PipelineNodeState {
+  id: string;
+  handlerType?: string;
+  status: PipelineNodeStatus;
+  attempt: number;
+  executionIndex: number;
+  durationMs?: number;
+  notes?: string;
+  failureReason?: string;
+  sessionId?: string;
+  branchId?: string;
+  viaParallel?: boolean;
+  checkpointPath?: string;
+  updatedAtMs?: number;
+}
+
+export interface PipelineEdgeState {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  branchId?: string;
+  selected: boolean;
+}
+
+export interface PipelineState {
+  graphName: string;
+  goal: string;
+  dotSource: string;
+  declaredNodeCount: number;
+  declaredEdgeCount: number;
+  status: string;
+  nodes: Record<string, PipelineNodeState>;
+  edges: Record<string, PipelineEdgeState>;
+  totalNodesExecuted: number;
+  durationMs?: number;
+  branchId?: string;
+  startedAtMs?: number;
+  completedAtMs?: number;
+  appliedEvents: Record<string, true>;
+}
+
 export interface SessionAlert {
   id: string;
   level: "info" | "warning" | "error";
@@ -226,6 +288,8 @@ export interface SessionViewState {
   openThinkingId?: string;
   lanes: Record<string, LaneState>;
   pendingDelegateBriefs: Record<string, PendingDelegateBrief>;
+  plans: Record<string, PlanOwnerState>;
+  pipeline?: PipelineState;
   alerts: SessionAlert[];
   outputs: SessionOutput[];
   lastSequence?: number;
@@ -274,6 +338,8 @@ export interface ProviderOption {
   module: string;
   model: string;
   active: boolean;
+  toolCompatible: boolean;
+  warning?: string;
 }
 
 export interface CapabilityCatalog {

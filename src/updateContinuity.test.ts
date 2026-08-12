@@ -44,6 +44,7 @@ function session(guiId: string, runtimeSessionId?: string, phase: SessionViewSta
     blocks: [],
     lanes: {},
     pendingDelegateBriefs: {},
+    plans: {},
     alerts: [],
     outputs: [],
     queuedSteers: 0,

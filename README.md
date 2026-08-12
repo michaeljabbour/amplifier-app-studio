@@ -57,6 +57,10 @@ cross this boundary.
 - Per-tab interrupt and graceful child shutdown
 - Context, cost, model, mode, effort, and one lane per subagent, including
   concurrent child tools correlated by `tool_call_id`
+- A persistent Steps surface that folds real `todo` tool activity into the
+  coordinator and each child-agent plan, including failed and replayed steps
+- An execution Map that renders Attractor's durable DOT graph and live node
+  transitions; ordinary sessions receive an evidence-only lifecycle map
 - A persistent Coordinator chat in the center with clickable agent workspaces,
   run/build/output/context inspectors, and live per-agent timelines
 - Installed bundle and provider discovery through the Rust bridge; selecting a
@@ -77,6 +81,9 @@ cross this boundary.
 - Runtime-selectable HTTPS bridge setting for native mobile clients
 - Generated Windows `.ico`, macOS `.icns`, Android, and iOS icon sets
 - Signed desktop update discovery and install/restart through GitHub Releases
+- Tool-contract safety gates that keep known-corrupt experimental RunPod
+  routes out of executable Amplifier sessions while retaining checked matrix
+  routes and explicit text-only experiments in the installer
 
 ## Desktop development
 

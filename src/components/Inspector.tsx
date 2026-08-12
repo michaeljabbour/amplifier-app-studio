@@ -2,9 +2,11 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
+import { PlanPanel } from "./Plan";
+import { ExecutionMap } from "./ExecutionMap";
 import { formatSessionCost } from "../costEstimate";
 
-export type InspectorTab = "run" | "agent" | "build" | "bundles" | "outputs" | "context";
+export type InspectorTab = "run" | "map" | "plan" | "agent" | "build" | "bundles" | "outputs" | "context";
 
 interface Props {
   state: SessionViewState;
@@ -33,6 +35,8 @@ export function Inspector(props: Props) {
       </div>
       <nav class="inspector-tabs" aria-label="Inspector views">
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
+        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>Map</button>
+        <button classList={{ active: props.tab === "plan" }} onClick={() => props.onTab("plan")}>Plan</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
         <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Setup</button>
         <button classList={{ active: props.tab === "bundles" }} onClick={() => props.onTab("bundles")}>Bundles</button>
@@ -41,6 +45,8 @@ export function Inspector(props: Props) {
       </nav>
       <div class="inspector-body">
         <Show when={props.tab === "run"}><RunPanel {...props} /></Show>
+        <Show when={props.tab === "map"}><ExecutionMap state={props.state} /></Show>
+        <Show when={props.tab === "plan"}><PlanPanel state={props.state} /></Show>
         <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} /></Show>
         <Show when={props.tab === "build"}><BuildPanel {...props} /></Show>
         <Show when={props.tab === "bundles"}><BundlesPanel {...props} /></Show>
@@ -162,6 +168,8 @@ function AgentPanel(props: { lane: LaneState }) {
 function BuildPanel(props: Props) {
   const activeProvider = () => props.providers.find((provider) => provider.model === props.state.model)
     || props.providers.find((provider) => provider.active);
+  const safeProviders = () => props.providers.filter((provider) => provider.toolCompatible);
+  const experimentalProviders = () => props.providers.filter((provider) => !provider.toolCompatible);
   return (
     <>
       <InspectorSection title="Active composition" meta="PINNED FOR TURN">
@@ -180,13 +188,20 @@ function BuildPanel(props: Props) {
         </div>
         <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
       </InspectorSection>
-      <InspectorSection title="Providers" meta={String(props.providers.length)}>
-        <Show when={props.providers.length} fallback={<p class="inspector-empty">No provider routes were discovered.</p>}>
+      <InspectorSection title="Tool-compatible providers" meta={String(safeProviders().length)}>
+        <Show when={safeProviders().length} fallback={<p class="inspector-empty">No tool-compatible provider routes were discovered.</p>}>
           <div class="bundle-list provider-list">
-            <For each={props.providers}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>Start new session with {provider.model || provider.module}</span></button>}</For>
+            <For each={safeProviders()}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>Start new session with {provider.model || provider.module}</span></button>}</For>
           </div>
         </Show>
       </InspectorSection>
+      <Show when={experimentalProviders().length}>
+        <InspectorSection title="Gateway experiments" meta="NOT FOR AGENT TOOLS">
+          <div class="provider-experiment-list">
+            <For each={experimentalProviders()}>{(provider) => <div><strong>{provider.name}</strong><span>{provider.model}</span><p>{provider.warning}</p></div>}</For>
+          </div>
+        </InspectorSection>
+      </Show>
     </>
   );
 }
