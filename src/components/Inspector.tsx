@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
+import { formatSessionCost } from "../costEstimate";
 
 export type InspectorTab = "run" | "agent" | "build" | "bundles" | "outputs" | "context";
 
@@ -133,7 +134,7 @@ function AgentPanel(props: { lane: LaneState }) {
             <Show when={props.lane.model}><div><dt>Model / role</dt><dd>{props.lane.model}</dd></div></Show>
             <Show when={props.lane.startedAtMs !== undefined}><div><dt>Started</dt><dd>{formatTimestamp(props.lane.startedAtMs!)}</dd></div></Show>
             <Show when={props.lane.completedAtMs !== undefined}><div><dt>Completed</dt><dd>{formatTimestamp(props.lane.completedAtMs!)}</dd></div></Show>
-            <Show when={props.lane.costUsd}><div><dt>Attributed cost</dt><dd>${props.lane.costUsd}</dd></div></Show>
+            <Show when={props.lane.costUsd}><div><dt>Attributed cost</dt><dd>{formatSessionCost(props.lane.costUsd || "0", props.lane.costBasis || "reported")}</dd></div></Show>
           </dl>
         </InspectorSection>
       </Show>
@@ -276,6 +277,8 @@ function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (path: st
 function ContextPanel(props: Props) {
   const tokens = () => props.state.context.tokens.toLocaleString();
   const window = () => props.state.context.window.toLocaleString();
+  const cost = () => formatSessionCost(props.state.context.costUsd, props.state.context.costBasis);
+  const usage = () => props.state.context.inputTokens + props.state.context.outputTokens;
   return (
     <>
       <InspectorSection title="Context window" meta={`${Math.round(props.state.context.percent)}%`}>
@@ -287,8 +290,22 @@ function ContextPanel(props: Props) {
         <dl class="context-facts">
           <div><dt>Runtime session</dt><dd>{props.state.runtimeSessionId || "Starting"}</dd></div>
           <div><dt>Project</dt><dd>{props.state.projectDir}</dd></div>
-          <div><dt>Cost</dt><dd>${Number(props.state.context.costUsd || 0).toFixed(4)}</dd></div>
+          <div><dt>Cost</dt><dd>{cost()}</dd></div>
+          <div><dt>Session input</dt><dd>{props.state.context.inputTokens.toLocaleString()} tokens</dd></div>
+          <div><dt>Session output</dt><dd>{props.state.context.outputTokens.toLocaleString()} tokens</dd></div>
         </dl>
+        <Show when={props.state.context.costBasis === "estimated"}>
+          <p class="inspector-empty">
+            Estimated from {usage().toLocaleString()} blended tokens using the $600k annual RunPod allocation
+            {props.state.context.estimateRatePerMillion === undefined ? "" : ` at $${props.state.context.estimateRatePerMillion}/1M`}.
+            This is infrastructure allocation, not provider-reported request spend.
+          </p>
+        </Show>
+        <Show when={props.state.context.costBasis === "partial" || props.state.context.costBasis === "mixed"}>
+          <p class="inspector-empty">
+            This total mixes priced and unpriced usage. {props.state.context.unpricedTokens.toLocaleString()} tokens could not be assigned a rate.
+          </p>
+        </Show>
       </InspectorSection>
       <Show when={props.state.logs.length}>
         <InspectorSection title="Process log" meta={String(props.state.logs.length)}>

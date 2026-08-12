@@ -16,6 +16,7 @@ import {
   type TranscriptBlock,
   type UIEvent,
 } from "./protocol";
+import { estimateRunPodCost, mergeCostBasis, type CostBasis } from "./costEstimate";
 
 type NewTranscriptBlock = TranscriptBlock extends infer Block
   ? Block extends { id: string }
@@ -60,7 +61,17 @@ export function createSessionState(
     activity: "Starting turn",
     replaying: Boolean(input.resumeId),
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
-    context: { tokens: 0, window: 0, percent: 0, costUsd: "0" },
+    context: {
+      tokens: 0,
+      window: 0,
+      percent: 0,
+      costUsd: "0",
+      costBasis: "unavailable",
+      inputTokens: 0,
+      outputTokens: 0,
+      unpricedTokens: 0,
+      usageResponses: 0,
+    },
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
     blocks: [],
     lanes: {},
@@ -129,12 +140,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
     case "context.state":
       return {
         ...next,
-        context: {
-          tokens: numberValue(record.context_tokens),
-          window: numberValue(record.context_window),
-          percent: numberValue(record.context_pct),
-          costUsd: String(record.cost_usd ?? next.context.costUsd),
-        },
+        context: contextFromRecord(next.context, record),
       };
     case "effort.state": {
       const effort = typeof record.effort === "string" ? record.effort : next.effort;
@@ -528,6 +534,9 @@ function checkEnvelope(state: SessionViewState, record: ProtocolRecord): Session
 
 function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): SessionViewState {
   let next = state;
+  if (event.kind === "provider_response_usage") {
+    next = recordSessionUsage(next, event);
+  }
   if (event.kind === "agent_spawned") {
     const laneId = stringValue(event.sub_session_id, stringValue(event.session_id));
     if (!laneId) return next;
@@ -607,6 +616,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
           startedAtMs: lane?.startedAtMs,
           completedAtMs: eventTimestampMs(event),
           costUsd: lane?.costUsd,
+          costBasis: lane?.costBasis,
         },
       },
       activity: event.success === false
@@ -960,6 +970,7 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
   let status = previous.status;
   let model = previous.model;
   let costUsd = previous.costUsd;
+  let costBasis = previous.costBasis || "unavailable";
   switch (event.kind) {
     case "session_start":
       activity = "Starting delegate session";
@@ -974,13 +985,24 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
       activity = "Waiting for model";
       break;
     case "provider_response_usage": {
-      model = stringValue(event.model) || model;
+      const eventModel = stringValue(event.model);
+      const pricingModel = concreteModel(eventModel) || concreteModel(model || "") || state.model;
+      model = eventModel || model;
       const reportedCost = typeof event.cost_usd === "number" || typeof event.cost_usd === "string"
         ? Number(event.cost_usd)
         : Number.NaN;
-      if (Number.isFinite(reportedCost)) {
-        const total = Number(costUsd || 0) + reportedCost;
-        costUsd = total === 0 ? "0" : total.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+      const estimate = estimateRunPodCost(
+        pricingModel,
+        numberValue(event.input_tokens),
+        numberValue(event.output_tokens),
+      );
+      const useReported = Number.isFinite(reportedCost) && reportedCost >= 0 && (reportedCost > 0 || !estimate);
+      if (useReported) {
+        costUsd = moneyString(finiteMoney(costUsd || "0") + reportedCost);
+        costBasis = mergeCostBasis(costBasis, "reported");
+      } else if (estimate) {
+        costUsd = moneyString(finiteMoney(costUsd || "0") + estimate.costUsd);
+        costBasis = mergeCostBasis(costBasis, "estimated");
       }
       activity = "Reviewing model response";
       break;
@@ -1095,10 +1117,10 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
   }
   return {
     ...captureOutputs(state, event),
-    activity: summarizeParallelWork(state, laneId, { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd }),
+    activity: summarizeParallelWork(state, laneId, { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd, costBasis }),
     lanes: {
       ...state.lanes,
-      [laneId]: { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd },
+      [laneId]: { ...previous, activity, tail, tailKind, thinking, tools, events, status, model, costUsd, costBasis },
     },
   };
 }
@@ -1153,10 +1175,11 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
     effort,
     effortPending: effort && effort === state.effortPending ? undefined : state.effortPending,
     context: {
+      ...state.context,
       tokens: numberValue(context.context_tokens, state.context.tokens),
       window: numberValue(context.context_window, state.context.window),
       percent: numberValue(context.context_pct, state.context.percent),
-      costUsd: String(context.cost_usd ?? state.context.costUsd),
+      ...contextCostFromRecord(state.context, context),
     },
   };
   return pendingApproval ? markLaneAwaitingApproval(next, {
@@ -1164,6 +1187,122 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
     toolCallId: pendingApproval.toolCallId,
     prompt: pendingApproval.prompt,
   }) : next;
+}
+
+function recordSessionUsage(state: SessionViewState, event: UIEvent): SessionViewState {
+  const inputTokens = numberValue(event.input_tokens);
+  const outputTokens = numberValue(event.output_tokens);
+  const billableTokens = inputTokens + outputTokens;
+  if (billableTokens <= 0) return state;
+
+  const rawReported = event.cost_usd;
+  const reported = typeof rawReported === "number" || typeof rawReported === "string"
+    ? Number(rawReported)
+    : Number.NaN;
+  const eventModel = stringValue(event.model);
+  const laneModel = state.lanes[stringValue(event.session_id)]?.model || "";
+  const authoritativeModel = concreteModel(eventModel) || concreteModel(laneModel);
+  const modelCandidates = (authoritativeModel
+    ? [authoritativeModel]
+    : [state.model, state.requestedModel || ""]
+  ).filter((model, index, models) => model && models.indexOf(model) === index);
+  const estimate = modelCandidates
+    .map((model) => estimateRunPodCost(model, inputTokens, outputTokens))
+    .find((candidate) => candidate !== undefined);
+  // LiteLLM's self-hosted RunPod routes intentionally report zero because the
+  // underlying bill is GPU-hours. For a recognized RunPod model, use the
+  // explicitly-labelled fleet estimate instead of presenting that zero as free.
+  const useReported = Number.isFinite(reported) && reported >= 0 && (reported > 0 || !estimate);
+  const currentCost = finiteMoney(state.context.costUsd);
+  let addedCost = 0;
+  let costBasis: CostBasis = state.context.costBasis;
+  let unpricedTokens = state.context.unpricedTokens;
+  let estimateModel = state.context.estimateModel;
+  let estimateRatePerMillion = state.context.estimateRatePerMillion;
+
+  if (useReported) {
+    addedCost = reported;
+    costBasis = mergeCostBasis(costBasis, "reported");
+  } else if (estimate) {
+    addedCost = estimate.costUsd;
+    costBasis = mergeCostBasis(costBasis, "estimated");
+    estimateModel = estimateModel && estimateModel !== estimate.model ? "Multiple RunPod models" : estimate.model;
+    estimateRatePerMillion = estimateRatePerMillion === undefined || estimateRatePerMillion === estimate.ratePerMillion
+      ? estimate.ratePerMillion
+      : undefined;
+  } else {
+    unpricedTokens += billableTokens;
+    costBasis = currentCost > 0 ? "partial" : "unavailable";
+  }
+  if (unpricedTokens > 0 && costBasis !== "unavailable") costBasis = "partial";
+
+  return {
+    ...state,
+    context: {
+      ...state.context,
+      costUsd: moneyString(currentCost + addedCost),
+      costBasis,
+      inputTokens: state.context.inputTokens + inputTokens,
+      outputTokens: state.context.outputTokens + outputTokens,
+      unpricedTokens,
+      usageResponses: state.context.usageResponses + 1,
+      estimateModel,
+      estimateRatePerMillion,
+    },
+  };
+}
+
+function contextFromRecord(current: SessionViewState["context"], record: ProtocolRecord): SessionViewState["context"] {
+  return {
+    ...current,
+    tokens: numberValue(record.context_tokens),
+    window: numberValue(record.context_window),
+    percent: numberValue(record.context_pct),
+    ...contextCostFromRecord(current, record),
+  };
+}
+
+function contextCostFromRecord(
+  current: SessionViewState["context"],
+  record: Record<string, unknown>,
+): Pick<SessionViewState["context"], "costUsd" | "costBasis"> {
+  // Once durable usage events have rebuilt an all-agent total, a root-only
+  // context snapshot must not overwrite it. This is especially important on
+  // resume, where replay arrives immediately before session.status.
+  if (current.usageResponses > 0) {
+    return { costUsd: current.costUsd, costBasis: current.costBasis };
+  }
+  const raw = record.cost_usd;
+  const numeric = typeof raw === "number" || typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return { costUsd: current.costUsd, costBasis: current.costBasis };
+  }
+  const estimatedOrIncomplete = record.cost_estimated === true;
+  return {
+    costUsd: moneyString(numeric),
+    costBasis: numeric === 0
+      ? "unavailable"
+      : estimatedOrIncomplete
+        ? "partial"
+        : "reported",
+  };
+}
+
+function finiteMoney(value: string): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function moneyString(value: number): string {
+  return value === 0 ? "0" : value.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function concreteModel(value: string): string | undefined {
+  if (!value) return undefined;
+  const role = value.trim().toLowerCase();
+  return ["fast", "general", "reasoning", "coding", "vision", "image", "default", "utility"].includes(role)
+    ? undefined
+    : value;
 }
 
 function markRestoreProgress(

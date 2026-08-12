@@ -41,6 +41,13 @@ export interface ContextState {
   window: number;
   percent: number;
   costUsd: string;
+  costBasis: "unavailable" | "reported" | "estimated" | "mixed" | "partial";
+  inputTokens: number;
+  outputTokens: number;
+  unpricedTokens: number;
+  usageResponses: number;
+  estimateModel?: string;
+  estimateRatePerMillion?: number;
 }
 
 export interface GoalProgressState {
@@ -141,6 +148,7 @@ export interface LaneState {
   startedAtMs?: number;
   completedAtMs?: number;
   costUsd?: string;
+  costBasis?: "unavailable" | "reported" | "estimated" | "mixed" | "partial";
 }
 
 export interface PendingDelegateBrief {
