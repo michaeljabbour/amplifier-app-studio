@@ -4,6 +4,12 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.13 — 2026-08-11
+
+- Fixed automatic session restoration after a Finder launch or in-app update
+  by giving the Amplifier runtime and its subprocesses a stable, cross-platform
+  executable search path.
+
 ## 0.1.12 — 2026-08-11
 
 - Replaced the UI-only Autopilot prompt with Amplifier's native goal loop,

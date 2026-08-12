@@ -111,6 +111,9 @@ impl SessionManager {
 
         let binary = runtime_setup::binary_or_command();
         let mut command = Command::new(&binary);
+        if let Some(path) = runtime_setup::runtime_path(&binary) {
+            command.env("PATH", path);
+        }
         command.arg("serve");
         push_option(&mut command, "--bundle", options.bundle.as_deref());
         push_option(&mut command, "--model", options.model.as_deref());
