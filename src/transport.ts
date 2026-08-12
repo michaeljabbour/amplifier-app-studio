@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, StoredSession } from "./protocol";
 import { isRecord } from "./protocol";
 import type { RuntimeSettingScope } from "./settingsSchema";
@@ -218,7 +219,23 @@ export async function listenNativeAttachmentDrops(
   handler: (event: NativeAttachmentDropEvent) => void,
 ): Promise<UnlistenFn> {
   if (!isTauriRuntime() || usesWebBridge()) return () => undefined;
-  return listen<NativeAttachmentDropEvent>("app://native-attachment-drop", (event) => handler(event.payload));
+  return getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === "enter") {
+      handler({ type: "enter" });
+      return;
+    }
+    if (event.payload.type === "leave") {
+      handler({ type: "leave" });
+      return;
+    }
+    if (event.payload.type !== "drop") return;
+    void invoke<NativeAttachment[]>("load_attachment_paths", { paths: event.payload.paths })
+      .then((attachments) => handler({ type: "drop", attachments }))
+      .catch((error) => handler({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      }));
+  });
 }
 
 export async function openLocalOutput(projectDir: string, path: string): Promise<void> {

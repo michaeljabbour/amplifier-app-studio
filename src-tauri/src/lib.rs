@@ -1,4 +1,5 @@
 mod catalog;
+#[cfg(desktop)]
 mod image_drop;
 mod protocol;
 #[cfg(desktop)]
@@ -10,7 +11,7 @@ mod transcription;
 pub mod web_server;
 
 use catalog::CapabilityCatalog;
-use protocol::{LiveSession, SessionEvent, StartSessionOptions, StartSessionResult};
+use protocol::{SessionEvent, StartSessionOptions, StartSessionResult};
 use serde_json::Value;
 use session::{EventSink, SessionManager};
 use std::sync::Arc;
@@ -192,11 +193,6 @@ async fn stop_session(manager: State<'_, SessionManager>, gui_id: String) -> Res
 }
 
 #[tauri::command]
-async fn list_sessions(manager: State<'_, SessionManager>) -> Result<Vec<LiveSession>, String> {
-    Ok(manager.list().await)
-}
-
-#[tauri::command]
 async fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
     tauri::async_runtime::spawn_blocking(move || store::list_stored_sessions(project_dir))
         .await
@@ -328,7 +324,6 @@ fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathB
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .on_webview_event(image_drop::handle_webview_event)
         .setup(|_app| {
             #[cfg(desktop)]
             {
@@ -346,7 +341,6 @@ pub fn run() {
             start_session,
             send_op,
             stop_session,
-            list_sessions,
             list_stored_sessions,
             list_catalog,
             add_bundle,

@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, time::Duration};
 
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 const MAX_BASE64_BYTES: usize = (MAX_AUDIO_BYTES * 4 / 3) + 8;
@@ -44,7 +44,7 @@ pub fn status() -> TranscriptionStatus {
         available: false,
         provider: None,
         model: None,
-        message: "Add OPENAI_API_KEY to the runtime host; Studio will not create or overwrite a key for dictation"
+        message: "Add OPENAI_API_KEY to the runtime host; Studio will not create or overwrite a key for speech-to-text"
             .to_owned(),
     }
 }
@@ -67,11 +67,16 @@ pub async fn transcribe(request: TranscriptionRequest) -> Result<String, String>
 
     let model = transcription_model();
     let part = Part::bytes(bytes)
-        .file_name(format!("dictation.{format}"))
+        .file_name(format!("voice-input.{format}"))
         .mime_str(&request.media_type)
         .map_err(|error| format!("Unsupported microphone content type: {error}"))?;
     let form = Form::new().text("model", model).part("file", part);
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| format!("Could not prepare transcription: {error}"))?;
+    let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
         .bearer_auth(key)
         .multipart(form)

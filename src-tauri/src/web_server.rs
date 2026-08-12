@@ -363,7 +363,7 @@ async fn stored_sessions(
                 root.to_string_lossy().into_owned(),
             ))?);
         }
-        sessions.sort_by(|left, right| right.mtime_ms.cmp(&left.mtime_ms));
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
         let mut seen = HashSet::new();
         sessions.retain(|session| seen.insert(session.session_id.clone()));
         Ok(sessions)

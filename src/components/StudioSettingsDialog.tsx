@@ -1,6 +1,5 @@
 import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
-  RUNTIME_SETTINGS_FIELDS,
   RUNTIME_SETTINGS_SECTIONS,
   runtimeSettingByPath,
   settingsFieldsInSection,

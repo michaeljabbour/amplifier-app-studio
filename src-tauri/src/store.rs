@@ -22,6 +22,7 @@ pub struct StoredSession {
     pub project_slug: String,
     pub project_dir: Option<String>,
     pub state: &'static str,
+    pub summary: String,
 }
 
 pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
@@ -85,7 +86,7 @@ pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSes
             ));
         }
     }
-    sessions.sort_by(|left, right| right.mtime_ms.cmp(&left.mtime_ms));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
     Ok(sessions)
 }
 
@@ -101,7 +102,9 @@ fn summarize(
     let metadata = metadata.unwrap_or_default();
 
     let transcript_path = session_dir.join("transcript.jsonl");
-    let transcript = read_transcript_with_backup(&transcript_path);
+    let transcript_scan = scan_transcript_with_backup(&transcript_path);
+    let transcript = transcript_scan.as_ref().map(|scan| scan.count);
+    let transcript_summary = transcript_scan.map(|scan| scan.summary).unwrap_or_default();
     let transcript_exists = transcript_path.is_file()
         || transcript_path
             .with_file_name("transcript.jsonl.backup")
@@ -125,20 +128,240 @@ fn summarize(
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0);
 
+    let stored_name = string_field(&metadata, "name");
+    let name = if stored_name.trim().is_empty() {
+        friendly_title(transcript_summary.first_user.as_deref(), &project_slug)
+    } else {
+        stored_name
+    };
+    let project_dir = nonempty_string_field(&metadata, "working_dir")
+        .or_else(|| project_dir_hint.map(str::to_owned));
+    let summary = friendly_summary(
+        transcript_summary.last_assistant.as_deref(),
+        turn_count_from(&metadata),
+        message_count,
+        project_dir.as_deref(),
+    );
+
     StoredSession {
-        name: string_field(&metadata, "name"),
+        name,
         bundle: nonempty_string_field(&metadata, "bundle").unwrap_or_else(|| "unknown".to_owned()),
         model: nonempty_string_field(&metadata, "model"),
         tags: string_array_field(&metadata, "tags"),
-        turn_count: metadata.get("turn_count").and_then(Value::as_u64),
-        project_dir: nonempty_string_field(&metadata, "working_dir")
-            .or_else(|| project_dir_hint.map(str::to_owned)),
+        turn_count: turn_count_from(&metadata),
+        project_dir,
         session_id,
         message_count,
         mtime_ms,
         project_slug,
         state,
+        summary,
     }
+}
+
+#[derive(Default)]
+struct TranscriptSummary {
+    first_user: Option<String>,
+    last_assistant: Option<String>,
+}
+
+struct TranscriptScan {
+    count: u64,
+    summary: TranscriptSummary,
+}
+
+fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
+    let backup = path.with_file_name("transcript.jsonl.backup");
+    let mut saw_candidate = false;
+    for candidate in [path, backup.as_path()] {
+        if !candidate.is_file() {
+            continue;
+        }
+        saw_candidate = true;
+        let Ok(file) = File::open(candidate) else {
+            continue;
+        };
+        let mut summary = TranscriptSummary::default();
+        let mut count = 0_u64;
+        let mut valid = true;
+        for line in BufReader::new(file).lines() {
+            let Ok(line) = line else {
+                valid = false;
+                break;
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&line) else {
+                valid = false;
+                break;
+            };
+            count = count.saturating_add(1);
+            let Some(role) = record.get("role").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(text) = readable_content(record.get("content")) else {
+                continue;
+            };
+            if role == "user" && summary.first_user.is_none() && user_visible_prompt(&text) {
+                summary.first_user = Some(text);
+            } else if role == "assistant" {
+                summary.last_assistant = Some(text);
+            }
+        }
+        if valid {
+            return Some(TranscriptScan { count, summary });
+        }
+    }
+    if saw_candidate {
+        None
+    } else {
+        Some(TranscriptScan {
+            count: 0,
+            summary: TranscriptSummary::default(),
+        })
+    }
+}
+
+#[cfg(test)]
+fn read_transcript_summary(path: &Path) -> TranscriptSummary {
+    scan_transcript_with_backup(path)
+        .map(|scan| scan.summary)
+        .unwrap_or_default()
+}
+
+fn readable_content(content: Option<&Value>) -> Option<String> {
+    let raw = match content? {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| {
+                let object = block.as_object()?;
+                let kind = object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !matches!(kind, "text" | "output_text") {
+                    return None;
+                }
+                object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return None,
+    };
+    let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!clean.is_empty()).then_some(clean)
+}
+
+fn friendly_title(first_user: Option<&str>, project_slug: &str) -> String {
+    if let Some(prompt) = first_user {
+        let clean = humanize(prompt)
+            .trim_start_matches(|character: char| !character.is_alphanumeric())
+            .split_whitespace()
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !clean.is_empty() {
+            return capitalize_first(&sentence_fragment(&clean, 58));
+        }
+    }
+    let project = project_slug.trim_start_matches('-').replace('-', " ");
+    if project.trim().is_empty() {
+        "Untitled Amplifier run".to_owned()
+    } else {
+        format!("Work in {}", sentence_fragment(&project, 42))
+    }
+}
+
+fn friendly_summary(
+    last_assistant: Option<&str>,
+    turn_count: Option<u64>,
+    message_count: u64,
+    project_dir: Option<&str>,
+) -> String {
+    let location = project_dir
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty());
+    let progress = match turn_count {
+        Some(turns) if turns > 0 => format!(
+            "{turns} {} saved",
+            if turns == 1 { "turn" } else { "turns" }
+        ),
+        _ if message_count > 0 => format!("{message_count} transcript messages saved"),
+        _ => "Saved run".to_owned(),
+    };
+    let progress = location.map_or(progress.clone(), |project| {
+        format!("{progress} in {project}")
+    });
+    if let Some(last) = last_assistant {
+        let update = sentence_fragment(&humanize(last), 140);
+        return format!(
+            "Last update: {}. {progress}.",
+            update.trim_end_matches(['.', '!', '?'])
+        );
+    }
+    match (turn_count, message_count) {
+        (Some(turns), _) if turns > 0 => format!(
+            "Paused after {turns} {}. Resume to continue where Amplifier left off.",
+            if turns == 1 { "turn" } else { "turns" }
+        ),
+        (_, messages) if messages > 0 => {
+            format!("{messages} transcript messages saved. Resume to continue.")
+        }
+        _ => "Ready to continue this saved run.".to_owned(),
+    }
+}
+
+fn user_visible_prompt(value: &str) -> bool {
+    let normalized = value.trim_start().to_ascii_lowercase();
+    !normalized.starts_with("<system-reminder")
+        && !normalized.starts_with("system-reminder")
+        && !normalized.contains("amplifier-studio-project-plan\">")
+}
+
+fn humanize(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if matches!(character, '*' | '`' | '#' | '_' | '<' | '>') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn capitalize_first(value: &str) -> String {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(characters).collect()
+}
+
+fn sentence_fragment(value: &str, max_chars: usize) -> String {
+    let clean = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() <= max_chars {
+        return clean;
+    }
+    let shortened = clean
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    format!("{}…", shortened.trim_end())
+}
+
+fn turn_count_from(metadata: &Map<String, Value>) -> Option<u64> {
+    metadata.get("turn_count").and_then(Value::as_u64)
 }
 
 fn read_json_with_backup(path: &Path) -> (Option<Map<String, Value>>, bool) {
@@ -160,42 +383,9 @@ fn read_json_with_backup(path: &Path) -> (Option<Map<String, Value>>, bool) {
     (None, saw_candidate)
 }
 
+#[cfg(test)]
 fn read_transcript_with_backup(path: &Path) -> Option<u64> {
-    let backup = path.with_file_name("transcript.jsonl.backup");
-    let mut saw_candidate = false;
-    for candidate in [path, backup.as_path()] {
-        if !candidate.is_file() {
-            continue;
-        }
-        saw_candidate = true;
-        let Ok(file) = File::open(candidate) else {
-            continue;
-        };
-        let mut count = 0_u64;
-        let mut valid = true;
-        for line in BufReader::new(file).lines() {
-            let Ok(line) = line else {
-                valid = false;
-                break;
-            };
-            if line.trim().is_empty() {
-                continue;
-            }
-            if serde_json::from_str::<Value>(&line).is_err() {
-                valid = false;
-                break;
-            }
-            count = count.saturating_add(1);
-        }
-        if valid {
-            return Some(count);
-        }
-    }
-    if saw_candidate {
-        None
-    } else {
-        Some(0)
-    }
+    scan_transcript_with_backup(path).map(|scan| scan.count)
 }
 
 fn read_dirs(path: &Path) -> Vec<fs::DirEntry> {
@@ -256,8 +446,7 @@ fn remember_directory_hint(hints: &mut HashMap<String, String>, candidate: &str)
 fn project_slug(project_dir: &Path) -> String {
     let mut slug = project_dir
         .to_string_lossy()
-        .replace('/', "-")
-        .replace('\\', "-")
+        .replace(['/', '\\'], "-")
         .replace(':', "");
     if !slug.starts_with('-') {
         slug.insert(0, '-');
@@ -312,6 +501,34 @@ mod tests {
         let mut file = File::create(&path).expect("transcript");
         writeln!(file, "not json").expect("write");
         assert_eq!(read_transcript_with_backup(&path), None);
+    }
+
+    #[test]
+    fn unnamed_sessions_get_a_readable_title_and_last_response_summary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let transcript = temp.path().join("transcript.jsonl");
+        fs::write(
+            &transcript,
+            concat!(
+                "{\"role\":\"user\",\"content\":\"Audit the release process and fix the updater\"}\n",
+                "{\"role\":\"assistant\",\"content\":\"The updater is repaired. The remaining release blocker is Apple notarization.\"}\n"
+            ),
+        )
+        .expect("transcript");
+        let summary = read_transcript_summary(&transcript);
+        assert_eq!(
+            friendly_title(summary.first_user.as_deref(), "-Users-me-project"),
+            "Audit the release process and fix the updater"
+        );
+        assert_eq!(
+            friendly_summary(
+                summary.last_assistant.as_deref(),
+                Some(2),
+                4,
+                Some("/Users/me/amplifier-app-studio")
+            ),
+            "Last update: The updater is repaired. The remaining release blocker is Apple notarization. 2 turns saved in amplifier-app-studio."
+        );
     }
 
     #[test]

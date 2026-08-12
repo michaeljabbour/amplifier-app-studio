@@ -20,10 +20,10 @@ export interface StudioCapability {
   mode: string;
   requirements: string[];
   accent: "blue" | "green" | "amber" | "violet";
-  activation: "parallel-session" | "included" | "post-release";
+  activation: "parallel-session" | "included";
 }
 
-export type CapabilityReadiness = "native" | "catalogued" | "on-demand";
+export type CapabilityReadiness = "native" | "composition" | "catalogued" | "on-demand";
 
 export const STUDIO_CAPABILITIES: StudioCapability[] = [
   {
@@ -82,7 +82,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     action: "Included in active chat",
     catalogNames: [],
     mode: "auto",
-    requirements: ["Included with the standard Amplifier runtime on the selected host."],
+    requirements: ["Available when the selected session composition mounts a shell or command tool."],
     accent: "green",
     activation: "included",
   },
@@ -110,7 +110,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     outcome: "Design and run inspectable graph-based agent workflows.",
     description: "Runs DOT pipelines with durable node, edge, retry, checkpoint, and completion events rendered in Studio's execution map.",
     action: "Start workflow run",
-    bundle: "git+https://github.com/microsoft/amplifier-bundle-attractor@38db3ef6f8ce785c9777d6d702421cfa8f22f80a#subdirectory=bundles/attractor-interactive.yaml",
+    bundle: "git+https://github.com/microsoft/amplifier-bundle-attractor@8d63cbe0a0135af94ad976fcfe99e9b8bdb47b0b#subdirectory=bundles/attractor-interactive.yaml",
     catalogNames: ["attractor", "attractor-interactive"],
     mode: "auto",
     requirements: [
@@ -126,7 +126,8 @@ export function capabilityReadiness(
   capability: StudioCapability,
   catalog: CapabilityCatalog,
 ): CapabilityReadiness {
-  if (capability.id === "coordinator" || capability.id === "terminal") return "native";
+  if (capability.id === "coordinator") return "native";
+  if (capability.id === "terminal") return "composition";
   if (capability.catalogNames.some((name) => catalog.bundles.some((bundle) => bundle.name === name))) {
     return "catalogued";
   }
@@ -135,8 +136,9 @@ export function capabilityReadiness(
 
 export function capabilityStatusLabel(readiness: CapabilityReadiness): string {
   if (readiness === "native") return "Included";
+  if (readiness === "composition") return "Standard composition";
   if (readiness === "catalogued") return "Bundle found";
-  return "Prepared on first use";
+  return "Not installed · fetch on launch";
 }
 
 export function capabilitySessionInput(

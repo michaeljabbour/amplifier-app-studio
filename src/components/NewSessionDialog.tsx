@@ -5,6 +5,7 @@ import { toolContractFailure } from "../providerSafety";
 interface Props {
   initial: NewSessionInput;
   catalog: CapabilityCatalog;
+  catalogError?: string;
   nativeProjectPicker: boolean;
   onCancel: () => void;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
@@ -98,6 +99,12 @@ export function NewSessionDialog(props: Props) {
             <p>Studio will start this capability as an isolated Amplifier runtime. Your coordinator and other sessions stay available.</p>
           </div>
         </Show>
+
+        <Show when={props.catalogError} keyed>{(message) => (
+          <div class="catalog-discovery-warning" role="status">
+            Installed bundles and provider routes could not be discovered: {message}. You may enter explicit values under Advanced composition.
+          </div>
+        )}</Show>
 
         <div class="field full-field">
           <span>{props.initial.resumeId ? "Original project folder" : "Project folder"}</span>

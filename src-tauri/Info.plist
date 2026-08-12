@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Amplifier Studio uses the microphone only when you choose Dictate, so speech can be placed into an editable message draft.</string>
+  <string>Amplifier Studio uses the microphone only when you choose voice input, so speech can be transcribed into an editable message draft.</string>
 </dict>
 </plist>

@@ -9,6 +9,7 @@ function stored(overrides: Partial<StoredSession> = {}): StoredSession {
     bundle: "default",
     tags: [],
     messageCount: 4,
+    summary: "Ready to continue this saved run.",
     mtimeMs: 1,
     projectSlug: "project",
     projectDir: "/tmp/project",

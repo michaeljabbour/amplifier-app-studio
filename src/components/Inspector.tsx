@@ -15,6 +15,7 @@ interface Props {
   transport: string;
   bundles: BundleOption[];
   providers: ProviderOption[];
+  catalogError?: string;
   onTab: (tab: InspectorTab) => void;
   onSelectLane: (id: string) => void;
   onDismissAlert: (id: string) => void;
@@ -62,14 +63,40 @@ function RunPanel(props: Props) {
   const liveCount = () => liveAgentCount(lanes());
   const complete = () => props.state.blocks.some((block) => block.kind === "answer" && block.final);
   const detached = () => lanes().filter((lane) => lane.status === "detached").length;
+  const attention = () => lanes().filter((lane) => lane.status === "attention").length;
+  const terminal = () => props.state.phase === "closing" || props.state.phase === "exited";
+  const runtimeStatus = (): ProgressStatus => {
+    if (props.state.phase === "error") return "failed";
+    if (terminal()) return "stopped";
+    if (props.state.phase === "degraded") return "unknown";
+    return props.state.phase === "starting" ? "live" : "done";
+  };
+  const coordinatorStatus = (): ProgressStatus => {
+    if (props.state.phase === "error") return "failed";
+    if (terminal()) return "stopped";
+    if (props.state.busy) return "live";
+    return complete() ? "done" : "next";
+  };
+  const agentStatus = (): ProgressStatus => {
+    if (!lanes().length) return complete() ? "skipped" : "next";
+    if (liveCount() > 0 || attention() > 0) return "live";
+    if (detached() > 0) return "unknown";
+    return "done";
+  };
+  const finalStatus = (): ProgressStatus => {
+    if (complete()) return "done";
+    if (props.state.phase === "error") return "failed";
+    if (terminal()) return "stopped";
+    return "next";
+  };
   return (
     <>
       <InspectorSection title="Progress" meta={props.state.busy ? "LIVE" : props.state.phase.toUpperCase()}>
         <div class="progress-list">
-          <ProgressRow label="Runtime prepared" status={props.state.phase === "starting" ? "live" : "done"} detail={props.state.bundle} />
-          <ProgressRow label="Coordinator" status={props.state.busy ? "live" : complete() ? "done" : "next"} detail={props.state.activity} />
-          <ProgressRow label="This session's agents" status={liveCount() > 0 ? "live" : lanes().length && !detached() ? "done" : "next"} detail={lanes().length ? `${liveCount()} live · ${lanes().length} total workspace${lanes().length === 1 ? "" : "s"}${detached() ? ` · ${detached()} completion unknown` : ""}` : "Created only when useful"} />
-          <ProgressRow label="Final response" status={complete() ? "done" : "next"} detail={complete() ? "Returned to session" : "Waiting on the run"} />
+          <ProgressRow label="Runtime prepared" status={runtimeStatus()} detail={props.state.phase === "error" ? props.state.error || "Runtime failed" : props.state.bundle} />
+          <ProgressRow label="Coordinator" status={coordinatorStatus()} detail={props.state.activity} />
+          <ProgressRow label="This session's agents" status={agentStatus()} detail={lanes().length ? `${liveCount()} live · ${lanes().length} total workspace${lanes().length === 1 ? "" : "s"}${attention() ? ` · ${attention()} waiting` : ""}${detached() ? ` · ${detached()} completion unknown` : ""}` : complete() ? "No delegate workspace was used" : "Created only when useful"} />
+          <ProgressRow label="Final response" status={finalStatus()} detail={complete() ? "Returned to session" : props.state.phase === "error" ? "Not returned because the runtime failed" : terminal() ? "Runtime stopped before a final response" : "Waiting on the run"} />
         </div>
       </InspectorSection>
 
@@ -172,6 +199,7 @@ function BuildPanel(props: Props) {
   const experimentalProviders = () => props.providers.filter((provider) => !provider.toolCompatible);
   return (
     <>
+      <Show when={props.catalogError} keyed>{(message) => <div class="catalog-discovery-warning" role="status">Amplifier catalog unavailable: {message}. Existing session settings below come from runtime events; provider alternatives may be incomplete.</div>}</Show>
       <InspectorSection title="Active composition" meta="PINNED FOR TURN">
         <dl class="composition-grid">
           <div><dt>Bundle</dt><dd>{props.state.bundle}</dd></div>
@@ -189,7 +217,7 @@ function BuildPanel(props: Props) {
         <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
       </InspectorSection>
       <InspectorSection title="Tool-compatible providers" meta={String(safeProviders().length)}>
-        <Show when={safeProviders().length} fallback={<p class="inspector-empty">No tool-compatible provider routes were discovered.</p>}>
+        <Show when={safeProviders().length} fallback={<p class="inspector-empty">{props.catalogError ? "Provider routes are unavailable because catalog discovery failed." : "No tool-compatible provider routes were discovered."}</p>}>
           <div class="bundle-list provider-list">
             <For each={safeProviders()}>{(provider) => <button onClick={() => props.onStartSibling(undefined, provider)}><strong>{provider.name}</strong><span>Start new session with {provider.model || provider.module}</span></button>}</For>
           </div>
@@ -237,13 +265,14 @@ function BundlesPanel(props: Props) {
 
   return (
     <>
+      <Show when={props.catalogError} keyed>{(message) => <div class="catalog-discovery-warning" role="status">Amplifier catalog unavailable: {message}. Refresh after the runtime is repaired; direct GitHub registration remains available below.</div>}</Show>
       <InspectorSection title="Amplifier catalog" meta={String(props.bundles.length)}>
         <p class="inspector-guidance">Discovered from Amplifier's own bundle registry—the same composition source backed by its module catalog. Starting one opens an independent parallel runtime.</p>
         <div class="bundle-catalog-controls">
           <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Filter bundles…" aria-label="Filter available bundles" />
           <button class="secondary-button" onClick={() => void props.onRefreshBundles()}>Refresh</button>
         </div>
-        <Show when={visible().length} fallback={<p class="inspector-empty">No bundles match this filter.</p>}>
+        <Show when={visible().length} fallback={<p class="inspector-empty">{props.catalogError ? "Bundle results are unavailable because catalog discovery failed." : "No bundles match this filter."}</p>}>
           <div class="bundle-list bundle-catalog-list">
             <For each={visible()}>{(bundle) => (
               <button onClick={() => props.onStartSibling(bundle.name)} title={bundle.location}>
@@ -352,6 +381,8 @@ function outputProvenance(output: SessionViewState["outputs"][number]): string {
   ].filter(Boolean).join(" · ");
 }
 
-function ProgressRow(props: { label: string; detail: string; status: "done" | "live" | "next" }) {
-  return <div class={`progress-row ${props.status}`}><span>{props.status === "done" ? "Done" : props.status === "live" ? "Live" : "Next"}</span><div><strong>{props.label}</strong><small>{props.detail}</small></div></div>;
+type ProgressStatus = "done" | "live" | "next" | "failed" | "stopped" | "unknown" | "skipped";
+
+function ProgressRow(props: { label: string; detail: string; status: ProgressStatus }) {
+  return <div class={`progress-row ${props.status}`}><span>{props.status}</span><div><strong>{props.label}</strong><small>{props.detail}</small></div></div>;
 }

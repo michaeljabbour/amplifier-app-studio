@@ -1,4 +1,5 @@
 import type { NewSessionInput, SessionViewState } from "./protocol";
+import { usableSessionTitle } from "./reducer";
 
 const RESTORE_KEY = "amplifier-studio.update-restore.v1";
 const MAX_RESTORE_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -30,7 +31,7 @@ export function saveUpdateRestorePlan(
     return [{
       projectDir: session.projectDir,
       resumeId: session.runtimeSessionId,
-      resumeName: session.title,
+      resumeName: usableSessionTitle(session.title),
       active: session.guiId === activeId,
     }];
   });

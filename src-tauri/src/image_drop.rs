@@ -4,7 +4,6 @@ use quick_xml::Reader;
 use serde::Serialize;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use tauri::{Emitter, Runtime, Webview, WebviewEvent};
 use zip::ZipArchive;
 
 const MAX_ATTACHMENT_COUNT: usize = 8;
@@ -14,7 +13,6 @@ const MAX_IMAGE_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_DOCUMENT_CHARS: usize = 200_000;
 const MAX_DOCUMENT_TOTAL_CHARS: usize = 300_000;
-const ATTACHMENT_DROP_EVENT: &str = "app://native-attachment-drop";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,42 +26,6 @@ pub(crate) struct NativeAttachment {
     text: Option<String>,
     size: u64,
     truncated: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum NativeAttachmentDrop {
-    Enter,
-    Leave,
-    Drop { attachments: Vec<NativeAttachment> },
-    Error { message: String },
-}
-
-pub fn handle_webview_event<R: Runtime>(webview: &Webview<R>, event: &WebviewEvent) {
-    let immediate = match event {
-        WebviewEvent::DragDrop(tauri::DragDropEvent::Enter { .. }) => {
-            Some(NativeAttachmentDrop::Enter)
-        }
-        WebviewEvent::DragDrop(tauri::DragDropEvent::Leave) => Some(NativeAttachmentDrop::Leave),
-        _ => None,
-    };
-    if let Some(payload) = immediate {
-        let _ = webview.emit(ATTACHMENT_DROP_EVENT, payload);
-        return;
-    }
-
-    let WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event else {
-        return;
-    };
-    let paths = paths.clone();
-    let webview = webview.clone();
-    std::thread::spawn(move || {
-        let payload = match load_attachments(&paths) {
-            Ok(attachments) => NativeAttachmentDrop::Drop { attachments },
-            Err(message) => NativeAttachmentDrop::Error { message },
-        };
-        let _ = webview.emit(ATTACHMENT_DROP_EVENT, payload);
-    });
 }
 
 pub(crate) fn load_attachments(paths: &[PathBuf]) -> Result<Vec<NativeAttachment>, String> {
@@ -226,10 +188,8 @@ fn extract_docx_text(path: &Path, bytes: &[u8]) -> Result<String, String> {
                 let name = name.as_ref();
                 if name == b"w:t" || name == b"t" {
                     in_text = false;
-                } else if name == b"w:p" || name == b"p" {
-                    if !output.ends_with('\n') {
-                        output.push('\n');
-                    }
+                } else if (name == b"w:p" || name == b"p") && !output.ends_with('\n') {
+                    output.push('\n');
                 }
             }
             Ok(Event::Eof) => break,

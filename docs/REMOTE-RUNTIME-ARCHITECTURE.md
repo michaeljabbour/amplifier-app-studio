@@ -210,16 +210,16 @@ Before publishing them as native releases:
 - add a Windows smoke test for install, launch, WebView2, update, deep link,
   remote-host pairing, resume, and uninstall.
 
-The current Windows shell can build, but its local-runtime installer explicitly
-does not support Windows. A useful first Windows release should therefore open
-into remote-host pairing rather than presenting a local execution path that
-cannot work.
+The current Windows shell and PowerShell runtime installer are implemented.
+A useful first Windows release still needs a clean-machine install, launch,
+WebView2, local runtime, update, resume, and uninstall acceptance run before it
+can be called release-proven; remote-host pairing remains an additional path.
 
 ### iOS
 
-The generated Xcode project exists, but it is development scaffolding rather
-than an App Store package: its export method is `debugging`, and the generated
-Info.plist/project version is still `0.1.0` while desktop is newer.
+The generated Xcode project and synchronized product version exist, but this is
+not yet an App Store package: its export method is still `debugging`, and this
+checkout has no distribution team/provisioning configuration or store CI.
 
 Before TestFlight:
 

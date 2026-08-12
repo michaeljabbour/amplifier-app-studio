@@ -1,7 +1,9 @@
 # Amplifier Studio
 
-Amplifier Studio is a Tauri 2 native application for Windows, macOS, Android,
-and iOS, plus a browser client for development and later hosted use. It keeps
+Amplifier Studio is a Tauri 2 application targeting Windows, macOS, Android,
+and iOS, plus a browser client. The currently proven v0.1 product is the local
+macOS app and authenticated loopback browser client; Windows and mobile remain
+release-gated as documented below. Studio keeps
 multiple Amplifier sessions alive in parallel without embedding or
 reimplementing the Python agent runtime.
 
@@ -75,7 +77,7 @@ cross this boundary.
   `MODULES.md` catalog; app control remains a capability of the active runtime
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
-- Bounded microphone dictation into an editable draft. Studio uses an existing
+- Bounded microphone speech-to-text into an editable draft. Studio uses an existing
   runtime-host `OPENAI_API_KEY` with `gpt-transcribe`, never creates or
   overwrites a key, and never submits the resulting text automatically.
 - Recoverable setup conditions (such as a missing stored bundle) live in the
@@ -127,7 +129,7 @@ npm run web:serve
 
 Then open <http://127.0.0.1:4317>, open Bridge settings, and enter the token.
 The browser uses an authenticated WebSocket path and can start real Amplifier
-sessions; it is not a static mock. Project execution is default-deny and every
+sessions. Project execution is default-deny and every
 allowed root is canonicalized before use. For split development, allow Vite's
 exact origin and run the bridge and client separately:
 

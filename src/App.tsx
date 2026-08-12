@@ -13,7 +13,7 @@ import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
 import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
-import { capabilitySessionInput, STUDIO_CAPABILITIES, type StudioCapability } from "./capabilities";
+import { capabilitySessionInput, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
 import {
   appendAttachmentFiles,
@@ -97,6 +97,7 @@ export default function App() {
   const [capabilitiesOpen, setCapabilitiesOpen] = createSignal(false);
   const [transport, setTransport] = createSignal(transportLabel());
   const [catalog, setCatalog] = createSignal<CapabilityCatalog>({ bundles: [], providers: [] });
+  const [catalogError, setCatalogError] = createSignal<string>();
   const [selectedLaneId, setSelectedLaneId] = createSignal<string>();
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
@@ -131,7 +132,9 @@ export default function App() {
   });
 
   onMount(() => {
-    void defaultProjectDir().then(setDefaultDir).catch(() => undefined);
+    const rememberedProject = localStorage.getItem("amplifier-studio.project-dir")?.trim();
+    if (rememberedProject) setDefaultDir(rememberedProject);
+    else void defaultProjectDir().then(setDefaultDir).catch(() => undefined);
     void refreshRuntime();
     void refreshTranscription();
     queueMicrotask(() => void refreshStored());
@@ -175,6 +178,9 @@ export default function App() {
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
     update(guiId, (state) => reduceRecord(state, record));
+    if (record.type === "session.started" || record.type === "session.attached") {
+      void applyStoredSessionTitle(guiId, typeof record.session_id === "string" ? record.session_id : undefined);
+    }
     if (sessions().find((item) => item.guiId === guiId)?.phase === "ready") clearRestoreTimeout(guiId);
     const type = typeof record.type === "string" ? record.type : "";
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
@@ -396,8 +402,9 @@ export default function App() {
   const refreshCatalog = async (projectDir?: string) => {
     try {
       setCatalog(await listCatalog(projectDir));
-    } catch {
-      // Discovery is additive; names can still be entered manually if the CLI is unavailable.
+      setCatalogError(undefined);
+    } catch (error) {
+      setCatalogError(cleanError(error));
     }
   };
 
@@ -437,12 +444,7 @@ export default function App() {
   };
 
   const openCapability = (capability: StudioCapability) => {
-    if (capability.activation === "post-release") return;
-    if (capability.activation === "included") {
-      setCapabilitiesOpen(false);
-      if (active()) openInspector("run");
-      return;
-    }
+    if (capability.activation !== "parallel-session") return;
     void openCapabilityDialog(capability);
   };
 
@@ -531,10 +533,11 @@ export default function App() {
   const registerBundle = async (uri: string, name?: string) => {
     const projectDir = active()?.projectDir || defaultDir();
     setCatalog(await addBundle({ projectDir, uri, name }));
+    setCatalogError(undefined);
   };
 
   const reloadCatalog = async () => {
-    setCatalog(await listCatalog(active()?.projectDir || defaultDir()));
+    await refreshCatalog(active()?.projectDir || defaultDir());
   };
 
   const requestContextForActive = async () => {
@@ -657,6 +660,9 @@ export default function App() {
             onSend={startFromHome}
             onResume={prepareStoredResume}
             onNew={openNew}
+            projectDir={defaultDir()}
+            onChooseProject={chooseHomeProject}
+            remoteRuntime={usesWebBridge()}
             onDrawer={openDrawer}
             onInstall={() => void installLocalRuntime()}
             onConfigureProvider={() => setProviderSetupOpen(true)}
@@ -766,6 +772,7 @@ export default function App() {
               transport={transport()}
               bundles={catalog().bundles}
               providers={catalog().providers}
+              catalogError={catalogError()}
               onTab={setInspectorTab}
               onSelectLane={selectLane}
               onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
@@ -791,6 +798,7 @@ export default function App() {
         {(initial) => <NewSessionDialog
           initial={initial}
           catalog={catalog()}
+          catalogError={catalogError()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
           onCancel={() => setDialog(undefined)}
           onPickProjectDir={pickProjectDirectory}
@@ -798,7 +806,7 @@ export default function App() {
         />}
       </Show>
       <Show when={capabilitiesOpen()}>
-        <CapabilityPalette catalog={catalog()} onClose={() => setCapabilitiesOpen(false)} onLaunch={openCapability} />
+        <CapabilityPalette catalog={catalog()} catalogError={catalogError()} onClose={() => setCapabilitiesOpen(false)} onLaunch={openCapability} />
       </Show>
       <Show when={drawerOpen()}>
         <SessionDrawer
@@ -923,10 +931,18 @@ export default function App() {
 
   async function startFromHome(text: string, attachments: ComposerAttachment[]) {
     const remembered = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
-    const projectDir = await selectProjectFolder(remembered);
-    if (nativeProjectPickerAvailable() && !projectDir) throw new Error("Project folder selection was cancelled");
+    const projectDir = remembered || await selectProjectFolder();
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
     await start({ projectDir }, text, attachments);
+  }
+
+  async function chooseHomeProject() {
+    const remembered = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const projectDir = await selectProjectFolder(remembered);
+    if (!projectDir) return;
+    localStorage.setItem("amplifier-studio.project-dir", projectDir);
+    setDefaultDir(projectDir);
+    await refreshCatalog(projectDir);
   }
 
   async function prepareStoredResume(session: StoredSession) {
@@ -937,7 +953,7 @@ export default function App() {
     setDialog({
       projectDir: projectDir || "",
       resumeId: session.sessionId,
-      resumeName: session.name || `Session ${session.sessionId.slice(0, 8)}`,
+      resumeName: session.name,
     });
   }
 
@@ -1042,6 +1058,17 @@ export default function App() {
       await sendOp(guiId, { op: "session.status" });
     } catch {
       // The exit path owns connection errors; polling is deliberately quiet.
+    }
+  }
+
+  async function applyStoredSessionTitle(guiId: string, runtimeSessionId?: string) {
+    if (!runtimeSessionId) return;
+    try {
+      const match = (await listStoredSessions()).find((session) => session.sessionId === runtimeSessionId);
+      if (!match?.name || /^Session [a-z0-9-]{1,12}$/i.test(match.name)) return;
+      update(guiId, (state) => ({ ...state, title: match.name }));
+    } catch {
+      // Title enrichment is optional; the active runtime is already usable.
     }
   }
 }

@@ -49,11 +49,13 @@ export async function startAudioCapture(
     const blob = new Blob(chunks, { type: recorder.mimeType || mediaType || "audio/webm" });
     void blobToBase64(blob).then((data) => resolveRecording?.({ mediaType: blob.type, data }), rejectRecording);
   };
-  recorder.start(250);
+  recorder.start();
 
   return {
     stop: () => {
-      if (recorder.state !== "inactive") recorder.stop();
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
       return recording;
     },
     abort: () => {
@@ -66,7 +68,7 @@ export async function startAudioCapture(
   };
 }
 
-export function appendDictation(baseDraft: string, transcript: string): string {
+export function appendTranscript(baseDraft: string, transcript: string): string {
   const base = baseDraft.trimEnd();
   const spoken = transcript.trim();
   if (!spoken) return baseDraft;
@@ -75,7 +77,7 @@ export function appendDictation(baseDraft: string, transcript: string): string {
 }
 
 function preferredMediaType(Recorder: typeof MediaRecorder): string | undefined {
-  return ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"]
+  return ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]
     .find((mediaType) => Recorder.isTypeSupported(mediaType));
 }
 

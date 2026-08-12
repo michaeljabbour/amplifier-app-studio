@@ -77,7 +77,7 @@ describe("execution map", () => {
       tools: "skipped",
       delegates: "skipped",
       response: "completed",
-      complete: "active",
+      complete: "accepted",
     });
   });
 
@@ -98,6 +98,22 @@ describe("execution map", () => {
     expect(rendered).toContain("loop-completed");
     expect(rendered).toContain("loop-active");
     expect(rendered).toContain("loop-active-edge");
+    expect(rendered).toContain("Tools — active");
+    expect(rendered).toContain('tabindex="0"');
+  });
+
+  it("marks the accepted node distinctly when the loop completes", () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    const rendered = sanitizeAndAnnotateTurnLoopSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <g class="node"><title>complete</title><polygon points="0,0 1,1" /></g>
+        <g class="edge"><title>response-&gt;complete</title><path d="M0 0" /></g>
+      </svg>
+    `, { ...state.turnLoop, phase: "complete", modelPasses: 1, responseBlocks: 1 });
+
+    expect(rendered).toContain("loop-accepted");
+    expect(rendered).toContain("loop-active-edge");
+    expect(rendered).toContain("Turn accepted — accepted");
   });
 
   it("lays out the built-in Amplifier loop as an annotated SVG", async () => {
@@ -112,7 +128,7 @@ describe("execution map", () => {
       completedDelegates: 2,
     });
     expect(rendered).toContain("<svg");
-    expect(rendered).toContain("loop-active");
+    expect(rendered).toContain("loop-accepted");
     expect(rendered).toContain("Amplifier turn loop");
   });
 });

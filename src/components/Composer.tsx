@@ -4,7 +4,7 @@ import { machinePresence } from "../machinePresence";
 import type { ComposerAttachment, SessionViewState } from "../protocol";
 import type { AudioRecording } from "../transcription";
 import { AttachmentStrip } from "./AttachmentStrip";
-import { DictationButton } from "./DictationButton";
+import { VoiceInputButton } from "./VoiceInputButton";
 
 interface Props {
   state: SessionViewState;
@@ -182,7 +182,7 @@ export function Composer(props: Props) {
         <div class="composer-left-actions">
           <button type="button" class="starter-trigger" aria-expanded={startersOpen()} onClick={() => setStartersOpen((open) => !open)}>Ways to start</button>
           <button type="button" class="attachment-trigger" disabled={sending()} onClick={() => void pickFiles()}>Add files</button>
-          <DictationButton
+          <VoiceInputButton
             draft={props.state.composerDraft}
             disabled={sending() || props.state.phase !== "ready"}
             available={props.transcriptionAvailable}

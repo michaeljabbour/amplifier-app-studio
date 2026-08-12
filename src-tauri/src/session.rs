@@ -1,6 +1,5 @@
 use crate::protocol::{
-    require_object, LiveSession, ProcessExit, ProcessLog, SessionEvent, StartSessionOptions,
-    StartSessionResult,
+    require_object, ProcessExit, ProcessLog, SessionEvent, StartSessionOptions, StartSessionResult,
 };
 use crate::runtime_setup;
 use serde_json::Value;
@@ -35,7 +34,7 @@ struct SessionHandle {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     sink: AttachedSink,
-    info: LiveSession,
+    resume_identity: Option<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -102,8 +101,12 @@ impl SessionManager {
             }
             if let Some(resume_id) = options.resume_id.as_deref() {
                 let duplicate = sessions.values().any(|handle| {
-                    handle.info.project_dir == project_dir_string
-                        && handle.info.resume_id.as_deref() == Some(resume_id)
+                    handle
+                        .resume_identity
+                        .as_ref()
+                        .is_some_and(|(project, session)| {
+                            project == &project_dir_string && session == resume_id
+                        })
                 });
                 if duplicate {
                     return Err(
@@ -159,8 +162,12 @@ impl SessionManager {
         }
         if let Some(resume_id) = options.resume_id.as_deref() {
             let duplicate = sessions.values().any(|handle| {
-                handle.info.project_dir == project_dir_string
-                    && handle.info.resume_id.as_deref() == Some(resume_id)
+                handle
+                    .resume_identity
+                    .as_ref()
+                    .is_some_and(|(project, session)| {
+                        project == &project_dir_string && session == resume_id
+                    })
             });
             if duplicate {
                 let _ = child.kill().await;
@@ -180,25 +187,16 @@ impl SessionManager {
             .stderr
             .take()
             .ok_or_else(|| "The Amplifier runtime did not expose stderr".to_owned())?;
-        let pid = child.id();
-
-        let info = LiveSession {
-            gui_id: options.gui_id.clone(),
-            project_dir: project_dir_string.clone(),
-            bundle: options.bundle.clone(),
-            model: options.model.clone(),
-            provider: options.provider.clone(),
-            mode: options.mode.clone(),
-            resume_id: options.resume_id.clone(),
-            pid,
-        };
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
         let attached_sink = Arc::new(RwLock::new(Some((attachment_id, sink))));
         let handle = SessionHandle {
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(Mutex::new(Some(stdin))),
             sink: attached_sink.clone(),
-            info,
+            resume_identity: options
+                .resume_id
+                .clone()
+                .map(|resume_id| (project_dir_string.clone(), resume_id)),
         };
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
@@ -399,18 +397,6 @@ impl SessionManager {
     #[cfg(desktop)]
     pub fn resume_after_failed_update(&self) {
         self.accepting.store(true, Ordering::SeqCst);
-    }
-
-    pub async fn list(&self) -> Vec<LiveSession> {
-        let mut sessions: Vec<_> = self
-            .sessions
-            .lock()
-            .await
-            .values()
-            .map(|handle| handle.info.clone())
-            .collect();
-        sessions.sort_by(|left, right| left.gui_id.cmp(&right.gui_id));
-        sessions
     }
 
     fn spawn_exit_monitor(&self, sink: EventSink, gui_id: String, child: Arc<Mutex<Child>>) {

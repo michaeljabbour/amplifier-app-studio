@@ -6,7 +6,7 @@ import type { TranscriptionStatus } from "../transport";
 import type { AudioRecording } from "../transcription";
 import { storedSessionResumeBlocker } from "../sessionAvailability";
 import { AttachmentStrip } from "./AttachmentStrip";
-import { DictationButton } from "./DictationButton";
+import { VoiceInputButton } from "./VoiceInputButton";
 
 interface Props {
   sessions: StoredSession[];
@@ -19,6 +19,9 @@ interface Props {
   onSend: (text: string, attachments: ComposerAttachment[]) => Promise<void>;
   onResume: (session: StoredSession) => Promise<void>;
   onNew: () => void;
+  projectDir: string;
+  onChooseProject: () => Promise<void>;
+  remoteRuntime: boolean;
   onDrawer: () => void;
   onInstall: () => void;
   onConfigureProvider: () => void;
@@ -38,6 +41,7 @@ export function CoordinatorHome(props: Props) {
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
+  const [locationOpen, setLocationOpen] = createSignal(false);
   const recent = createMemo(() => props.sessions.slice(0, 24));
   const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true;
@@ -104,8 +108,9 @@ export function CoordinatorHome(props: Props) {
                   title={storedSessionResumeBlocker(session, true)}
                   onClick={() => void run(() => props.onResume(session))}
                 >
-                  <strong>{session.name || `Session ${session.sessionId.slice(0, 8)}`}</strong>
+                  <strong>{session.name}</strong>
                   <span>{session.bundle} · {timeAgo(session.mtimeMs)}</span>
+                  <p>{session.summary}</p>
                   <Show when={storedSessionResumeBlocker(session, true)} keyed>{(reason) => <small>{reason}</small>}</Show>
                 </button>
               )}</For>
@@ -124,7 +129,8 @@ export function CoordinatorHome(props: Props) {
           <Show when={latest()}>{(session) => (
             <button type="button" class="home-continue" disabled={starting()} onClick={() => void run(() => props.onResume(session()))}>
               <span>Continue recent work</span>
-              <strong>{session().name || `Session ${session().sessionId.slice(0, 8)}`}</strong>
+              <strong>{session().name}</strong>
+              <small>{session().summary}</small>
               <i aria-hidden="true">→</i>
             </button>
           )}</Show>
@@ -225,9 +231,17 @@ export function CoordinatorHome(props: Props) {
           </Show>
           <div class="home-composer-actions">
             <div class="home-composer-tools">
-              <button type="button" onClick={props.onNew}>Configure session</button>
+              <button
+                type="button"
+                class="home-project-trigger"
+                title={props.projectDir || "Choose a project folder"}
+                onClick={() => void props.onChooseProject()}
+              >
+                <FolderIcon />
+                <span>{projectDisplayName(props.projectDir)}</span>
+              </button>
               <button type="button" onClick={() => void pickFiles()}>Add files</button>
-              <DictationButton
+              <VoiceInputButton
                 draft={text()}
                 disabled={!ready() || starting()}
                 available={props.transcription?.available === true}
@@ -236,6 +250,33 @@ export function CoordinatorHome(props: Props) {
                 onTranscribe={props.onTranscribe}
                 onActiveChange={setDictating}
               />
+              <div class="home-location-control">
+                <button
+                  type="button"
+                  class="home-location-trigger"
+                  aria-expanded={locationOpen()}
+                  aria-haspopup="menu"
+                  title={props.remoteRuntime ? "This run uses the configured remote host" : "This run uses this computer"}
+                  onClick={() => setLocationOpen((value) => !value)}
+                >
+                  {props.remoteRuntime ? <CloudIcon /> : <ComputerIcon />}
+                  <span>{props.remoteRuntime ? "Remote host" : "This computer"}</span>
+                </button>
+                <Show when={locationOpen()}>
+                  <div class="home-location-menu" role="menu" aria-label="Where this run executes">
+                    <button type="button" role="menuitem" classList={{ selected: !props.remoteRuntime }} onClick={() => props.remoteRuntime && props.onSettings()}>
+                      <ComputerIcon />
+                      <span><strong>On this computer</strong><small>Uses local files and the local Amplifier runtime</small></span>
+                      <i aria-hidden="true">{!props.remoteRuntime ? "✓" : ""}</i>
+                    </button>
+                    <button type="button" role="menuitem" classList={{ selected: props.remoteRuntime }} onClick={() => props.onSettings()}>
+                      <CloudIcon />
+                      <span><strong>{props.remoteRuntime ? "Remote host" : "Cloud or remote"}</strong><small>{props.remoteRuntime ? "Connected through the authenticated bridge" : "Not configured yet · open Settings"}</small></span>
+                      <i aria-hidden="true">{props.remoteRuntime ? "✓" : ""}</i>
+                    </button>
+                  </div>
+                </Show>
+              </div>
               <span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span>
             </div>
             <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
@@ -252,6 +293,24 @@ export function CoordinatorHome(props: Props) {
       </section>
     </main>
   );
+}
+
+export function projectDisplayName(projectDir: string): string {
+  const normalized = projectDir.trim().replace(/[\\/]+$/, "");
+  if (!normalized) return "Choose project";
+  return normalized.split(/[\\/]/).at(-1) || normalized;
+}
+
+function FolderIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2h9.3v9h-17zM3.5 7.5v-2h6l1.7 2" /></svg>;
+}
+
+function ComputerIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="12" rx="1.5" /><path d="M8 20h8M10 17v3M14 17v3" /></svg>;
+}
+
+function CloudIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.2a3.8 3.8 0 0 0 .6-7.55A6 6 0 0 0 6.25 9.7 4.4 4.4 0 0 0 7 18.5Z" /></svg>;
 }
 
 function timeAgo(timestamp: number): string {

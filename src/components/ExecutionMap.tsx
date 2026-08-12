@@ -3,7 +3,7 @@ import { createMemo, createResource, For, Show } from "solid-js";
 import type { PipelineState, SessionViewState, TurnLoopPhase, TurnLoopState } from "../protocol";
 import turnLoopSvgSource from "../assets/amplifier-turn-loop.svg?raw";
 
-export type TurnLoopNodeStatus = "pending" | "active" | "completed" | "skipped";
+export type TurnLoopNodeStatus = "pending" | "active" | "completed" | "skipped" | "accepted";
 
 interface Props {
   state: SessionViewState;
@@ -20,8 +20,16 @@ export function ExecutionMap(props: Props) {
       dot: current.dotSource,
       pipeline: current,
       signature: JSON.stringify({
-        nodes: Object.values(current.nodes).map((node) => [node.id, node.status]),
-        edges: Object.values(current.edges).map((edge) => [edge.id, edge.selected]),
+        nodes: Object.values(current.nodes).map((node) => [
+          node.id,
+          node.status,
+          node.handlerType,
+          node.attempt,
+          node.durationMs,
+          node.notes,
+          node.failureReason,
+        ]),
+        edges: Object.values(current.edges).map((edge) => [edge.id, edge.selected, edge.label]),
       }),
     };
   });
@@ -36,6 +44,7 @@ export function ExecutionMap(props: Props) {
           <span class={`execution-map-state ${pipeline()?.status || "running"}`}>{pipeline()?.status || "running"}</span>
         </div>
         <Show when={pipeline()?.goal}><p class="execution-map-goal">{pipeline()?.goal}</p></Show>
+        <p class="execution-map-guidance">This shape comes from the active Attractor at runtime. Nodes and selected edges update from observed pipeline events; hover a node for its current role and state.</p>
         <div class="pipeline-graph" aria-label={`Execution map for ${pipeline()?.graphName || "pipeline"}`}>
           <Show when={!svg.loading} fallback={<p class="execution-map-loading">Laying out pipeline…</p>}>
             <Show when={svg()} fallback={<p class="execution-map-error">The runtime supplied a pipeline graph, but it could not be rendered.</p>}>
@@ -78,7 +87,7 @@ function TurnLoop(props: { loop: TurnLoopState; svg?: string }) {
         <div><span>AMPLIFIER TURN LOOP</span><strong>{props.loop.detail}</strong></div>
         <span class={`execution-map-state ${props.loop.phase}`}>{turnLoopPhaseLabel(props.loop.phase)}</span>
       </div>
-      <p class="execution-map-guidance">This is the recorded Amplifier orchestrator cycle: the model can call tools or delegates, their results return to the model, and the loop repeats until a final response closes the turn.</p>
+      <p class="execution-map-guidance">This stable overview is driven by recorded Amplifier events: its active path and repetitions change live. If Resolve or another Attractor supplies a DOT pipeline, Studio replaces this overview with that runtime-defined shape. Hover a stage for detail.</p>
       <div class="turn-loop-graph" aria-label="Amplifier model and tool execution loop">
         <Show when={props.svg} fallback={<p class="execution-map-error">The Amplifier loop could not be rendered.</p>}>
           <div class="turn-loop-svg" innerHTML={props.svg || ""} />
@@ -114,7 +123,7 @@ export function turnLoopNodeStatuses(loop: TurnLoopState): Record<string, TurnLo
     tools: loop.phase === "tools" ? "active" : loop.toolCalls > 0 ? "completed" : complete ? "skipped" : "pending",
     delegates: loop.phase === "delegates" ? "active" : loop.delegates > 0 ? "completed" : complete ? "skipped" : "pending",
     response: loop.phase === "response" ? "active" : complete ? "completed" : "pending",
-    complete: complete ? "active" : "pending",
+    complete: complete ? "accepted" : "pending",
   };
 }
 
@@ -145,7 +154,14 @@ export function sanitizeAndAnnotateTurnLoopSvg(raw: string, loop: TurnLoopState)
   const statuses = turnLoopNodeStatuses(loop);
   documentNode.querySelectorAll("g.node").forEach((group) => {
     const id = group.querySelector("title")?.textContent?.trim() || "";
-    group.classList.add(`loop-${statuses[id] || "pending"}`);
+    const status = statuses[id] || "pending";
+    const explanation = turnLoopNodeExplanation(id, status, loop);
+    group.classList.add(`loop-${status}`);
+    group.setAttribute("role", "group");
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("aria-label", explanation);
+    const title = group.querySelector("title");
+    if (title) title.textContent = explanation;
   });
   const activeEdge = loop.phase === "tools"
     ? "model->tools"
@@ -217,6 +233,12 @@ export function sanitizeAndAnnotateSvg(raw: string, pipeline: PipelineState): st
     const id = group.querySelector("title")?.textContent?.trim() || "";
     const node = pipeline.nodes[id];
     group.classList.add(`pipeline-${node?.status || "pending"}`);
+    const explanation = pipelineNodeExplanation(id, node);
+    group.setAttribute("role", "group");
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("aria-label", explanation);
+    const title = group.querySelector("title");
+    if (title) title.textContent = explanation;
   });
   documentNode.querySelectorAll("g.edge").forEach((group) => {
     const title = group.querySelector("title")?.textContent?.trim() || "";
@@ -228,6 +250,30 @@ export function sanitizeAndAnnotateSvg(raw: string, pipeline: PipelineState): st
   // directly preserves `role`/`aria-label`, which the SVG-only profile strips
   // if it is run a second time.
   return new XMLSerializer().serializeToString(svg);
+}
+
+function turnLoopNodeExplanation(id: string, status: TurnLoopNodeStatus, loop: TurnLoopState): string {
+  const state = status === "accepted" ? "accepted" : status;
+  switch (id) {
+    case "prompt": return `Prompt — ${state}. Amplifier has ${status === "pending" ? "not accepted the next prompt yet" : "accepted the user's instruction into this turn"}.`;
+    case "model": return `Model — ${state}. ${loop.modelPasses} model pass${loop.modelPasses === 1 ? " has" : "es have"} been observed; results can route back here after tools or delegates.`;
+    case "tools": return `Tools — ${state}. ${loop.toolResults} of ${loop.toolCalls} observed tool call${loop.toolCalls === 1 ? " has" : "s have"} returned${loop.toolFailures ? `, with ${loop.toolFailures} recovered failure${loop.toolFailures === 1 ? "" : "s"}` : ""}.`;
+    case "delegates": return `Delegates — ${state}. ${loop.completedDelegates} of ${loop.delegates} observed specialist agent${loop.delegates === 1 ? " has" : "s have"} completed.`;
+    case "response": return `Response — ${state}. Amplifier is assembling or has returned the user-facing answer.`;
+    case "complete": return `Turn accepted — ${state}. The orchestrator closed this turn after ${loop.modelPasses} model pass${loop.modelPasses === 1 ? "" : "es"}.`;
+    default: return `${id || "Turn stage"} — ${state}.`;
+  }
+}
+
+function pipelineNodeExplanation(id: string, node: PipelineState["nodes"][string] | undefined): string {
+  if (!node) return `${id || "Pipeline node"} — pending. The runtime declared this node but has not reported execution yet.`;
+  const details = [
+    node.handlerType ? `Handler: ${node.handlerType}.` : undefined,
+    node.attempt > 1 ? `Attempt ${node.attempt}.` : undefined,
+    node.durationMs !== undefined ? `Duration: ${formatDuration(node.durationMs)}.` : undefined,
+    node.failureReason || node.notes,
+  ].filter(Boolean).join(" ");
+  return `${id} — ${node.status}. ${details || "No additional runtime detail was reported."}`;
 }
 
 function sanitizeSvg(source: string): string {

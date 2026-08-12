@@ -175,7 +175,7 @@ fn project_directory(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-async fn run<'a, const N: usize>(project: &Path, args: [&'a str; N]) -> Result<String, String> {
+async fn run<const N: usize>(project: &Path, args: [&str; N]) -> Result<String, String> {
     run_owned(project, args.into_iter().map(str::to_owned).collect()).await
 }
 
