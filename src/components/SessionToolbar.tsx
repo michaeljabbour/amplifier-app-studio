@@ -10,7 +10,7 @@ export function SessionToolbar(props: {
   return (
     <div class="session-toolbar">
       <div class="session-identity">
-        <small>COORDINATOR CHAT</small>
+        <small>AMPLIFIER COORDINATOR</small>
         <strong>{props.state.title}</strong>
         <span>
           {sessionToolbarStatus(props.state)}
@@ -18,6 +18,14 @@ export function SessionToolbar(props: {
             {" · "}{agents().length} agents<Show when={running() > 0}> ({running()} live)</Show>{" · "}{props.state.outputs.length} outputs
           </Show>
         </span>
+        <div class={`runtime-proof ${runtimeProofTone(props.state)}`} role="status">
+          <i aria-hidden="true" />
+          <b>{runtimeProofLabel(props.state)}</b>
+          <em>{coordinatorExecutionLabel(props.state)}</em>
+          <Show when={props.state.runtimeSessionId}>
+            <code title={props.state.runtimeSessionId}>{props.state.runtimeSessionId?.slice(0, 8)}</code>
+          </Show>
+        </div>
       </div>
       <Show when={props.state.alerts.at(-1)} keyed>{(alert) => (
         <div class={`session-recovery ${alert.level}`} role="status">
@@ -27,6 +35,25 @@ export function SessionToolbar(props: {
       )}</Show>
     </div>
   );
+}
+
+export function runtimeProofLabel(state: SessionViewState): string {
+  if (state.phase === "ready") return "Amplifier runtime connected";
+  if (state.phase === "starting" || state.phase === "degraded") return "Amplifier runtime connecting";
+  if (state.phase === "closing") return "Amplifier runtime stopping";
+  if (state.phase === "error") return "Amplifier runtime error";
+  return "Amplifier runtime stopped";
+}
+
+export function coordinatorExecutionLabel(state: SessionViewState): string {
+  if (state.phase !== "ready") return state.phase;
+  return state.busy ? "Coordinator running" : "Coordinator idle";
+}
+
+function runtimeProofTone(state: SessionViewState): string {
+  if (state.phase === "ready") return state.busy ? "running" : "connected";
+  if (state.phase === "starting" || state.phase === "degraded" || state.phase === "closing") return "connecting";
+  return "stopped";
 }
 
 export function sessionToolbarStatus(state: SessionViewState): string {

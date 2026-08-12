@@ -63,4 +63,35 @@ describe("execution map", () => {
     expect(observed.find((stage) => stage.id === "verify")?.status).toBe("completed");
     expect(observed.find((stage) => stage.id === "respond")?.status).toBe("running");
   });
+
+  it("includes delegate tool evidence instead of reporting coordinator calls only", () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    const observed = observedExecutionStages({
+      ...state,
+      blocks: [
+        { id: "u1", kind: "user", text: "Audit it" },
+        { id: "t1", kind: "tool", toolName: "grep", toolCallId: "c1", status: "completed", summary: "grep issues", detail: "" },
+      ],
+      lanes: {
+        child: {
+          id: "child",
+          agent: "foundation:explorer",
+          status: "completed",
+          activity: "complete",
+          tail: "",
+          tailKind: "text",
+          thinking: "",
+          tools: [
+            { id: "a", name: "bash", label: "Inspect files", status: "completed" },
+            { id: "b", name: "bash", label: "npm test", status: "completed" },
+          ],
+          events: [],
+        },
+      },
+    });
+
+    expect(observed.find((stage) => stage.id === "agents_tools")?.detail)
+      .toBe("1 coordinator tool call · 1 delegate · 2 delegate tool calls");
+    expect(observed.find((stage) => stage.id === "verify")?.status).toBe("completed");
+  });
 });

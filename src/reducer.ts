@@ -1001,7 +1001,9 @@ function optionalNumber(value: unknown): number | undefined {
 
 function isTodoTool(event: UIEvent): boolean {
   const tool = stringValue(event.tool_name).trim().toLowerCase();
-  return tool === "todo" || /(?:[.:/])todo$/.test(tool);
+  return tool === "todo"
+    || tool === "update_plan"
+    || /(?:[.:/])(?:todo|update_plan)$/.test(tool);
 }
 
 function reducePlanEvent(state: SessionViewState, event: UIEvent): SessionViewState {
@@ -1050,11 +1052,12 @@ function reducePlanEvent(state: SessionViewState, event: UIEvent): SessionViewSt
 }
 
 function todoItems(value: unknown): PlanItemState[] | undefined {
-  const todos = objectValue(value).todos;
+  const input = objectValue(value);
+  const todos = Array.isArray(input.todos) ? input.todos : input.plan;
   if (!Array.isArray(todos)) return undefined;
   const items = todos.flatMap((value): PlanItemState[] => {
     if (!isRecord(value)) return [];
-    const content = stringValue(value.content).trim();
+    const content = stringValue(value.content, stringValue(value.step)).trim();
     if (!content) return [];
     const activeForm = stringValue(value.activeForm, stringValue(value.active_form)).trim();
     return [{
@@ -1176,9 +1179,10 @@ function settleLaneEvent(
 
 function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewState {
   if (event.kind !== "tool_post") return state;
+  const toolName = stringValue(event.tool_name);
+  if (!isOutputProducingTool(toolName)) return state;
   const paths = collectOutputPaths(event.result);
   if (!paths.length) return state;
-  const toolName = stringValue(event.tool_name);
   const source = toolName ? displayToolName(toolName) : undefined;
   const additions = paths.map((path) => ({
     id: path,
@@ -1193,6 +1197,14 @@ function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewSta
   }));
   const ids = new Set(additions.map((item) => item.id));
   return { ...state, outputs: [...state.outputs.filter((item) => !ids.has(item.id)), ...additions].slice(-80) };
+}
+
+function isOutputProducingTool(toolName: string): boolean {
+  const tool = toolName.trim().toLowerCase().replaceAll("-", "_");
+  const leaf = tool.split(/[.:/]/).at(-1) || tool;
+  if (/^(?:read|read_file|glob|grep|search|find|list|ls|stat|inspect|query|fetch|get)$/.test(leaf)) return false;
+  return /(?:^|_)(?:write|create|generate|render|export|save|download|edit|patch|screenshot)(?:_|$)/.test(leaf)
+    || ["apply_patch", "imagegen"].includes(leaf);
 }
 
 function collectOutputPaths(value: unknown, key = "", depth = 0): string[] {

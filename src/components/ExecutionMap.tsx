@@ -74,22 +74,29 @@ export function ExecutionPresence(props: { state?: SessionViewState; onOpen: () 
 }
 
 function GenericExecutionLoop(props: { stages: ObservedExecutionStage[] }) {
+  const observed = () => props.stages.filter((stage) => stage.status !== "not_observed");
+  const gaps = () => props.stages.filter((stage) => stage.status === "not_observed");
   return (
     <>
       <div class="execution-map-heading">
-        <div><span>GENERIC EXECUTION LOOP</span><strong>Observed session activity</strong></div>
+        <div><span>SESSION EVIDENCE MAP</span><strong>Recorded Amplifier activity</strong></div>
         <span class="execution-map-state observed">evidence only</span>
       </div>
-      <p class="execution-map-guidance">This is a transparent activity summary, not a claim about Amplifier's hidden workflow. Stages change only when matching runtime evidence appears.</p>
+      <p class="execution-map-guidance">Only runtime evidence appears in this path. It does not invent a hidden plan or place unrecorded stages into the flow.</p>
       <ol class="generic-execution-flow">
-        <For each={props.stages}>{(stage, index) => (
+        <For each={observed()}>{(stage, index) => (
           <li class={stage.status}>
             <span class="flow-node-state" aria-hidden="true" />
             <div><small>{String(index() + 1).padStart(2, "0")}</small><strong>{stage.label}</strong><p>{stage.detail}</p></div>
           </li>
         )}</For>
       </ol>
-      <div class="execution-loop-return" aria-label="A response can begin another prompt">respond → prompt</div>
+      <Show when={gaps().length}>
+        <div class="execution-evidence-gaps">
+          <strong>Not recorded</strong>
+          <For each={gaps()}>{(stage) => <span>{stage.label}: {stage.detail}</span>}</For>
+        </div>
+      </Show>
     </>
   );
 }
@@ -123,12 +130,17 @@ export function observedExecutionStages(state: SessionViewState): ObservedExecut
   const answerSeen = state.blocks.some((block) => block.kind === "answer" && block.final);
   const plans = Object.values(state.plans);
   const planItems = plans.flatMap((plan) => plan.items);
-  const tools = state.blocks.filter((block): block is ToolBlock => block.kind === "tool");
+  const directTools = state.blocks.filter((block): block is ToolBlock => block.kind === "tool");
   const lanes = Object.values(state.lanes);
+  const delegateTools = lanes.flatMap((lane) => lane.tools);
+  const tools = [
+    ...directTools.map((tool) => ({ name: tool.toolName, label: tool.summary, status: tool.status })),
+    ...delegateTools.map((tool) => ({ name: tool.name, label: tool.label, status: tool.status })),
+  ];
   const workSeen = tools.length > 0 || lanes.length > 0;
   const workFailed = tools.some((tool) => tool.status === "failed") || lanes.some((lane) => lane.status === "attention");
   const workRunning = tools.some((tool) => tool.status === "running") || lanes.some((lane) => lane.status === "running");
-  const verification = tools.filter((tool) => /\b(test|pytest|cargo check|npm run build|lint|verify|validate|typecheck)\b/i.test(`${tool.toolName} ${tool.summary}`));
+  const verification = tools.filter((tool) => /\b(test|pytest|cargo check|npm run build|lint|verify|validate|typecheck)\b/i.test(`${tool.name} ${tool.label}`));
   const verificationFailed = verification.some((tool) => tool.status === "failed");
   const verificationRunning = verification.some((tool) => tool.status === "running");
   const planFailed = plans.some((plan) => plan.updateStatus === "degraded");
@@ -149,9 +161,11 @@ export function observedExecutionStages(state: SessionViewState): ObservedExecut
     },
     {
       id: "agents_tools",
-      label: "Agents / tools",
+      label: "Amplifier work",
       status: !workSeen ? "not_observed" : workFailed ? "failed" : workRunning ? "running" : "completed",
-      detail: !workSeen ? "No agent or tool activity observed" : `${lanes.length} agent workspace${lanes.length === 1 ? "" : "s"} · ${tools.length} tool call${tools.length === 1 ? "" : "s"}`,
+      detail: !workSeen
+        ? "No agent or tool activity observed"
+        : `${directTools.length} coordinator tool call${directTools.length === 1 ? "" : "s"} · ${lanes.length} delegate${lanes.length === 1 ? "" : "s"} · ${delegateTools.length} delegate tool call${delegateTools.length === 1 ? "" : "s"}`,
     },
     {
       id: "verify",
