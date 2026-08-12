@@ -42,6 +42,60 @@ function childRuntime(sequence: number, event: Record<string, unknown>): Protoco
 }
 
 describe("session reducer", () => {
+  it("folds durable pipeline events before child-lane routing and ignores replay duplicates", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "pipeline_started",
+      graph_name: "Resolve",
+      goal: "Verify the release",
+      node_count: 2,
+      edge_count: 1,
+      dot_source: "digraph { inspect -> verify }",
+    }));
+    const startRecord = childRuntime(3, {
+      kind: "pipeline_progress",
+      phase: "node_started",
+      node_id: "inspect",
+      handler_type: "codergen",
+      attempt: 1,
+      execution_index: 1,
+      node_session_id: "child-1",
+    });
+    state = reduceRecord(state, startRecord);
+    state = reduceRecord(state, runtime(4, {
+      kind: "pipeline_progress",
+      phase: "node_completed",
+      node_id: "inspect",
+      handler_type: "codergen",
+      status: "success",
+      attempt: 1,
+      execution_index: 1,
+      duration_ms: 125,
+    }));
+    state = reduceRecord(state, runtime(5, {
+      kind: "pipeline_progress",
+      phase: "edge_selected",
+      from_node: "inspect",
+      to_node: "verify",
+      edge_label: "tests required",
+    }));
+
+    expect(state.pipeline).toMatchObject({
+      graphName: "Resolve",
+      status: "running",
+      nodes: { inspect: { status: "completed", durationMs: 125, handlerType: "codergen" } },
+    });
+    expect(Object.values(state.pipeline?.edges || {})).toEqual([
+      expect.objectContaining({ from: "inspect", to: "verify", selected: true }),
+    ]);
+    expect(state.lanes["child-1"]).toBeUndefined();
+
+    const beforeReplay = state;
+    state = reduceRecord(state, { ...startRecord, replay: true });
+    expect(state).toBe(beforeReplay);
+    expect(state.pipeline?.nodes.inspect.status).toBe("completed");
+  });
+
   it("defaults to Amplifier auto mode unless the user explicitly overrides it", () => {
     expect(createSessionState("gui-default", { projectDir: "/tmp/project" }).mode).toBe("auto");
     expect(createSessionState("gui-chat", { projectDir: "/tmp/project", mode: "chat" }).mode).toBe("chat");
@@ -579,6 +633,132 @@ describe("session reducer", () => {
       startedAtMs: 10_000,
     });
     expect(state.activity).toContain("2 operations");
+  });
+
+  it("captures proposed root plan steps before a rejected todo action settles", () => {
+    let state = reduceRecord(started(), runtime(2, {
+      kind: "tool_pre",
+      tool_name: "todo",
+      tool_call_id: "root-plan-1",
+      tool_input: {
+        operation: "update",
+        todos: [
+          { content: "Inspect the runtime", activeForm: "Inspecting the runtime", status: "in_progress" },
+          { content: "Verify the UI", status: "pending" },
+        ],
+      },
+    }));
+
+    expect(state.plans.coordinator).toMatchObject({
+      ownerId: "runtime-1",
+      ownerKind: "coordinator",
+      toolCallId: "root-plan-1",
+      updateStatus: "pending",
+      items: [
+        { content: "Inspect the runtime", activeForm: "Inspecting the runtime", status: "in_progress" },
+        { content: "Verify the UI", status: "pending" },
+      ],
+    });
+    expect(state.blocks.some((block) => block.kind === "tool" && block.toolCallId === "root-plan-1")).toBe(false);
+
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_post",
+      tool_name: "todo",
+      tool_call_id: "root-plan-1",
+      result: { status: "rejected" },
+    }));
+    expect(state.plans.coordinator).toMatchObject({
+      updateStatus: "degraded",
+      message: "Plan update was denied. The proposed steps are retained for visibility.",
+      items: [{ content: "Inspect the runtime" }, { content: "Verify the UI" }],
+    });
+  });
+
+  it("replaces plans per owner and ignores late outcomes from superseded updates", () => {
+    let state = reduceRecord(started(), runtime(2, {
+      kind: "tool_pre",
+      tool_name: "todo",
+      tool_call_id: "root-plan-old",
+      tool_input: { todos: [{ content: "Old root step", status: "pending" }] },
+    }));
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_pre",
+      tool_name: "todo",
+      tool_call_id: "root-plan-current",
+      tool_input: { todos: [{ content: "Current root step", status: "completed" }] },
+    }));
+    state = reduceRecord(state, childRuntime(4, {
+      kind: "tool_pre",
+      tool_name: "todo",
+      tool_call_id: "agent-plan",
+      tool_input: { todos: [{ content: "Inspect child path", status: "in-progress" }] },
+    }));
+
+    expect(Object.keys(state.plans)).toEqual(["coordinator", "agent:child-1"]);
+    expect(state.plans.coordinator.items).toEqual([{ content: "Current root step", activeForm: undefined, status: "completed" }]);
+    expect(state.plans["agent:child-1"]).toMatchObject({
+      ownerId: "child-1",
+      ownerKind: "agent",
+      items: [{ content: "Inspect child path", status: "in_progress" }],
+    });
+
+    state = reduceRecord(state, runtime(5, {
+      kind: "tool_post",
+      tool_name: "todo",
+      tool_call_id: "root-plan-old",
+      result: { status: "failed", error: "late failure" },
+    }));
+    expect(state.plans.coordinator.updateStatus).toBe("pending");
+    state = reduceRecord(state, runtime(6, {
+      kind: "tool_post",
+      tool_name: "todo",
+      tool_call_id: "root-plan-current",
+      result: { status: "ok" },
+    }));
+    expect(state.plans.coordinator.updateStatus).toBe("applied");
+  });
+
+  it("reconstructs coordinator and agent plans from durable replay", () => {
+    let state = createSessionState("gui-resume", { projectDir: "/tmp/project", resumeId: "stored-session" });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, runtime(20, {
+      kind: "tool_pre",
+      tool_name: "todo",
+      tool_call_id: "root-replay-plan",
+      tool_input: { todos: [{ content: "Restore root plan", status: "completed" }] },
+    }, true));
+    state = reduceRecord(state, runtime(21, {
+      kind: "tool_post",
+      tool_name: "todo",
+      tool_call_id: "root-replay-plan",
+      result: { status: "ok" },
+    }, true));
+    state = reduceRecord(state, {
+      ...childRuntime(22, {
+        kind: "tool_pre",
+        tool_name: "todo",
+        tool_call_id: "child-replay-plan",
+        tool_input: { todos: [{ content: "Restore agent plan", status: "pending" }] },
+      }),
+      replay: true,
+    });
+    state = reduceRecord(state, {
+      ...childRuntime(23, {
+        kind: "tool_post",
+        tool_name: "todo",
+        tool_call_id: "child-replay-plan",
+        result: { status: "ok" },
+      }),
+      replay: true,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 23 });
+
+    expect(state.plans.coordinator.items[0]?.content).toBe("Restore root plan");
+    expect(state.plans.coordinator.updateStatus).toBe("applied");
+    expect(state.plans["agent:child-1"].items[0]?.content).toBe("Restore agent plan");
+    expect(state.plans["agent:child-1"].ownerKind).toBe("agent");
+    expect(state.plans["agent:child-1"].updateStatus).toBe("applied");
   });
 
   it("estimates all-agent RunPod spend without treating LiteLLM zero as free", () => {

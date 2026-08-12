@@ -66,6 +66,7 @@ import {
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
 import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
+import { toolContractFailure } from "./providerSafety";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 
@@ -250,6 +251,14 @@ export default function App() {
   const submit = async (text: string, images: ComposerImage[] = []) => {
     const session = active();
     if (!session) return false;
+    const effectiveProvider = session.requestedProvider
+      || catalog().providers.find((provider) => provider.model === session.model)?.name
+      || "";
+    const contractFailure = toolContractFailure(session.model, effectiveProvider);
+    if (contractFailure) {
+      update(session.guiId, (state) => addLocalNotice(state, contractFailure, "error"));
+      return false;
+    }
     if (updateInProgress()) {
       update(session.guiId, (state) => addLocalNotice(state, "Amplifier Studio is updating; this runtime is being prepared for a clean restart", "warning"));
       return false;
@@ -377,6 +386,7 @@ export default function App() {
   };
 
   const openSibling = (bundle?: string, provider?: ProviderOption) => {
+    if (provider?.toolCompatible === false) return;
     const session = active();
     const remembered = session?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
     setDialog({
@@ -576,6 +586,8 @@ export default function App() {
         inspectorOpen={rightOpen()}
         inspectorAvailable={Boolean(active())}
         onToggleInspector={() => setRightOpen((value) => !value)}
+        onOpenExecution={() => openInspector("map")}
+        onOpenPlan={() => openInspector("plan")}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
         onUpdate={() => void applyAppUpdate()}

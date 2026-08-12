@@ -1,5 +1,6 @@
 import { createMemo, createSignal, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
+import { toolContractFailure } from "../providerSafety";
 
 interface Props {
   initial: NewSessionInput;
@@ -17,6 +18,9 @@ export function NewSessionDialog(props: Props) {
   const [error, setError] = createSignal("");
   const [starting, setStarting] = createSignal(false);
   const overrideMismatch = createMemo(() => Boolean(model().trim()) !== Boolean(provider().trim()));
+  const selectedProvider = createMemo(() => props.catalog.providers.find((item) => item.name === provider().trim()));
+  const unsafeProvider = createMemo(() => selectedProvider()?.toolCompatible === false ? selectedProvider() : undefined);
+  const unsafeOverride = createMemo(() => toolContractFailure(model(), provider()));
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -26,6 +30,10 @@ export function NewSessionDialog(props: Props) {
     }
     if (overrideMismatch()) {
       setError("Model and provider overrides must be supplied together.");
+      return;
+    }
+    if (unsafeProvider() || unsafeOverride()) {
+      setError(unsafeProvider()?.warning || unsafeOverride() || "This provider does not pass Amplifier's tool-call contract.");
       return;
     }
     setStarting(true);
@@ -115,7 +123,7 @@ export function NewSessionDialog(props: Props) {
               placeholder="anthropic"
             />
             <datalist id="amplifier-providers">
-              {props.catalog.providers.map((option) => <option value={option.name}>{option.model}</option>)}
+              {props.catalog.providers.map((option) => <option value={option.name} disabled={!option.toolCompatible}>{option.model}{option.toolCompatible ? "" : " · text experiment only"}</option>)}
             </datalist>
           </label>
           <label class="field">
@@ -123,6 +131,8 @@ export function NewSessionDialog(props: Props) {
             <input value={model()} onInput={(event) => setModel(event.currentTarget.value)} placeholder="claude-fable-5" />
           </label>
           </div>
+          <Show when={unsafeProvider()} keyed>{(option) => <div class="form-error provider-contract-warning"><strong>{option.name} cannot run this machine safely.</strong> {option.warning}</div>}</Show>
+          <Show when={!unsafeProvider() && unsafeOverride()} keyed>{(warning) => <div class="form-error provider-contract-warning"><strong>This model cannot run Amplifier tools safely.</strong> {warning}</div>}</Show>
         </details>
 
         <Show when={error()}><div class="form-error">{error()}</div></Show>
@@ -130,7 +140,7 @@ export function NewSessionDialog(props: Props) {
         <div class="dialog-footer">
           <div class="process-note"><span>◆</span> One isolated Amplifier runtime will be created for this tab.</div>
           <button type="button" class="secondary-button" onClick={props.onCancel}>Cancel</button>
-          <button type="submit" class="primary-button" disabled={starting() || overrideMismatch()}>
+          <button type="submit" class="primary-button" disabled={starting() || overrideMismatch() || Boolean(unsafeProvider()) || Boolean(unsafeOverride())}>
             {starting() ? "Starting…" : props.initial.resumeId ? "Resume" : "Start session"}
           </button>
         </div>

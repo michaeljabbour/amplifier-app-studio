@@ -7,6 +7,9 @@ import {
   type LaneState,
   type LaneToolState,
   type ComposerImage,
+  type PlanItemState,
+  type PipelineNodeState,
+  type PipelineState,
   numberValue,
   type ProtocolRecord,
   safeJson,
@@ -76,6 +79,7 @@ export function createSessionState(
     blocks: [],
     lanes: {},
     pendingDelegateBriefs: {},
+    plans: {},
     alerts: [],
     outputs: [],
     queuedSteers: 0,
@@ -474,6 +478,8 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       blocks: [],
       lanes: {},
       pendingDelegateBriefs: {},
+      plans: {},
+      pipeline: undefined,
       outputs: [],
       liveTail: undefined,
       openThinkingId: undefined,
@@ -537,6 +543,13 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
   if (event.kind === "provider_response_usage") {
     next = recordSessionUsage(next, event);
   }
+  const planKeyBefore = planKeyForCall(next, stringValue(event.tool_call_id));
+  const planLifecycle = isTodoTool(event) || Boolean(planKeyBefore);
+  if (planLifecycle) next = reducePlanEvent(next, event);
+  const planTracked = event.kind === "tool_pre"
+    ? Boolean(planKeyForCall(next, stringValue(event.tool_call_id)))
+    : Boolean(planKeyBefore);
+  if (isPipelineEvent(event)) return reducePipelineEvent(next, event);
   if (event.kind === "agent_spawned") {
     const laneId = stringValue(event.sub_session_id, stringValue(event.session_id));
     if (!laneId) return next;
@@ -625,7 +638,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     };
   }
 
-  if (isChildEvent(next, event)) return reduceLaneEvent(next, event);
+  if (isChildEvent(next, event)) return reduceLaneEvent(next, event, planLifecycle, planTracked);
 
   switch (event.kind) {
     case "prompt_submit": {
@@ -694,6 +707,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       } as NewTranscriptBlock);
     }
     case "tool_pre": {
+      if (planLifecycle) return planTracked ? { ...next, activity: "Plan steps updated" } : next;
       if (isDelegateTool(event)) next = rememberDelegateBrief(next, event);
       next = appendBlock(next, {
         kind: "tool",
@@ -706,6 +720,12 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       return { ...next, activity: liveToolLabel(event) };
     }
     case "tool_post": {
+      if (planLifecycle) {
+        return planTracked ? {
+          ...next,
+          activity: toolResultFailed(event) ? "Plan update needs attention" : "Plan steps updated",
+        } : next;
+      }
       const status = toolResultFailed(event) ? "failed" : "completed";
       next = forgetPendingDelegateBrief(next, stringValue(event.tool_call_id));
       return {
@@ -714,6 +734,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       };
     }
     case "tool_error":
+      if (planLifecycle) return planTracked ? { ...next, activity: "Plan update needs attention" } : next;
       return { ...settleTool(forgetPendingDelegateBrief(next, stringValue(event.tool_call_id)), event, "failed"), activity: `Recovering from ${displayToolName(stringValue(event.tool_name, "tool"))} error` };
     case "prompt_complete":
       next = finalizeAnswer(next, stringValue(event.response).trim());
@@ -820,6 +841,252 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     default:
       return next;
   }
+}
+
+function isPipelineEvent(event: UIEvent): boolean {
+  return ["pipeline_started", "pipeline_progress", "pipeline_checkpoint", "pipeline_complete"].includes(event.kind);
+}
+
+function reducePipelineEvent(state: SessionViewState, event: UIEvent): SessionViewState {
+  const key = pipelineEventKey(event);
+  if (state.pipeline?.appliedEvents[key]) return state;
+
+  if (event.kind === "pipeline_started") {
+    return {
+      ...state,
+      pipeline: {
+        graphName: stringValue(event.graph_name, "Attractor pipeline"),
+        goal: stringValue(event.goal),
+        dotSource: stringValue(event.dot_source),
+        declaredNodeCount: numberValue(event.node_count),
+        declaredEdgeCount: numberValue(event.edge_count),
+        status: "running",
+        nodes: {},
+        edges: {},
+        totalNodesExecuted: 0,
+        startedAtMs: eventTimestampMs(event),
+        appliedEvents: { [key]: true },
+      },
+    };
+  }
+
+  const pipeline = state.pipeline || emptyPipeline();
+  const appliedEvents = { ...pipeline.appliedEvents, [key]: true as const };
+  if (event.kind === "pipeline_progress") {
+    const phase = stringValue(event.phase);
+    if (phase === "edge_selected") {
+      const from = stringValue(event.from_node);
+      const to = stringValue(event.to_node);
+      if (!from || !to) return { ...state, pipeline: { ...pipeline, appliedEvents } };
+      const edgeId = [from, to, stringValue(event.branch_id), stringValue(event.edge_label)].join("::");
+      return {
+        ...state,
+        pipeline: {
+          ...pipeline,
+          edges: {
+            ...pipeline.edges,
+            [edgeId]: {
+              id: edgeId,
+              from,
+              to,
+              label: stringValue(event.edge_label) || undefined,
+              branchId: stringValue(event.branch_id) || undefined,
+              selected: true,
+            },
+          },
+          appliedEvents,
+        },
+      };
+    }
+    const nodeId = stringValue(event.node_id);
+    if (!nodeId) return { ...state, pipeline: { ...pipeline, appliedEvents } };
+    const previous = pipeline.nodes[nodeId];
+    const failed = ["failed", "error", "cancelled", "canceled"].includes(stringValue(event.status).toLowerCase());
+    const status: PipelineNodeState["status"] = phase === "node_started" ? "running" : failed ? "failed" : "completed";
+    return {
+      ...state,
+      pipeline: {
+        ...pipeline,
+        nodes: {
+          ...pipeline.nodes,
+          [nodeId]: {
+            id: nodeId,
+            handlerType: stringValue(event.handler_type) || previous?.handlerType,
+            status,
+            attempt: numberValue(event.attempt) || previous?.attempt || 0,
+            executionIndex: numberValue(event.execution_index) || previous?.executionIndex || 0,
+            durationMs: optionalNumber(event.duration_ms) ?? previous?.durationMs,
+            notes: stringValue(event.notes) || previous?.notes,
+            failureReason: stringValue(event.failure_reason) || previous?.failureReason,
+            sessionId: stringValue(event.node_session_id) || previous?.sessionId,
+            branchId: stringValue(event.branch_id) || previous?.branchId,
+            viaParallel: typeof event.via_parallel === "boolean" ? event.via_parallel : previous?.viaParallel,
+            checkpointPath: previous?.checkpointPath,
+            updatedAtMs: eventTimestampMs(event),
+          },
+        },
+        appliedEvents,
+      },
+    };
+  }
+  if (event.kind === "pipeline_checkpoint") {
+    const nodeId = stringValue(event.node_id);
+    const previous = pipeline.nodes[nodeId];
+    if (!nodeId) return { ...state, pipeline: { ...pipeline, appliedEvents } };
+    return {
+      ...state,
+      pipeline: {
+        ...pipeline,
+        nodes: {
+          ...pipeline.nodes,
+          [nodeId]: {
+            ...previous,
+            id: nodeId,
+            status: previous?.status === "completed" || previous?.status === "failed" ? previous.status : "checkpointed",
+            attempt: previous?.attempt || 0,
+            executionIndex: previous?.executionIndex || 0,
+            checkpointPath: stringValue(event.checkpoint_path) || previous?.checkpointPath,
+            branchId: stringValue(event.branch_id) || previous?.branchId,
+            updatedAtMs: eventTimestampMs(event),
+          },
+        },
+        appliedEvents,
+      },
+    };
+  }
+  return {
+    ...state,
+    pipeline: {
+      ...pipeline,
+      status: stringValue(event.status, "completed"),
+      totalNodesExecuted: numberValue(event.total_nodes_executed),
+      durationMs: optionalNumber(event.duration_ms) ?? pipeline.durationMs,
+      branchId: stringValue(event.branch_id) || pipeline.branchId,
+      completedAtMs: eventTimestampMs(event),
+      appliedEvents,
+    },
+  };
+}
+
+function emptyPipeline(): PipelineState {
+  return {
+    graphName: "Attractor pipeline",
+    goal: "",
+    dotSource: "",
+    declaredNodeCount: 0,
+    declaredEdgeCount: 0,
+    status: "running",
+    nodes: {},
+    edges: {},
+    totalNodesExecuted: 0,
+    appliedEvents: {},
+  };
+}
+
+function pipelineEventKey(event: UIEvent): string {
+  return stringValue(event.event_id) || [
+    event.kind,
+    stringValue(event.phase),
+    stringValue(event.node_id),
+    stringValue(event.from_node),
+    stringValue(event.to_node),
+    stringValue(event.execution_index),
+    stringValue(event.branch_id),
+  ].join(":");
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isTodoTool(event: UIEvent): boolean {
+  const tool = stringValue(event.tool_name).trim().toLowerCase();
+  return tool === "todo" || /(?:[.:/])todo$/.test(tool);
+}
+
+function reducePlanEvent(state: SessionViewState, event: UIEvent): SessionViewState {
+  if (event.kind === "tool_pre") {
+    const items = todoItems(event.tool_input);
+    if (!items?.length) return state;
+    const sessionId = stringValue(event.session_id, state.runtimeSessionId || "coordinator");
+    const isAgent = Boolean(
+      stringValue(event.parent_id)
+      || (state.runtimeSessionId && sessionId && sessionId !== state.runtimeSessionId),
+    );
+    const key = isAgent ? `agent:${sessionId}` : "coordinator";
+    return {
+      ...state,
+      plans: {
+        ...state.plans,
+        [key]: {
+          ownerId: isAgent ? sessionId : state.runtimeSessionId || sessionId,
+          ownerKind: isAgent ? "agent" : "coordinator",
+          items,
+          toolCallId: stringValue(event.tool_call_id, stringValue(event.event_id)),
+          updateStatus: "pending",
+          updatedAtMs: eventTimestampMs(event),
+        },
+      },
+    };
+  }
+  if (event.kind !== "tool_post" && event.kind !== "tool_error") return state;
+  const key = planKeyForCall(state, stringValue(event.tool_call_id));
+  if (!key) return state;
+  const current = state.plans[key];
+  if (!current) return state;
+  const failed = event.kind === "tool_error" || toolResultFailed(event);
+  return {
+    ...state,
+    plans: {
+      ...state.plans,
+      [key]: {
+        ...current,
+        updateStatus: failed ? "degraded" : "applied",
+        message: failed ? planFailureMessage(event) : undefined,
+        updatedAtMs: eventTimestampMs(event) || current.updatedAtMs,
+      },
+    },
+  };
+}
+
+function todoItems(value: unknown): PlanItemState[] | undefined {
+  const todos = objectValue(value).todos;
+  if (!Array.isArray(todos)) return undefined;
+  const items = todos.flatMap((value): PlanItemState[] => {
+    if (!isRecord(value)) return [];
+    const content = stringValue(value.content).trim();
+    if (!content) return [];
+    const activeForm = stringValue(value.activeForm, stringValue(value.active_form)).trim();
+    return [{
+      content,
+      activeForm: activeForm || undefined,
+      status: todoStatus(value.status),
+    }];
+  });
+  return items.length ? items : undefined;
+}
+
+function todoStatus(value: unknown): PlanItemState["status"] {
+  const status = stringValue(value).trim().toLowerCase().replaceAll("-", "_");
+  if (["completed", "complete", "done"].includes(status)) return "completed";
+  if (["in_progress", "active", "running"].includes(status)) return "in_progress";
+  return "pending";
+}
+
+function planKeyForCall(state: SessionViewState, toolCallId: string): string | undefined {
+  if (!toolCallId) return undefined;
+  return Object.entries(state.plans).find(([, plan]) => plan.toolCallId === toolCallId)?.[0];
+}
+
+function planFailureMessage(event: UIEvent): string {
+  const result = objectValue(event.result);
+  const status = stringValue(result.status).toLowerCase();
+  const direct = stringValue(event.error_message)
+    || stringValue(result.message)
+    || stringValue(result.error);
+  if (direct) return `Plan update failed: ${direct}`;
+  if (status === "denied" || status === "rejected") return "Plan update was denied. The proposed steps are retained for visibility.";
+  return "Plan update failed. The proposed steps are retained for visibility.";
 }
 
 function isInternalRuntimeNotice(event: UIEvent): boolean {
@@ -947,7 +1214,12 @@ function outputKind(path: string): "file" | "image" | "diagram" | "data" {
   return "file";
 }
 
-function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewState {
+function reduceLaneEvent(
+  state: SessionViewState,
+  event: UIEvent,
+  planLifecycle = false,
+  planTracked = false,
+): SessionViewState {
   const laneId = stringValue(event.session_id);
   const previous = state.lanes[laneId] || {
     id: laneId,
@@ -1020,6 +1292,11 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
       activity = "reviewing response";
       break;
     case "tool_pre": {
+      if (planLifecycle) {
+        if (planTracked) activity = "Updated plan steps";
+        status = "running";
+        break;
+      }
       const id = stringValue(event.tool_call_id);
       const item = {
         id,
@@ -1040,6 +1317,10 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
       break;
     }
     case "tool_post": {
+      if (planLifecycle) {
+        if (planTracked) activity = toolResultFailed(event) ? "Plan update needs attention" : "Plan steps updated";
+        break;
+      }
       const failed = toolResultFailed(event);
       tools = settleLaneTool(tools, event, failed ? "failed" : "completed");
       events = settleLaneEvent(events, stringValue(event.tool_call_id), failed ? "failed" : "completed", safeJson(event.result ?? {}));
@@ -1048,6 +1329,10 @@ function reduceLaneEvent(state: SessionViewState, event: UIEvent): SessionViewSt
       break;
     }
     case "tool_error":
+      if (planLifecycle) {
+        if (planTracked) activity = "Plan update needs attention";
+        break;
+      }
       tools = settleLaneTool(tools, event, "failed");
       events = settleLaneEvent(events, stringValue(event.tool_call_id), "failed", `${stringValue(event.error_type)} ${stringValue(event.error_message)}`.trim());
       activity = `Recovering from ${displayToolName(stringValue(event.tool_name, "tool"))} error`;
@@ -1486,7 +1771,7 @@ function runningAgentCount(state: SessionViewState): number {
 function toolResultFailed(event: UIEvent): boolean {
   const result = objectValue(event.result);
   const status = stringValue(result.status).toLowerCase();
-  return result.success === false || ["denied", "error", "failed"].includes(status) || Boolean(result.error);
+  return result.success === false || ["denied", "rejected", "error", "failed"].includes(status) || Boolean(result.error);
 }
 
 function liveToolLabel(event: UIEvent): string {

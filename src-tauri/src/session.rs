@@ -87,6 +87,10 @@ impl SessionManager {
         if options.model.is_some() != options.provider.is_some() {
             return Err("Model and provider overrides must be supplied together".to_owned());
         }
+        reject_known_incompatible_tool_route(
+            options.provider.as_deref(),
+            options.model.as_deref(),
+        )?;
 
         let project_dir = canonical_project_dir(&options.project_dir)?;
         let project_dir_string = project_dir.to_string_lossy().into_owned();
@@ -445,6 +449,26 @@ impl SessionManager {
     }
 }
 
+fn reject_known_incompatible_tool_route(
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<(), String> {
+    let provider = provider.unwrap_or_default().to_ascii_lowercase();
+    let model = model.unwrap_or_default().to_ascii_lowercase();
+    let direct_experiment = matches!(
+        provider.as_str(),
+        "runpod-kimi" | "runpod-glm" | "runpod-next"
+    );
+    let incompatible_model = model.contains("kimi-k3") || model.contains("glm-5.2");
+    if direct_experiment || incompatible_model {
+        return Err(
+            "This RunPod route does not pass Amplifier's exact streaming tool-call contract. Use the checked runpod routing matrix or runpod-qwen instead."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn routed_sink(slot: AttachedSink) -> EventSink {
     Arc::new(move |event| {
         let sink = slot
@@ -607,6 +631,30 @@ mod tests {
         assert!(exit_message(Some(2)).contains("not found"));
         assert!(exit_message(Some(3)).contains("more than one"));
         assert!(exit_message(Some(4)).contains("damaged"));
+    }
+
+    #[test]
+    fn rejects_known_runpod_routes_that_corrupt_tool_calls() {
+        assert!(reject_known_incompatible_tool_route(
+            Some("runpod-kimi"),
+            Some("moonshotai/Kimi-K3")
+        )
+        .is_err());
+        assert!(reject_known_incompatible_tool_route(
+            Some("runpod-next"),
+            Some("zai-org/GLM-5.2-FP8")
+        )
+        .is_err());
+        assert!(reject_known_incompatible_tool_route(
+            Some("runpod"),
+            Some("deepseek-ai/DeepSeek-V4-Flash-0731")
+        )
+        .is_ok());
+        assert!(reject_known_incompatible_tool_route(
+            Some("runpod-qwen"),
+            Some("Qwen/Qwen3-Coder-30B-A3B-Instruct")
+        )
+        .is_ok());
     }
 
     #[tokio::test]
