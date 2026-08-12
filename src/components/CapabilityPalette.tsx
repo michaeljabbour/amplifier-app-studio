@@ -39,7 +39,9 @@ export function CapabilityPalette(props: Props) {
                 <strong>{capability.outcome}</strong>
                 <p>{capability.description}</p>
                 <footer>
-                  <small>{capability.requirements}</small>
+                  <ul class="capability-requirements">
+                    <For each={capability.requirements}>{(requirement) => <li>{requirement}</li>}</For>
+                  </ul>
                   <button
                     class="secondary-button"
                     classList={{ included: capability.activation === "included" }}

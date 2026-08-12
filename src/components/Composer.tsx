@@ -2,7 +2,9 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import { machinePresence } from "../machinePresence";
 import type { ComposerAttachment, SessionViewState } from "../protocol";
+import type { AudioRecording } from "../transcription";
 import { AttachmentStrip } from "./AttachmentStrip";
+import { DictationButton } from "./DictationButton";
 
 interface Props {
   state: SessionViewState;
@@ -13,6 +15,9 @@ interface Props {
   onAutopilot: () => void;
   autopilotActive: boolean;
   autopilotAvailable: boolean;
+  transcriptionAvailable: boolean;
+  transcriptionMessage?: string;
+  onTranscribe: (recording: AudioRecording) => Promise<string>;
 }
 
 export function Composer(props: Props) {
@@ -20,6 +25,7 @@ export function Composer(props: Props) {
   const [startersOpen, setStartersOpen] = createSignal(false);
   const [draggingAttachments, setDraggingAttachments] = createSignal(false);
   const [attachmentError, setAttachmentError] = createSignal<string>();
+  const [dictating, setDictating] = createSignal(false);
   let textarea: HTMLTextAreaElement | undefined;
   const presence = createMemo(() => machinePresence(props.state));
 
@@ -127,6 +133,7 @@ export function Composer(props: Props) {
         ref={textarea}
         value={props.state.composerDraft}
         disabled={sending() || props.state.phase !== "ready"}
+        readOnly={dictating()}
         placeholder={props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring this conversation…"
           : props.state.busy
@@ -175,6 +182,15 @@ export function Composer(props: Props) {
         <div class="composer-left-actions">
           <button type="button" class="starter-trigger" aria-expanded={startersOpen()} onClick={() => setStartersOpen((open) => !open)}>Ways to start</button>
           <button type="button" class="attachment-trigger" disabled={sending()} onClick={() => void pickFiles()}>Add files</button>
+          <DictationButton
+            draft={props.state.composerDraft}
+            disabled={sending() || props.state.phase !== "ready"}
+            available={props.transcriptionAvailable}
+            unavailableReason={props.transcriptionMessage}
+            onDraft={props.onDraft}
+            onTranscribe={props.onTranscribe}
+            onActiveChange={setDictating}
+          />
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>
         <button disabled={(!props.state.composerDraft.trim() && !props.state.composerAttachments.length) || sending() || props.state.phase !== "ready"} onClick={() => void send()}>

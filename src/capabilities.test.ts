@@ -18,8 +18,9 @@ describe("Studio capabilities", () => {
     );
     expect(STUDIO_CAPABILITIES.find((item) => item.id === "terminal")?.activation).toBe("included");
     const attractor = STUDIO_CAPABILITIES.find((item) => item.id === "attractor")!;
-    expect(attractor.activation).toBe("post-release");
-    expect(capabilityReadiness(attractor, { bundles: [], providers: [] })).toBe("post-release");
+    expect(attractor.activation).toBe("parallel-session");
+    expect(capabilityReadiness(attractor, { bundles: [], providers: [] })).toBe("on-demand");
+    expect(attractor.requirements.join(" ")).toContain("typed pipeline event contract");
   });
 
   it("does not claim an on-demand bundle is installed", () => {

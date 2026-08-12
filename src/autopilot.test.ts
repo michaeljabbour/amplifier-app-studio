@@ -4,7 +4,7 @@ import { activeSessionAutopilotOp, canEngageAutopilot, DEFAULT_AUTOPILOT_MAX_TUR
 const user = (text: string) => ({ id: "b1", kind: "user" as const, text });
 
 describe("active-session Autopilot", () => {
-  it("arms Amplifier's native goal loop from the latest user objective", () => {
+  it("arms the active session's goal controller from the latest user objective", () => {
     expect(activeSessionAutopilotOp({ autopilot: false, blocks: [user("Ship the cross-platform app")] })).toEqual({
       op: "goal.set",
       condition: "Ship the cross-platform app",
@@ -12,7 +12,7 @@ describe("active-session Autopilot", () => {
     });
   });
 
-  it("turns the native loop off instead of starting another session", () => {
+  it("turns the controller off instead of starting another session", () => {
     expect(activeSessionAutopilotOp({ autopilot: true, blocks: [] })).toEqual({ op: "goal.clear" });
     expect(activeSessionAutopilotOp({ autopilot: false, goal: {
       state: "continuing", turn: 2, continuations: 1, updatedAtMs: 1,

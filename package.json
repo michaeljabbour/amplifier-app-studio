@@ -18,6 +18,7 @@
     "ios:init": "tauri ios init",
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build",
+    "macos:build:peer-qa": "tauri build --debug --bundles app --config src-tauri/tauri.peer-qa.conf.json",
     "macos:build:signed": "./scripts/build-macos-signed.sh",
     "tauri": "tauri"
   },

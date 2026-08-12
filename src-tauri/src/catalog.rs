@@ -173,7 +173,7 @@ fn run_cli(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
 fn parse_json<T: serde::de::DeserializeOwned>(output: &str, kind: &str) -> Result<T, String> {
     serde_json::from_str(output.trim()).map_err(|error| {
         format!(
-            "Amplifier returned an invalid {kind} catalog. Update amplifier-tui and retry: {error}"
+            "Amplifier returned an invalid {kind} catalog. Update the Amplifier runtime and retry: {error}"
         )
     })
 }
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn rejects_human_formatted_catalogs_with_upgrade_guidance() {
         let error = parse_json::<Vec<BundleOption>>("│ ● │ tui │", "bundle").unwrap_err();
-        assert!(error.contains("Update amplifier-tui"));
+        assert!(error.contains("Update the Amplifier runtime"));
     }
 
     #[test]

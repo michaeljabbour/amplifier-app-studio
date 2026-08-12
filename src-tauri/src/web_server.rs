@@ -228,6 +228,12 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
         .route("/runtime", get(runtime_status))
+        .route(
+            "/transcription",
+            get(transcription_status)
+                .post(transcribe_audio)
+                .layer(axum::extract::DefaultBodyLimit::max(35 * 1024 * 1024)),
+        )
         .route("/session/{gui_id}", get(session_upgrade))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -420,6 +426,23 @@ async fn runtime_status() -> Result<Json<Value>, ServerError> {
     serde_json::to_value(runtime_setup::status())
         .map(Json)
         .map_err(|error| ServerError::internal(format!("Could not encode runtime status: {error}")))
+}
+
+async fn transcription_status() -> Result<Json<Value>, ServerError> {
+    serde_json::to_value(crate::transcription::status())
+        .map(Json)
+        .map_err(|error| {
+            ServerError::internal(format!("Could not encode transcription status: {error}"))
+        })
+}
+
+async fn transcribe_audio(
+    Json(request): Json<crate::transcription::TranscriptionRequest>,
+) -> Result<Json<Value>, ServerError> {
+    crate::transcription::transcribe(request)
+        .await
+        .map(|text| Json(json!({ "text": text })))
+        .map_err(ServerError::internal)
 }
 
 async fn session_upgrade(

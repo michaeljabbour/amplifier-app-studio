@@ -18,12 +18,12 @@ export interface StudioCapability {
   bundle?: string;
   catalogNames: string[];
   mode: string;
-  requirements: string;
+  requirements: string[];
   accent: "blue" | "green" | "amber" | "violet";
   activation: "parallel-session" | "included" | "post-release";
 }
 
-export type CapabilityReadiness = "native" | "catalogued" | "on-demand" | "post-release";
+export type CapabilityReadiness = "native" | "catalogued" | "on-demand";
 
 export const STUDIO_CAPABILITIES: StudioCapability[] = [
   {
@@ -35,7 +35,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     action: "Start coordinating",
     catalogNames: [],
     mode: "auto",
-    requirements: "Uses your active Amplifier composition.",
+    requirements: ["Uses the composition selected for this session."],
     accent: "blue",
     activation: "parallel-session",
   },
@@ -49,7 +49,10 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     bundle: "git+https://github.com/microsoft/amplifier-bundle-browser-tester@3446c383b8a9d366b8d88f832d0f3ffb73c62dec",
     catalogNames: ["browser-tester"],
     mode: "auto",
-    requirements: "Requires agent-browser on the runtime host; first launch may prepare the bundle.",
+    requirements: [
+      "The bundle is prepared on the runtime host at first launch.",
+      "Browser automation remains inside this independent session.",
+    ],
     accent: "blue",
     activation: "parallel-session",
   },
@@ -63,7 +66,10 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     bundle: "git+https://github.com/microsoft/amplifier-bundle-computer-use@51f7a1d3ef8e4debdd2d0b2309b3cdfa8be6c6bc",
     catalogNames: ["computer-use"],
     mode: "auto",
-    requirements: "Requires a computer-use-capable model and the runtime host's screen-control permissions.",
+    requirements: [
+      "Requires a computer-use-capable model.",
+      "The runtime host must grant screen recording and input-control permission; Studio does not assume those permissions are present.",
+    ],
     accent: "violet",
     activation: "parallel-session",
   },
@@ -76,7 +82,7 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     action: "Included in active chat",
     catalogNames: [],
     mode: "auto",
-    requirements: "Included with the standard Amplifier runtime on the selected host.",
+    requirements: ["Included with the standard Amplifier runtime on the selected host."],
     accent: "green",
     activation: "included",
   },
@@ -90,7 +96,10 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     bundle: "git+https://github.com/michaeljabbour/amplifier-bundle-imagen@v2.0.0",
     catalogNames: ["imagen"],
     mode: "auto",
-    requirements: "Requires imagen-mcp plus configured OpenAI or Gemini image credentials.",
+    requirements: [
+      "Requires the separate imagen-mcp service on the runtime host.",
+      "Requires separately configured OpenAI or Gemini image credentials; Studio does not reuse or overwrite a credential implicitly.",
+    ],
     accent: "violet",
     activation: "parallel-session",
   },
@@ -99,14 +108,17 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     name: "Attractor",
     eyebrow: "WORKFLOW ENGINE",
     outcome: "Design and run inspectable graph-based agent workflows.",
-    description: "Planned integration for DOT pipelines, branches, retries, and human gates after Studio's dedicated workflow event transport is ready.",
-    action: "Planned after v0.1",
+    description: "Runs DOT pipelines with durable node, edge, retry, checkpoint, and completion events rendered in Studio's execution map.",
+    action: "Start workflow run",
     bundle: "git+https://github.com/microsoft/amplifier-bundle-attractor@38db3ef6f8ce785c9777d6d702421cfa8f22f80a#subdirectory=bundles/attractor-interactive.yaml",
     catalogNames: ["attractor", "attractor-interactive"],
     mode: "auto",
-    requirements: "Post-release: requires dedicated node, transition, retry, and human-gate events instead of inferred transcript state.",
+    requirements: [
+      "Requires an Amplifier runtime that emits the typed pipeline event contract.",
+      "Graph state is rendered only from recorded DOT and pipeline events, never inferred from chat text.",
+    ],
     accent: "amber",
-    activation: "post-release",
+    activation: "parallel-session",
   },
 ];
 
@@ -114,7 +126,6 @@ export function capabilityReadiness(
   capability: StudioCapability,
   catalog: CapabilityCatalog,
 ): CapabilityReadiness {
-  if (capability.activation === "post-release") return "post-release";
   if (capability.id === "coordinator" || capability.id === "terminal") return "native";
   if (capability.catalogNames.some((name) => catalog.bundles.some((bundle) => bundle.name === name))) {
     return "catalogued";
@@ -123,10 +134,9 @@ export function capabilityReadiness(
 }
 
 export function capabilityStatusLabel(readiness: CapabilityReadiness): string {
-  if (readiness === "post-release") return "Post-release";
   if (readiness === "native") return "Included";
-  if (readiness === "catalogued") return "Catalogued";
-  return "Loads on first use";
+  if (readiness === "catalogued") return "Bundle found";
+  return "Prepared on first use";
 }
 
 export function capabilitySessionInput(

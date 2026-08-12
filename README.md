@@ -5,28 +5,30 @@ and iOS, plus a browser client for development and later hosted use. It keeps
 multiple Amplifier sessions alive in parallel without embedding or
 reimplementing the Python agent runtime.
 
+Studio and the terminal UI are becoming peer clients of a neutral Amplifier
+session runtime. The current TUI executable remains a labelled compatibility
+adapter during that extraction; it is not the target ownership boundary.
+
 The project is MIT licensed. The current release truth, including mobile,
 security, runtime-installation, and signing gates, is maintained in
 [`docs/RELEASE-READINESS.md`](docs/RELEASE-READINESS.md).
 
 The interface is SolidJS inside each platform's native Tauri WebView. All app
-and bridge logic is Rust. Every live tab ultimately owns one
-`amplifier-tui serve --attachable` process on a machine that has the existing
-runtime installed.
+and bridge logic is Rust. Every live tab owns one out-of-process
+`serve --attachable` runtime on the selected host. Studio prefers
+`amplifier-runtime` and temporarily falls back to `amplifier-tui` with an
+explicit compatibility label.
 
 ## Runtime topology
 
-```text
-macOS / Windows Tauri app              iOS / Android Tauri app or browser
-          │ local Tauri IPC                         │ WebSocket
-          └──────────────┐             ┌────────────┘
-                         ▼             ▼
-                    Rust SessionManager
-                   one child process per tab
-                             │ JSONL
-                             ▼
-                    amplifier-tui serve
-                    existing Python runtime
+```mermaid
+flowchart LR
+  Desktop[macOS or Windows\nTauri app] -->|local IPC| Bridge[Rust session bridge]
+  Mobile[iOS, Android, or web] -->|authenticated WebSocket| Bridge
+  Bridge -->|one typed JSONL process per tab| Runtime[Amplifier Runtime]
+  Runtime --> Foundation[Foundation session assembly]
+  Foundation --> Core[amplifier-core]
+  TUI[Amplifier TUI] --> Runtime
 ```
 
 Desktop apps run the Rust `SessionManager` in-process and spawn the Python
@@ -68,11 +70,14 @@ cross this boundary.
   current machine
 - Active-session Autopilot: it continues an idle coordinator or steers the
   coordinator's current turn, and never creates a replacement session
-- An outcome-first Machine Library for Coordinator, Browser Use, built-in
-  Terminal Use, Imagen, and Attractor, grounded in Amplifier's canonical
+- An outcome-first capability library for Coordinator, Browser Use, Computer
+  Use, built-in Terminal Use, Imagen, and Attractor, grounded in Amplifier's canonical
   `MODULES.md` catalog; app control remains a capability of the active runtime
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
+- Bounded microphone dictation into an editable draft. Studio uses an existing
+  runtime-host `OPENAI_API_KEY` with `gpt-transcribe`, never creates or
+  overwrites a key, and never submits the resulting text automatically.
 - Recoverable setup conditions (such as a missing stored bundle) live in the
   machine inspector instead of masquerading as chat messages
 - Read-only all-project session drawer with project-path recovery for TUI/CLI
@@ -87,14 +92,19 @@ cross this boundary.
 
 ## Desktop development
 
-Requirements are Node 22+, Rust 1.77+, and an `amplifier-tui` installation
-that includes `serve`. The bridge resolves `~/.local/bin/amplifier-tui` first,
-then `amplifier-tui` on `PATH`.
+Requirements are Node 22+, Rust 1.77+, and an Amplifier runtime installation
+that includes `serve`. The bridge prefers `amplifier-runtime`, then uses
+`amplifier-tui` as a compatibility adapter. It checks `~/.local/bin` before
+`PATH` for each executable.
 
 ```bash
 npm install
 npm run tauri dev
 ```
+
+For an isolated native macOS QA bundle that cannot replace an installed
+release, run `npm run macos:build:peer-qa`. It uses a separate bundle
+identifier and app name.
 
 Build the native package for the current desktop platform:
 
@@ -134,8 +144,9 @@ an authenticated TLS tunnel or reverse proxy; the included host remains
 loopback-only.
 
 For development against a specific runtime checkout, set
-`AMPLIFIER_STUDIO_RUNTIME_BIN` to that checkout's `amplifier-tui` executable.
-Packaged builds otherwise prefer `~/.local/bin/amplifier-tui` and then `PATH`.
+`AMPLIFIER_STUDIO_RUNTIME_BIN` to the exact compatible executable. Packaged
+builds otherwise prefer `amplifier-runtime`, then the TUI compatibility
+adapter, in `~/.local/bin` and then `PATH`.
 
 ## Android
 
@@ -263,12 +274,12 @@ The center conversation is intentionally permanent: selecting an agent,
 output, bundle, provider, or context view opens it beside the Coordinator chat
 instead of navigating away from the conversation that owns the work.
 
-The current streaming implementation uses `amplifier-tui serve` because it
-already exposes live deltas, approvals, steering, subagent events, and durable
-replay. The longer-term resource boundary is compatible with
-[`amplifier-agent`](https://github.com/microsoft/amplifier-agent): Studio owns
-logical session continuity and the control plane, while the engine executes a
-fresh process per turn. Adopting that adapter is a transport change, not a UI
-rewrite; `src/transport.ts` and the Rust manager are the intended seams. The
-Studio control API must exist before the Coordinator can truthfully start,
-pause, place, or reconfigure other logical sessions through natural language.
+The current compatibility implementation uses `amplifier-tui serve` because
+it already exposes live deltas, approvals, steering, subagent events, control
+leases, and durable replay. The accepted direction is to extract that UI-free
+kernel into a neutral runtime consumed by Studio and the TUI as peers.
+[`amplifier-agent`](https://github.com/microsoft/amplifier-agent) is the
+optional active-session Autopilot controller, not a replacement persistence
+engine and not a reason to start a second session. The full boundary,
+conformance requirements, and safe extraction sequence are documented in
+[`docs/RUNTIME-PEER-ARCHITECTURE.md`](docs/RUNTIME-PEER-ARCHITECTURE.md).

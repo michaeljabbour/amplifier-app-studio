@@ -6,6 +6,7 @@ mod runtime_settings;
 mod runtime_setup;
 mod session;
 mod store;
+mod transcription;
 pub mod web_server;
 
 use catalog::CapabilityCatalog;
@@ -242,6 +243,16 @@ async fn configure_provider(
     runtime_setup::configure_provider(provider_type, api_key, model, base_url).await
 }
 
+#[tauri::command]
+async fn transcription_status() -> Result<transcription::TranscriptionStatus, String> {
+    Ok(transcription::status())
+}
+
+#[tauri::command]
+async fn transcribe_audio(request: transcription::TranscriptionRequest) -> Result<String, String> {
+    transcription::transcribe(request).await
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 async fn read_runtime_settings(
@@ -342,6 +353,8 @@ pub fn run() {
             runtime_status,
             install_runtime,
             configure_provider,
+            transcription_status,
+            transcribe_audio,
             default_project_dir,
             #[cfg(desktop)]
             load_attachment_paths,

@@ -55,6 +55,7 @@ import {
   configuredBridgeToken,
   defaultProjectDir,
   getRuntimeStatus,
+  getTranscriptionStatus,
   openLocalOutput,
   installRuntime,
   listenNativeAttachmentDrops,
@@ -67,8 +68,10 @@ import {
   saveBridgeToken,
   stopSession,
   transportLabel,
+  transcribeAudio,
   usesWebBridge,
   type RuntimeStatus,
+  type TranscriptionStatus,
   type NativeAttachmentDropEvent,
   type SessionConnection,
 } from "./transport";
@@ -105,6 +108,7 @@ export default function App() {
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
   const [runtimeInstalling, setRuntimeInstalling] = createSignal(false);
   const [runtimeError, setRuntimeError] = createSignal<string>();
+  const [transcription, setTranscription] = createSignal<TranscriptionStatus>();
   const connections = new Map<string, SessionConnection>();
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
@@ -129,6 +133,7 @@ export default function App() {
   onMount(() => {
     void defaultProjectDir().then(setDefaultDir).catch(() => undefined);
     void refreshRuntime();
+    void refreshTranscription();
     queueMicrotask(() => void refreshStored());
     queueMicrotask(() => void refreshCatalog());
     const checkForUpdates = () => {
@@ -660,6 +665,8 @@ export default function App() {
             attachments={homeAttachments()}
             onAttachments={setHomeAttachments}
             onPickAttachments={pickAttachments}
+            transcription={transcription()}
+            onTranscribe={transcribeAudio}
           />
         }
       >
@@ -734,6 +741,9 @@ export default function App() {
                     onAutopilot={() => void engageAutopilot()}
                     autopilotActive={autopilotActive()}
                     autopilotAvailable={canEngageAutopilot(active())}
+                    transcriptionAvailable={transcription()?.available === true}
+                    transcriptionMessage={transcription()?.message}
+                    onTranscribe={transcribeAudio}
                   />}
                 >
                   <AttentionBar state={session()} onChoose={chooseAttention} />
@@ -826,6 +836,7 @@ export default function App() {
                 setDefaultDir(projectDir);
                 return Promise.all([
                   refreshRuntime(),
+                  refreshTranscription(),
                   refreshStored(),
                   refreshCatalog(projectDir),
                 ]);
@@ -841,6 +852,7 @@ export default function App() {
           onConfigured={(status) => {
             setRuntime(status);
             setRuntimeError(undefined);
+            void refreshTranscription();
             void refreshCatalog(defaultDir());
           }}
         />
@@ -901,6 +913,14 @@ export default function App() {
     }
   }
 
+  async function refreshTranscription() {
+    try {
+      setTranscription(await getTranscriptionStatus());
+    } catch (error) {
+      setTranscription({ available: false, message: cleanError(error) });
+    }
+  }
+
   async function startFromHome(text: string, attachments: ComposerAttachment[]) {
     const remembered = localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
     const projectDir = await selectProjectFolder(remembered);
@@ -953,7 +973,7 @@ export default function App() {
     try {
       const installed = await installRuntime();
       setRuntime(installed);
-      await Promise.all([refreshStored(), refreshCatalog(defaultDir())]);
+      await Promise.all([refreshTranscription(), refreshStored(), refreshCatalog(defaultDir())]);
     } catch (error) {
       setRuntimeError(cleanError(error));
     } finally {

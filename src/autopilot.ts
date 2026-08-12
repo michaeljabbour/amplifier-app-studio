@@ -10,9 +10,11 @@ function latestUserPrompt(session: Pick<SessionViewState, "blocks">): string | u
 }
 
 /**
- * Autopilot is Amplifier's native goal loop, scoped to the active runtime.
- * Studio only declares/clears the goal; loop-streaming owns evaluation,
- * continuation, stall detection, and completion.
+ * Autopilot is an optional goal controller scoped to the active runtime.
+ * Studio only declares/clears the goal; the selected controller owns
+ * evaluation, continuation, stall detection, and completion. `goal.*` is the
+ * compatibility protocol while amplifier-agent gains an attach adapter for
+ * the same active session and durable event ledger.
  */
 export function activeSessionAutopilotOp(
   session: Pick<SessionViewState, "autopilot" | "goal" | "blocks">,

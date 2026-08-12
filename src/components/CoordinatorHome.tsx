@@ -2,8 +2,11 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
+import type { TranscriptionStatus } from "../transport";
+import type { AudioRecording } from "../transcription";
 import { storedSessionResumeBlocker } from "../sessionAvailability";
 import { AttachmentStrip } from "./AttachmentStrip";
+import { DictationButton } from "./DictationButton";
 
 interface Props {
   sessions: StoredSession[];
@@ -24,6 +27,8 @@ interface Props {
   attachments: ComposerAttachment[];
   onAttachments: (attachments: ComposerAttachment[]) => void;
   onPickAttachments: () => Promise<ComposerAttachment[]>;
+  transcription?: TranscriptionStatus;
+  onTranscribe: (recording: AudioRecording) => Promise<string>;
 }
 
 export function CoordinatorHome(props: Props) {
@@ -32,6 +37,7 @@ export function CoordinatorHome(props: Props) {
   const [draggingAttachments, setDraggingAttachments] = createSignal(false);
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
+  const [dictating, setDictating] = createSignal(false);
   const recent = createMemo(() => props.sessions.slice(0, 24));
   const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true;
@@ -193,6 +199,7 @@ export function CoordinatorHome(props: Props) {
           <textarea
             value={text()}
             disabled={!ready() || starting()}
+            readOnly={dictating()}
             placeholder={ready() ? "Tell Amplifier what you want to build, investigate, or organize…" : runtimeAvailable() && !providerStatusAvailable() ? "Update Amplifier to verify provider readiness" : runtimeAvailable() ? "Configure a model provider to start a run" : "Install or connect the Amplifier runtime to start"}
             aria-label="Message Amplifier"
             onInput={(event) => setText(event.currentTarget.value)}
@@ -220,6 +227,15 @@ export function CoordinatorHome(props: Props) {
             <div class="home-composer-tools">
               <button type="button" onClick={props.onNew}>Configure session</button>
               <button type="button" onClick={() => void pickFiles()}>Add files</button>
+              <DictationButton
+                draft={text()}
+                disabled={!ready() || starting()}
+                available={props.transcription?.available === true}
+                unavailableReason={props.transcription?.message}
+                onDraft={setText}
+                onTranscribe={props.onTranscribe}
+                onActiveChange={setDictating}
+              />
               <span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span>
             </div>
             <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
@@ -227,7 +243,12 @@ export function CoordinatorHome(props: Props) {
           <Show when={localError() || props.error}><small class="home-composer-error">{localError() || props.error}</small></Show>
         </div>
 
-        <div class="home-transport"><span classList={{ active: ready() }} />{props.transport}{props.runtime?.version ? ` · ${props.runtime.version}` : ""}</div>
+        <div class="home-transport">
+          <span classList={{ active: ready() }} />
+          {props.transport}
+          {props.runtime?.version ? ` · ${props.runtime.version}` : ""}
+          {props.runtime?.compatibilityMode ? " · TUI compatibility adapter" : ""}
+        </div>
       </section>
     </main>
   );
