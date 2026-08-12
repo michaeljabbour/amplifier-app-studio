@@ -575,9 +575,87 @@ describe("session reducer", () => {
       instruction: "Survey the repository and report its architecture.",
       model: "claude-haiku",
       costUsd: "0.0012",
+      costBasis: "reported",
       startedAtMs: 10_000,
     });
     expect(state.activity).toContain("2 operations");
+  });
+
+  it("estimates all-agent RunPod spend without treating LiteLLM zero as free", () => {
+    let state = reduceRecord(fresh(), {
+      schema_version: 1,
+      sequence: 1,
+      type: "session.started",
+      session_id: "runtime-1",
+      bundle: "tui",
+      model: "moonshotai/Kimi-K3",
+    });
+    state = reduceRecord(state, runtime(2, {
+      kind: "provider_response_usage",
+      input_tokens: 4_000_000,
+      output_tokens: 500_000,
+      cache_read: 3_000_000,
+      model: "",
+      cost_usd: 0,
+    }));
+    state = reduceRecord(state, childRuntime(3, {
+      kind: "provider_response_usage",
+      input_tokens: 400_000,
+      output_tokens: 100_000,
+      cache_read: 350_000,
+      model: "general",
+      cost_usd: null,
+    }));
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "context.state",
+      context_tokens: 80_000,
+      context_window: 524_288,
+      context_pct: 15,
+      cost_usd: "0",
+      cost_estimated: true,
+    });
+
+    expect(state.context).toMatchObject({
+      costUsd: "52.65",
+      costBasis: "estimated",
+      inputTokens: 4_400_000,
+      outputTokens: 600_000,
+      unpricedTokens: 0,
+      usageResponses: 2,
+      estimateModel: "moonshotai/Kimi-K3",
+      estimateRatePerMillion: 10.53,
+    });
+    expect(state.lanes["child-1"]).toMatchObject({
+      costUsd: "5.265",
+      costBasis: "estimated",
+    });
+  });
+
+  it("marks a priced total as partial when another model has no configured rate", () => {
+    let state = reduceRecord(fresh(), {
+      schema_version: 1,
+      sequence: 1,
+      type: "session.started",
+      session_id: "runtime-1",
+      bundle: "tui",
+      model: "moonshotai/Kimi-K3",
+    });
+    state = reduceRecord(state, runtime(2, {
+      kind: "provider_response_usage",
+      input_tokens: 900_000,
+      output_tokens: 100_000,
+    }));
+    state = reduceRecord(state, childRuntime(3, {
+      kind: "provider_response_usage",
+      input_tokens: 1_000,
+      output_tokens: 100,
+      model: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    }));
+
+    expect(state.context.costBasis).toBe("partial");
+    expect(state.context.costUsd).toBe("10.53");
+    expect(state.context.unpricedTokens).toBe(1_100);
   });
 
   it("captures concrete generated and edited paths as inspectable outputs", () => {
