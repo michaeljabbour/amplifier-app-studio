@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { promptWithDocumentAttachments } from "./attachments";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded } from "./reducer";
+import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded, usableSessionTitle } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -90,6 +90,52 @@ describe("session reducer", () => {
       "Final response",
       "Turn complete",
     ]));
+  });
+
+  it("preserves actionable decision detail when status polling reconciles the queue", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "notification",
+      level: "decision",
+      decision_id: "decision-1",
+      question: "How far should I cut?",
+      reason: "Scope · Auto continues while this waits",
+      choices: ["All four changes (Recommended)", "Diagnosis only"],
+      descriptions: ["Make the complete coherent change", "Stop before editing"],
+      custom: true,
+    }));
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "awaiting_decision",
+      turn: { active: false },
+      session: {},
+      pending: {
+        approval: null,
+        decisions: [{ decision_id: "decision-1", question: "How far should I cut?" }],
+      },
+      context: {},
+    });
+
+    expect(state.pendingDecision).toMatchObject({
+      decisionId: "decision-1",
+      choices: ["All four changes (Recommended)", "Diagnosis only"],
+      descriptions: ["Make the complete coherent change", "Stop before editing"],
+      recommendedChoice: "All four changes (Recommended)",
+      custom: true,
+      multiple: false,
+    });
+  });
+
+  it("replaces numeric tab labels with a concise first-prompt title", () => {
+    let state = started();
+    expect(state.title).toBe("Ready for your first prompt");
+    state = reduceRecord(state, runtime(2, {
+      kind: "prompt_submit",
+      prompt: "Review the decision experience and make it useful",
+      mode: "auto",
+    }));
+    expect(state.title).toBe("Review the decision experience and make it");
   });
 
   it("tracks child agents as the delegate branch of the coordinator loop", () => {
@@ -201,6 +247,27 @@ describe("session reducer", () => {
     expect(state.pipeline?.nodes.inspect.status).toBe("completed");
   });
 
+  it("replaces a prior pipeline with the generic turn loop until the next turn declares its topology", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "pipeline_started",
+      graph_name: "Resolve",
+      dot_source: "digraph { inspect -> verify }",
+    }));
+    expect(state.pipeline?.graphName).toBe("Resolve");
+
+    state = reduceRecord(state, runtime(3, { kind: "prompt_submit", prompt: "Now answer directly" }));
+    expect(state.pipeline).toBeUndefined();
+    expect(state.turnLoop.phase).toBe("prompt");
+
+    state = reduceRecord(state, runtime(4, {
+      kind: "pipeline_started",
+      graph_name: "Another attractor",
+      dot_source: "digraph { plan -> ship }",
+    }));
+    expect(state.pipeline).toMatchObject({ graphName: "Another attractor", dotSource: "digraph { plan -> ship }" });
+  });
+
   it("defaults to Amplifier auto mode unless the user explicitly overrides it", () => {
     expect(createSessionState("gui-default", { projectDir: "/tmp/project" }).mode).toBe("auto");
     expect(createSessionState("gui-chat", { projectDir: "/tmp/project", mode: "chat" }).mode).toBe("chat");
@@ -253,6 +320,24 @@ describe("session reducer", () => {
       context: { percent: 90, costUsd: "114.13" },
       restoreProgress: { history: true, status: true },
     });
+  });
+
+  it("never promotes generated session numbers into resumed tab titles", () => {
+    expect(usableSessionTitle("Session 74197986")).toBeUndefined();
+    expect(usableSessionTitle("Resume 74197986")).toBeUndefined();
+    expect(usableSessionTitle("Fixing Textual MarkupError in transcript")).toBe("Fixing Textual MarkupError in transcript");
+    let resumed = createSessionState("gui-resume", {
+      projectDir: "/tmp/project",
+      resumeId: "74197986-0d82-4038-9414-67b3c53efd7e",
+      resumeName: "Session 74197986",
+    });
+    expect(resumed.title).toBe("Restoring saved work");
+    resumed = reduceRecord(resumed, runtime(1, {
+      kind: "prompt_submit",
+      prompt: "I feel like this repo hooks in interesting content",
+      mode: "auto",
+    }, true));
+    expect(resumed.title).toBe("I feel like this repo hooks in");
   });
 
   it("moves an incomplete restore into a bounded degraded state with retry and open-anyway recovery", () => {

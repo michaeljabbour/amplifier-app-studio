@@ -1,4 +1,5 @@
 mod catalog;
+#[cfg(desktop)]
 mod image_drop;
 mod protocol;
 #[cfg(desktop)]
@@ -6,10 +7,11 @@ mod runtime_settings;
 mod runtime_setup;
 mod session;
 mod store;
+mod transcription;
 pub mod web_server;
 
 use catalog::CapabilityCatalog;
-use protocol::{LiveSession, SessionEvent, StartSessionOptions, StartSessionResult};
+use protocol::{SessionEvent, StartSessionOptions, StartSessionResult};
 use serde_json::Value;
 use session::{EventSink, SessionManager};
 use std::sync::Arc;
@@ -191,11 +193,6 @@ async fn stop_session(manager: State<'_, SessionManager>, gui_id: String) -> Res
 }
 
 #[tauri::command]
-async fn list_sessions(manager: State<'_, SessionManager>) -> Result<Vec<LiveSession>, String> {
-    Ok(manager.list().await)
-}
-
-#[tauri::command]
 async fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
     tauri::async_runtime::spawn_blocking(move || store::list_stored_sessions(project_dir))
         .await
@@ -240,6 +237,16 @@ async fn configure_provider(
     base_url: Option<String>,
 ) -> Result<runtime_setup::RuntimeStatus, String> {
     runtime_setup::configure_provider(provider_type, api_key, model, base_url).await
+}
+
+#[tauri::command]
+async fn transcription_status() -> Result<transcription::TranscriptionStatus, String> {
+    Ok(transcription::status())
+}
+
+#[tauri::command]
+async fn transcribe_audio(request: transcription::TranscriptionRequest) -> Result<String, String> {
+    transcription::transcribe(request).await
 }
 
 #[cfg(desktop)]
@@ -317,7 +324,6 @@ fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathB
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .on_webview_event(image_drop::handle_webview_event)
         .setup(|_app| {
             #[cfg(desktop)]
             {
@@ -335,13 +341,14 @@ pub fn run() {
             start_session,
             send_op,
             stop_session,
-            list_sessions,
             list_stored_sessions,
             list_catalog,
             add_bundle,
             runtime_status,
             install_runtime,
             configure_provider,
+            transcription_status,
+            transcribe_audio,
             default_project_dir,
             #[cfg(desktop)]
             load_attachment_paths,

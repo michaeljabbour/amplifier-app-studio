@@ -84,7 +84,7 @@ pub async fn read(project_dir: String) -> Result<RuntimeSettingsSnapshot, String
             .iter()
             .any(|path| !values.iter().any(|value| value.path == *path))
     {
-        return Err("The installed amplifier-tui settings registry is incompatible with this Studio release. Update both apps and try again.".to_owned());
+        return Err("The installed Amplifier runtime settings registry is incompatible with this Studio release. Update both apps and try again.".to_owned());
     }
 
     let version = run(&project, ["--version"]).await?;
@@ -175,7 +175,7 @@ fn project_directory(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-async fn run<'a, const N: usize>(project: &Path, args: [&'a str; N]) -> Result<String, String> {
+async fn run<const N: usize>(project: &Path, args: [&str; N]) -> Result<String, String> {
     run_owned(project, args.into_iter().map(str::to_owned).collect()).await
 }
 
@@ -189,7 +189,7 @@ async fn run_owned(project: &Path, args: Vec<String>) -> Result<String, String> 
     let output = command
         .output()
         .await
-        .map_err(|error| format!("Could not start amplifier-tui settings: {error}"))?;
+        .map_err(|error| format!("Could not start Amplifier runtime settings: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -198,7 +198,7 @@ async fn run_owned(project: &Path, args: Vec<String>) -> Result<String, String> 
         } else if !stdout.is_empty() {
             stdout
         } else {
-            format!("amplifier-tui settings exited with {}", output.status)
+            format!("Amplifier runtime settings exited with {}", output.status)
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())

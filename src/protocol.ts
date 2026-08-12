@@ -26,6 +26,8 @@ export interface ApprovalState {
   sessionId?: string;
   parentId?: string;
   toolCallId?: string;
+  expiresAtMs?: number;
+  defaultChoice?: string;
 }
 
 export interface DecisionState {
@@ -33,7 +35,11 @@ export interface DecisionState {
   question: string;
   reason: string;
   choices: string[];
+  descriptions: string[];
+  recommendedChoice?: string;
+  multiple: boolean;
   custom: boolean;
+  createdAtMs?: number;
 }
 
 export interface ContextState {
@@ -377,6 +383,7 @@ export interface StoredSession {
   projectSlug: string;
   projectDir?: string;
   state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing";
+  summary: string;
 }
 
 export interface BundleOption {

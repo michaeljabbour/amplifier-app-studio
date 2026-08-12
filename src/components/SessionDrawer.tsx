@@ -52,9 +52,10 @@ export function SessionDrawer(props: Props) {
               return (
                 <button class="stored-row" disabled={Boolean(blocker())} title={note()} onClick={() => void props.onResume(session)}>
                   <div class="stored-topline">
-                    <strong>{session.name || `Session ${session.sessionId.slice(0, 8)}`}</strong>
+                    <strong>{session.name}</strong>
                     <span>{timeAgo(session.mtimeMs)}</span>
                   </div>
+                  <p class="stored-summary">{session.summary}</p>
                   <div class="stored-meta">
                     <span>{session.bundle}</span><i />
                     <span>{session.turnCount ?? "—"} turns</span><i />

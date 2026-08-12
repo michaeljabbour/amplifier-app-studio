@@ -18,8 +18,12 @@ describe("Studio capabilities", () => {
     );
     expect(STUDIO_CAPABILITIES.find((item) => item.id === "terminal")?.activation).toBe("included");
     const attractor = STUDIO_CAPABILITIES.find((item) => item.id === "attractor")!;
-    expect(attractor.activation).toBe("post-release");
-    expect(capabilityReadiness(attractor, { bundles: [], providers: [] })).toBe("post-release");
+    expect(attractor.activation).toBe("parallel-session");
+    expect(attractor.bundle).toMatch(
+      /^git\+https:\/\/github\.com\/microsoft\/amplifier-bundle-attractor@[0-9a-f]{40}#subdirectory=bundles\/attractor-interactive\.yaml$/,
+    );
+    expect(capabilityReadiness(attractor, { bundles: [], providers: [] })).toBe("on-demand");
+    expect(attractor.requirements.join(" ")).toContain("typed pipeline event contract");
   });
 
   it("does not claim an on-demand bundle is installed", () => {
@@ -29,5 +33,7 @@ describe("Studio capabilities", () => {
       bundles: [{ name: "browser-tester", active: false, location: "cache", status: "available" }],
       providers: [],
     })).toBe("catalogued");
+    const terminal = STUDIO_CAPABILITIES.find((item) => item.id === "terminal")!;
+    expect(capabilityReadiness(terminal, { bundles: [], providers: [] })).toBe("composition");
   });
 });

@@ -1,6 +1,5 @@
 use crate::protocol::{
-    require_object, LiveSession, ProcessExit, ProcessLog, SessionEvent, StartSessionOptions,
-    StartSessionResult,
+    require_object, ProcessExit, ProcessLog, SessionEvent, StartSessionOptions, StartSessionResult,
 };
 use crate::runtime_setup;
 use serde_json::Value;
@@ -35,7 +34,7 @@ struct SessionHandle {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     sink: AttachedSink,
-    info: LiveSession,
+    resume_identity: Option<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -102,8 +101,12 @@ impl SessionManager {
             }
             if let Some(resume_id) = options.resume_id.as_deref() {
                 let duplicate = sessions.values().any(|handle| {
-                    handle.info.project_dir == project_dir_string
-                        && handle.info.resume_id.as_deref() == Some(resume_id)
+                    handle
+                        .resume_identity
+                        .as_ref()
+                        .is_some_and(|(project, session)| {
+                            project == &project_dir_string && session == resume_id
+                        })
                 });
                 if duplicate {
                     return Err(
@@ -139,7 +142,7 @@ impl SessionManager {
 
         let mut child = command.spawn().map_err(|error| {
             format!(
-                "Could not start {}: {error}. Install amplifier-tui at ~/.local/bin or on PATH.",
+                "Could not start {}: {error}. Install the Amplifier runtime at ~/.local/bin or on PATH.",
                 binary.display()
             )
         })?;
@@ -159,8 +162,12 @@ impl SessionManager {
         }
         if let Some(resume_id) = options.resume_id.as_deref() {
             let duplicate = sessions.values().any(|handle| {
-                handle.info.project_dir == project_dir_string
-                    && handle.info.resume_id.as_deref() == Some(resume_id)
+                handle
+                    .resume_identity
+                    .as_ref()
+                    .is_some_and(|(project, session)| {
+                        project == &project_dir_string && session == resume_id
+                    })
             });
             if duplicate {
                 let _ = child.kill().await;
@@ -171,34 +178,25 @@ impl SessionManager {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "amplifier-tui did not expose stdin".to_owned())?;
+            .ok_or_else(|| "The Amplifier runtime did not expose stdin".to_owned())?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "amplifier-tui did not expose stdout".to_owned())?;
+            .ok_or_else(|| "The Amplifier runtime did not expose stdout".to_owned())?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| "amplifier-tui did not expose stderr".to_owned())?;
-        let pid = child.id();
-
-        let info = LiveSession {
-            gui_id: options.gui_id.clone(),
-            project_dir: project_dir_string.clone(),
-            bundle: options.bundle.clone(),
-            model: options.model.clone(),
-            provider: options.provider.clone(),
-            mode: options.mode.clone(),
-            resume_id: options.resume_id.clone(),
-            pid,
-        };
+            .ok_or_else(|| "The Amplifier runtime did not expose stderr".to_owned())?;
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
         let attached_sink = Arc::new(RwLock::new(Some((attachment_id, sink))));
         let handle = SessionHandle {
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(Mutex::new(Some(stdin))),
             sink: attached_sink.clone(),
-            info,
+            resume_identity: options
+                .resume_id
+                .clone()
+                .map(|resume_id| (project_dir_string.clone(), resume_id)),
         };
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
@@ -298,11 +296,11 @@ impl SessionManager {
         stdin
             .write_all(&line)
             .await
-            .map_err(|error| format!("Could not write to amplifier-tui: {error}"))?;
+            .map_err(|error| format!("Could not write to the Amplifier runtime: {error}"))?;
         stdin
             .flush()
             .await
-            .map_err(|error| format!("Could not flush amplifier-tui input: {error}"))
+            .map_err(|error| format!("Could not flush Amplifier runtime input: {error}"))
     }
 
     pub async fn stop(&self, gui_id: &str) -> Result<bool, String> {
@@ -326,7 +324,7 @@ impl SessionManager {
                 let mut child = handle.child.lock().await;
                 child
                     .try_wait()
-                    .map_err(|error| format!("Could not inspect amplifier-tui: {error}"))?
+                    .map_err(|error| format!("Could not inspect the Amplifier runtime: {error}"))?
                     .is_some()
             };
             if exited {
@@ -342,14 +340,14 @@ impl SessionManager {
         child
             .kill()
             .await
-            .map_err(|error| format!("Could not stop amplifier-tui: {error}"))?;
+            .map_err(|error| format!("Could not stop the Amplifier runtime: {error}"))?;
         Ok(true)
     }
 
     /// Stop every runtime owned by this Studio process.
     ///
     /// Tauri restarts replace the GUI process. If its children are not
-    /// explicitly drained first, an attachable `amplifier-tui serve` process
+    /// explicitly drained first, an attachable Amplifier runtime process
     /// can survive with stdout still pointing at the departed GUI. A later
     /// Studio process then attaches to a live-but-unreadable owner and appears
     /// to accept messages without ever receiving their events.
@@ -396,20 +394,9 @@ impl SessionManager {
     /// Ordinary quit/restart paths never call this: once shutdown begins they
     /// remain closed. The updater is the sole recovery path because a failed
     /// install leaves the current Studio process alive and usable.
+    #[cfg(desktop)]
     pub fn resume_after_failed_update(&self) {
         self.accepting.store(true, Ordering::SeqCst);
-    }
-
-    pub async fn list(&self) -> Vec<LiveSession> {
-        let mut sessions: Vec<_> = self
-            .sessions
-            .lock()
-            .await
-            .values()
-            .map(|handle| handle.info.clone())
-            .collect();
-        sessions.sort_by(|left, right| left.gui_id.cmp(&right.gui_id));
-        sessions
     }
 
     fn spawn_exit_monitor(&self, sink: EventSink, gui_id: String, child: Arc<Mutex<Child>>) {
@@ -576,8 +563,8 @@ fn exit_message(code: Option<i32>) -> String {
         Some(2) => "Stored session was not found in this project".to_owned(),
         Some(3) => "Session id matched more than one stored session".to_owned(),
         Some(4) => "Stored session is damaged and cannot be resumed".to_owned(),
-        Some(code) => format!("amplifier-tui exited with code {code}"),
-        None => "amplifier-tui ended without an exit code".to_owned(),
+        Some(code) => format!("Amplifier runtime exited with code {code}"),
+        None => "Amplifier runtime ended without an exit code".to_owned(),
     }
 }
 

@@ -49,19 +49,6 @@ pub struct StartSessionResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LiveSession {
-    pub gui_id: String,
-    pub project_dir: String,
-    pub bundle: Option<String>,
-    pub model: Option<String>,
-    pub provider: Option<String>,
-    pub mode: Option<String>,
-    pub resume_id: Option<String>,
-    pub pid: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProcessLog {
     pub stream: &'static str,
     pub message: String,

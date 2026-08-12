@@ -9,6 +9,8 @@ use tokio::io::AsyncWriteExt;
 
 const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s --";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
+const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
+const LEGACY_RUNTIME_BINARY: &str = "amplifier-tui";
 #[cfg(target_os = "windows")]
 const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.ps1'; & ([scriptblock]::Create($script))";
 
@@ -18,6 +20,8 @@ pub struct RuntimeStatus {
     pub installed: bool,
     pub executable: Option<String>,
     pub version: Option<String>,
+    pub adapter: String,
+    pub compatibility_mode: bool,
     pub install_supported: bool,
     pub provider_status_available: bool,
     pub provider_configured: bool,
@@ -33,7 +37,8 @@ struct ProviderStatus {
 }
 
 pub fn status() -> RuntimeStatus {
-    let executable = resolve_binary();
+    let resolved = resolve_runtime();
+    let executable = resolved.as_ref().map(|runtime| runtime.executable.clone());
     let version = executable.as_ref().and_then(read_version);
     let installed = executable.is_some() && version.is_some();
     let install_supported = cfg!(any(
@@ -47,7 +52,7 @@ pub fn status() -> RuntimeStatus {
     let provider_message = provider.as_ref().map_or_else(
         || {
             if installed {
-                "Update amplifier-tui to verify provider setup".to_owned()
+                "Update the Amplifier runtime to verify provider setup".to_owned()
             } else {
                 "Install the Amplifier runtime first".to_owned()
             }
@@ -60,10 +65,20 @@ pub fn status() -> RuntimeStatus {
             }
         },
     );
-    let message = if installed {
+    let compatibility_mode = resolved
+        .as_ref()
+        .is_some_and(|runtime| runtime.adapter == RuntimeAdapter::TuiCompatibility);
+    let adapter = resolved
+        .as_ref()
+        .map_or(RuntimeAdapter::Missing, |runtime| runtime.adapter)
+        .as_str()
+        .to_owned();
+    let message = if installed && compatibility_mode {
+        "Amplifier runtime is ready through the TUI compatibility adapter".to_owned()
+    } else if installed {
         "Amplifier runtime is ready".to_owned()
     } else if executable.is_some() {
-        "amplifier-tui was found but did not pass its version check".to_owned()
+        "The Amplifier runtime was found but did not pass its version check".to_owned()
     } else if install_supported {
         "Amplifier's session runtime is not installed yet".to_owned()
     } else {
@@ -74,6 +89,8 @@ pub fn status() -> RuntimeStatus {
         installed,
         executable: executable.map(|path| path.to_string_lossy().into_owned()),
         version,
+        adapter,
+        compatibility_mode,
         install_supported,
         provider_status_available,
         provider_configured,
@@ -127,7 +144,7 @@ pub async fn install() -> Result<RuntimeStatus, String> {
     if installed.installed {
         Ok(installed)
     } else {
-        Err("The installer finished, but amplifier-tui could not be verified. Restart Studio or run amplifier-tui doctor in a terminal.".to_owned())
+        Err("The installer finished, but the Amplifier runtime could not be verified. Restart Studio or run its doctor command in a terminal.".to_owned())
     }
 }
 
@@ -152,8 +169,9 @@ pub async fn configure_provider(
     if api_key.is_empty() || api_key.len() > 16_384 || api_key.chars().any(char::is_control) {
         return Err("Enter a valid provider API key".to_owned());
     }
-    let binary =
-        resolve_binary().ok_or_else(|| "Install the Amplifier runtime first".to_owned())?;
+    let binary = resolve_runtime()
+        .map(|runtime| runtime.executable)
+        .ok_or_else(|| "Install the Amplifier runtime first".to_owned())?;
     let mut args = vec![
         "provider".to_owned(),
         "add".to_owned(),
@@ -225,14 +243,41 @@ fn clean_option(value: Option<String>, label: &str) -> Result<Option<String>, St
     Ok(Some(value))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeAdapter {
+    Neutral,
+    TuiCompatibility,
+    Configured,
+    Missing,
+}
+
+impl RuntimeAdapter {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::TuiCompatibility => "tui-compatibility",
+            Self::Configured => "configured",
+            Self::Missing => "missing",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRuntime {
+    executable: PathBuf,
+    adapter: RuntimeAdapter,
+}
+
 pub(crate) fn binary_or_command() -> PathBuf {
-    resolve_binary().unwrap_or_else(|| PathBuf::from("amplifier-tui"))
+    resolve_runtime()
+        .map(|runtime| runtime.executable)
+        .unwrap_or_else(|| PathBuf::from(NEUTRAL_RUNTIME_BINARY))
 }
 
 /// Build a deterministic executable search path for the out-of-process
 /// runtime and everything it launches (notably `uv`). Finder and updater
 /// restarts do not inherit the user's interactive shell PATH on macOS, even
-/// though Studio can still resolve `~/.local/bin/amplifier-tui` directly.
+/// though Studio can still resolve the per-user runtime directly.
 /// Keep the runtime binary's own directory first, preserve inherited entries,
 /// then add the conventional per-user and platform tool locations.
 pub(crate) fn runtime_path(executable: &std::path::Path) -> Option<OsString> {
@@ -284,42 +329,59 @@ fn runtime_path_from(
     env::join_paths(directories).ok()
 }
 
-fn resolve_binary() -> Option<PathBuf> {
+fn resolve_runtime() -> Option<ResolvedRuntime> {
     if let Some(configured) = env::var_os(RUNTIME_BINARY_ENV) {
         let candidate = PathBuf::from(configured);
         if candidate.is_file() {
-            return Some(candidate);
+            return Some(ResolvedRuntime {
+                executable: candidate,
+                adapter: RuntimeAdapter::Configured,
+            });
         }
     }
     if let Some(home) = dirs::home_dir() {
-        let preferred = home.join(".local/bin/amplifier-tui");
-        if preferred.is_file() {
-            return Some(preferred);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let preferred_exe = home.join(".local/bin/amplifier-tui.exe");
-            if preferred_exe.is_file() {
-                return Some(preferred_exe);
+        for (name, adapter) in runtime_candidates() {
+            let preferred = home.join(".local/bin").join(name);
+            if preferred.is_file() {
+                return Some(ResolvedRuntime {
+                    executable: preferred,
+                    adapter,
+                });
             }
         }
     }
 
     let path = env::var_os("PATH")?;
     for directory in env::split_paths(&path) {
-        let candidate = directory.join("amplifier-tui");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let candidate_exe = directory.join("amplifier-tui.exe");
-            if candidate_exe.is_file() {
-                return Some(candidate_exe);
+        for (name, adapter) in runtime_candidates() {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Some(ResolvedRuntime {
+                    executable: candidate,
+                    adapter,
+                });
             }
         }
     }
     None
+}
+
+fn runtime_candidates() -> Vec<(String, RuntimeAdapter)> {
+    let suffix = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    vec![
+        (
+            format!("{NEUTRAL_RUNTIME_BINARY}{suffix}"),
+            RuntimeAdapter::Neutral,
+        ),
+        (
+            format!("{LEGACY_RUNTIME_BINARY}{suffix}"),
+            RuntimeAdapter::TuiCompatibility,
+        ),
+    ]
 }
 
 fn read_version(executable: &PathBuf) -> Option<String> {
@@ -385,9 +447,29 @@ mod tests {
         assert_eq!(
             directories
                 .iter()
-                .filter(|entry| **entry == PathBuf::from("runtime-bin"))
+                .filter(|entry| entry.as_os_str() == "runtime-bin")
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn neutral_runtime_precedes_the_tui_compatibility_adapter() {
+        let candidates = runtime_candidates();
+        assert!(candidates[0].0.starts_with(NEUTRAL_RUNTIME_BINARY));
+        assert_eq!(candidates[0].1, RuntimeAdapter::Neutral);
+        assert!(candidates[1].0.starts_with(LEGACY_RUNTIME_BINARY));
+        assert_eq!(candidates[1].1, RuntimeAdapter::TuiCompatibility);
+    }
+
+    #[test]
+    fn runtime_adapter_names_are_stable_transport_values() {
+        assert_eq!(RuntimeAdapter::Neutral.as_str(), "neutral");
+        assert_eq!(
+            RuntimeAdapter::TuiCompatibility.as_str(),
+            "tui-compatibility"
+        );
+        assert_eq!(RuntimeAdapter::Configured.as_str(), "configured");
+        assert_eq!(RuntimeAdapter::Missing.as_str(), "missing");
     }
 }

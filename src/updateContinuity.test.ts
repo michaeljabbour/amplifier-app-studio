@@ -75,8 +75,8 @@ describe("update restart continuity", () => {
     const storage = memoryStorage();
     expect(saveUpdateRestorePlan(storage, [session("active", "runtime-a"), session("other", "runtime-b")], "active", 10)).toBe(true);
     expect(takeUpdateRestorePlan(storage, 20)).toEqual([
-      { projectDir: "/projects/other", resumeId: "runtime-b", resumeName: "Session other", active: false },
-      { projectDir: "/projects/active", resumeId: "runtime-a", resumeName: "Session active", active: true },
+      { projectDir: "/projects/other", resumeId: "runtime-b", resumeName: undefined, active: false },
+      { projectDir: "/projects/active", resumeId: "runtime-a", resumeName: undefined, active: true },
     ]);
     expect(takeUpdateRestorePlan(storage, 20)).toEqual([]);
   });

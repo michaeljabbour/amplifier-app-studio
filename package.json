@@ -1,7 +1,7 @@
 {
   "name": "amplifier-app-studio",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,6 +18,7 @@
     "ios:init": "tauri ios init",
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build",
+    "macos:build:peer-qa": "tauri build --debug --bundles app --config src-tauri/tauri.peer-qa.conf.json",
     "macos:build:signed": "./scripts/build-macos-signed.sh",
     "tauri": "tauri"
   },

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Amplifier Studio Peer QA",
+  "identifier": "com.amplifier.studio.peerqa",
+  "bundle": {
+    "targets": ["app"],
+    "createUpdaterArtifacts": false
+  }
+}

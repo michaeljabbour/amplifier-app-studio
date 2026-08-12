@@ -12,7 +12,7 @@ interface RunPodRate {
   ratePerMillion: number;
 }
 
-// Temporary all-in planning rates supplied by the fleet owner. They allocate a
+// Fleet-owner planning rates. They allocate a
 // fixed $600k annual compute pool across the active RunPod models, assuming
 // 5M blended input+output tokens per endpoint-hour. These are estimates, not
 // provider list prices, and the UI must always label them as such.

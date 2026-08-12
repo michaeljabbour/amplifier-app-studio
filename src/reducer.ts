@@ -53,7 +53,9 @@ export function createSessionState(
     requestedModel: input.model,
     requestedProvider: input.provider,
     resumeId: input.resumeId,
-    title: input.resumeName || input.capabilityName || (input.resumeId ? `Resume ${input.resumeId.slice(0, 8)}` : "New session"),
+    title: usableSessionTitle(input.resumeName)
+      || input.capabilityName
+      || (input.resumeId ? "Restoring saved work" : "New session"),
     bundle: input.bundle || "default bundle",
     model: "starting…",
     mode: input.mode || "auto",
@@ -107,7 +109,9 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         runtimeSessionId: stringValue(record.session_id),
-        title: next.resumeId || next.capabilityName ? next.title : `Session ${stringValue(record.session_id).slice(0, 8)}`,
+        title: next.resumeId || next.capabilityName || next.title !== "New session"
+          ? next.title
+          : "Ready for your first prompt",
         bundle: stringValue(record.bundle, next.bundle),
         model: stringValue(record.model, next.model),
         phase: next.restoreProgress ? "starting" : "ready",
@@ -139,6 +143,8 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
           sessionId: stringValue(record.session_id) || undefined,
           parentId: stringValue(record.parent_id) || undefined,
           toolCallId: stringValue(record.tool_call_id) || undefined,
+          expiresAtMs: expiryFromRecord(record),
+          defaultChoice: stringValue(record.default_choice) || undefined,
         },
       }, {
         sessionId: stringValue(record.session_id),
@@ -352,7 +358,9 @@ export function markPromptSubmitted(
     pendingPrompt: { text: prompt, runtimeText, mode: state.mode },
     busy: true,
     activity: "Submitting prompt",
-    turnStartedAtMs: Date.now(),
+    // The elapsed clock starts only after a runtime event or status record
+    // confirms the turn. An optimistic local echo is not runtime acceptance.
+    turnStartedAtMs: undefined,
     error: undefined,
     goal: state.goal?.state === "continuing" || state.goal?.state === "armed" ? state.goal : undefined,
     liveTail: undefined,
@@ -554,6 +562,10 @@ function checkEnvelope(state: SessionViewState, record: ProtocolRecord): Session
 
 function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): SessionViewState {
   let next = state;
+  // A declared pipeline belongs to one turn. Start every new prompt from the
+  // generic observed loop; a Resolve/Attractor turn will replace it when its
+  // own `pipeline_started` event supplies the authoritative topology.
+  if (event.kind === "prompt_submit") next = { ...next, pipeline: undefined };
   if (event.kind === "provider_response_usage") {
     next = recordSessionUsage(next, event);
   }
@@ -669,8 +681,12 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
           attachments: decoded.attachments.length ? decoded.attachments : undefined,
         });
       }
+      const derivedTitle = shouldDeriveSessionTitle(next.title)
+        ? promptSessionTitle(decoded.text)
+        : undefined;
       return {
         ...next,
+        title: derivedTitle || next.title,
         pendingPrompt: undefined,
         mode,
         busy: !replay,
@@ -769,14 +785,19 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       });
     case "notification": {
       if (event.level === "decision" && stringValue(event.decision_id)) {
+        const choices = stringList(event.choices);
         return {
           ...next,
           pendingDecision: {
             decisionId: stringValue(event.decision_id),
             question: stringValue(event.question, stringValue(event.message, "Decision required")),
             reason: stringValue(event.reason),
-            choices: stringList(event.choices),
+            choices,
+            descriptions: stringList(event.descriptions),
+            recommendedChoice: recommendedDecisionChoice(choices),
+            multiple: event.multiple === true,
             custom: event.custom === true,
+            createdAtMs: eventTimestampMs(event),
           },
         };
       }
@@ -1713,18 +1734,23 @@ function reduceSessionStatus(state: SessionViewState, record: ProtocolRecord): S
         sessionId: stringValue(approval.session_id) || undefined,
         parentId: stringValue(approval.parent_id) || undefined,
         toolCallId: stringValue(approval.tool_call_id) || undefined,
+        expiresAtMs: expiryFromRecord(approval),
+        defaultChoice: stringValue(approval.default_choice) || undefined,
       }
     : undefined;
   const decisionId = stringValue(firstDecision?.decision_id);
   const pendingDecision = decisionId
     ? state.pendingDecision?.decisionId === decisionId
-      ? state.pendingDecision
+      ? mergeDecisionState(state.pendingDecision, firstDecision)
       : {
           decisionId,
           question: stringValue(firstDecision?.question, "Amplifier needs your input"),
-          reason: "",
-          choices: [],
-          custom: false,
+          reason: stringValue(firstDecision?.reason),
+          choices: stringList(firstDecision?.choices),
+          descriptions: stringList(firstDecision?.descriptions),
+          recommendedChoice: recommendedDecisionChoice(stringList(firstDecision?.choices)),
+          multiple: firstDecision?.multiple === true,
+          custom: firstDecision?.custom === true,
         }
     : undefined;
 
@@ -2108,6 +2134,35 @@ function eventTimestampMs(event: UIEvent): number | undefined {
     : undefined;
 }
 
+function expiryFromRecord(record: Record<string, unknown>): number | undefined {
+  const seconds = numberValue(record.expires_in_seconds, -1);
+  return seconds >= 0 ? Date.now() + seconds * 1_000 : undefined;
+}
+
+function recommendedDecisionChoice(choices: string[]): string | undefined {
+  return choices.find((choice) => /\brecommended\b/i.test(choice));
+}
+
+function mergeDecisionState(
+  existing: NonNullable<SessionViewState["pendingDecision"]>,
+  incoming: Record<string, unknown> | undefined,
+): NonNullable<SessionViewState["pendingDecision"]> {
+  if (!incoming) return existing;
+  const incomingChoices = stringList(incoming.choices);
+  const choices = incomingChoices.length ? incomingChoices : existing.choices;
+  const incomingDescriptions = stringList(incoming.descriptions);
+  return {
+    ...existing,
+    question: stringValue(incoming.question, existing.question),
+    reason: stringValue(incoming.reason, existing.reason),
+    choices,
+    descriptions: incomingDescriptions.length ? incomingDescriptions : existing.descriptions,
+    recommendedChoice: recommendedDecisionChoice(choices) || existing.recommendedChoice,
+    multiple: incoming.multiple === true || existing.multiple,
+    custom: incoming.custom === true || existing.custom,
+  };
+}
+
 function settleTool(
   state: SessionViewState,
   event: UIEvent,
@@ -2207,6 +2262,35 @@ function bootMessage(action: string, detail: string): string {
 
 function capitalize(value: string): string {
   return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
+}
+
+function shouldDeriveSessionTitle(title: string): boolean {
+  return title === "New session"
+    || title === "Ready for your first prompt"
+    || title === "Restoring saved work"
+    || title === "Untitled Amplifier run"
+    || /^Work in /i.test(title)
+    || /^(?:Session|Resume) [a-z0-9-]{1,12}$/i.test(title);
+}
+
+export function usableSessionTitle(title: string | undefined): string | undefined {
+  const clean = title?.trim();
+  if (!clean
+    || /^(?:Session|Resume) [a-z0-9-]{1,12}$/i.test(clean)
+    || clean === "Restoring saved work") return undefined;
+  return clean;
+}
+
+function promptSessionTitle(prompt: string): string | undefined {
+  const clean = prompt
+    .replace(/<system-reminder[\s\S]*?<\/system-reminder>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[^a-z0-9]+/i, "");
+  if (!clean) return undefined;
+  const words = clean.split(" ").slice(0, 7).join(" ");
+  const title = truncate(words, 48).replace(/[.,;:!?-]+$/, "");
+  return capitalize(title);
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {

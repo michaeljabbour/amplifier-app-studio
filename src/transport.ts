@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, StoredSession } from "./protocol";
 import { isRecord } from "./protocol";
 import type { RuntimeSettingScope } from "./settingsSchema";
+import type { AudioRecording } from "./transcription";
 
 export interface ProcessLog {
   stream: string;
@@ -32,10 +34,19 @@ export interface RuntimeStatus {
   installed: boolean;
   executable?: string;
   version?: string;
+  adapter: "neutral" | "tui-compatibility" | "configured" | "missing";
+  compatibilityMode: boolean;
   installSupported: boolean;
   providerStatusAvailable: boolean;
   providerConfigured: boolean;
   providerMessage: string;
+  message: string;
+}
+
+export interface TranscriptionStatus {
+  available: boolean;
+  provider?: string;
+  model?: string;
   message: string;
 }
 
@@ -208,7 +219,23 @@ export async function listenNativeAttachmentDrops(
   handler: (event: NativeAttachmentDropEvent) => void,
 ): Promise<UnlistenFn> {
   if (!isTauriRuntime() || usesWebBridge()) return () => undefined;
-  return listen<NativeAttachmentDropEvent>("app://native-attachment-drop", (event) => handler(event.payload));
+  return getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === "enter") {
+      handler({ type: "enter" });
+      return;
+    }
+    if (event.payload.type === "leave") {
+      handler({ type: "leave" });
+      return;
+    }
+    if (event.payload.type !== "drop") return;
+    void invoke<NativeAttachment[]>("load_attachment_paths", { paths: event.payload.paths })
+      .then((attachments) => handler({ type: "drop", attachments }))
+      .catch((error) => handler({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      }));
+  });
 }
 
 export async function openLocalOutput(projectDir: string, path: string): Promise<void> {
@@ -367,6 +394,27 @@ export async function configureProvider(input: {
     model: clean(input.model),
     baseUrl: clean(input.baseUrl),
   });
+}
+
+export async function getTranscriptionStatus(): Promise<TranscriptionStatus> {
+  const bridge = bridgeBaseUrl();
+  if (bridge) return fetchJson<TranscriptionStatus>(new URL("/api/transcription", bridge));
+  requireTauri();
+  return invoke<TranscriptionStatus>("transcription_status");
+}
+
+export async function transcribeAudio(recording: AudioRecording): Promise<string> {
+  const bridge = bridgeBaseUrl();
+  if (bridge) {
+    const result = await fetchJson<{ text: string }>(new URL("/api/transcription", bridge), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(recording),
+    });
+    return result.text;
+  }
+  requireTauri();
+  return invoke<string>("transcribe_audio", { request: recording });
 }
 
 async function launchBridgeSession(

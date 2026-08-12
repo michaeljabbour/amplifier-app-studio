@@ -38,7 +38,7 @@ export function TabStrip(props: Props) {
               class="session-tab"
               classList={{ active: props.activeId === session.guiId }}
               onClick={() => props.onSelect(session.guiId)}
-              title={session.projectDir}
+              title={`${session.title}\n${session.projectDir}`}
             >
               <span class={`tab-status phase-${session.phase}`} aria-hidden="true" />
               <span class="tab-title">{session.title}</span>
