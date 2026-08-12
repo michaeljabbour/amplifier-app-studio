@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { SessionViewState, TranscriptBlock } from "../protocol";
 import { Markdown } from "./Markdown";
 
@@ -16,9 +16,13 @@ interface Props {
 
 export function Transcript(props: Props) {
   let scroller: HTMLDivElement | undefined;
-  let pinned = true;
   let scrollFrame = 0;
   const [now, setNow] = createSignal(Date.now());
+  const [following, setFollowing] = createSignal(true);
+  // Keep status polling and unrelated session updates from snapping a reader
+  // back to the bottom. The memo only notifies the effect when visible
+  // transcript content actually changes.
+  const contentMarker = createMemo(() => transcriptScrollMarker(props.state));
 
   onMount(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -38,21 +42,36 @@ export function Transcript(props: Props) {
   );
 
   createEffect(() => {
-    const marker = `${props.state.blocks.length}:${props.state.liveTail?.text.length ?? 0}`;
-    void marker;
-    if (!pinned) return;
+    void contentMarker();
+    if (!following()) return;
     window.cancelAnimationFrame(scrollFrame);
     scrollFrame = window.requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "auto" }));
   });
+
+  const updateFollowing = () => {
+    if (!scroller) return;
+    setFollowing(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96);
+  };
+
+  const jumpToLatest = () => {
+    setFollowing(true);
+    window.cancelAnimationFrame(scrollFrame);
+    scrollFrame = window.requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
+  };
 
   return (
     <main
       class="transcript"
       ref={scroller}
-      onScroll={() => {
-        if (!scroller) return;
-        pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96;
+      tabIndex={0}
+      aria-label="Amplifier coordinator transcript"
+      onWheel={(event) => {
+        if (event.deltaY < 0) setFollowing(false);
       }}
+      onKeyDown={(event) => {
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) setFollowing(false);
+      }}
+      onScroll={updateFollowing}
     >
       <div class="transcript-inner">
         <Show when={props.state.phase === "starting"}>
@@ -158,8 +177,23 @@ export function Transcript(props: Props) {
           </div>
         </Show>
       </div>
+      <Show when={!following()}>
+        <button class="transcript-jump-latest" onClick={jumpToLatest}>Jump to latest</button>
+      </Show>
     </main>
   );
+}
+
+export function transcriptScrollMarker(state: SessionViewState): string {
+  const last = state.blocks.at(-1);
+  const content = !last
+    ? ""
+    : last.kind === "tool"
+      ? `${last.summary}:${last.detail}`
+      : last.kind === "thinking" || last.kind === "user" || last.kind === "answer" || last.kind === "notice"
+        ? last.text
+        : "";
+  return `${state.blocks.length}:${last?.kind || "none"}:${content.length}:${state.liveTail?.blockType || ""}:${state.liveTail?.text.length || 0}`;
 }
 
 function formatDuration(milliseconds: number): string {

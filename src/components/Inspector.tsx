@@ -276,10 +276,13 @@ function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (path: st
         <div class="output-list">
           <For each={[...props.state.outputs].reverse()}>{(output) => (
             <div class={`output-item ${output.kind}`}>
-              <span>{output.kind}</span><strong>{output.title}</strong><code>{output.path}</code>
-              <small>{outputProvenance(output)}</small>
+              <div class="output-item-copy">
+                <div class="output-item-heading"><span>{output.kind}</span><strong>{output.title}</strong></div>
+                <code title={output.path}>{output.path}</code>
+                <small>{outputProvenance(output)}</small>
+              </div>
               <Show when={props.onOpenOutput}>
-                <button class="secondary-button" onClick={() => void props.onOpenOutput?.(output.path)}>Open output</button>
+                <button class="secondary-button output-open-button" onClick={() => void props.onOpenOutput?.(output.path)}>Open</button>
               </Show>
             </div>
           )}</For>

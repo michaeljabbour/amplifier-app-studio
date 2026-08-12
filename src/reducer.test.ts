@@ -761,6 +761,33 @@ describe("session reducer", () => {
     expect(state.plans["agent:child-1"].updateStatus).toBe("applied");
   });
 
+  it("accepts update_plan payloads as structured plans", () => {
+    let state = reduceRecord(started(), runtime(2, {
+      kind: "tool_pre",
+      tool_name: "functions.update_plan",
+      tool_call_id: "root-update-plan",
+      tool_input: {
+        explanation: "Fix the reported defects",
+        plan: [
+          { step: "Inspect the runtime evidence", status: "completed" },
+          { step: "Repair the UI", status: "in_progress" },
+        ],
+      },
+    }));
+
+    expect(state.plans.coordinator.items).toEqual([
+      { content: "Inspect the runtime evidence", activeForm: undefined, status: "completed" },
+      { content: "Repair the UI", activeForm: undefined, status: "in_progress" },
+    ]);
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_post",
+      tool_name: "functions.update_plan",
+      tool_call_id: "root-update-plan",
+      result: { status: "ok" },
+    }));
+    expect(state.plans.coordinator.updateStatus).toBe("applied");
+  });
+
   it("estimates all-agent RunPod spend without treating LiteLLM zero as free", () => {
     let state = reduceRecord(fresh(), {
       schema_version: 1,
@@ -885,6 +912,25 @@ describe("session reducer", () => {
       eventId: "ev-2",
     });
     expect(state.outputs[0]?.runtimeHost).toBeUndefined();
+  });
+
+  it("does not mislabel files returned by read, glob, search, or shell tools as outputs", () => {
+    let state = started();
+    for (const [index, toolName] of ["read_file", "glob", "grep", "bash"].entries()) {
+      state = reduceRecord(state, runtime(index + 2, {
+        kind: "tool_post",
+        tool_name: toolName,
+        tool_call_id: `reference-${index}`,
+        result: {
+          success: true,
+          output: {
+            file_path: "/tmp/existing/BACKLOG.md",
+            matches: [{ path: "/tmp/existing/NOTES.md" }],
+          },
+        },
+      }));
+    }
+    expect(state.outputs).toEqual([]);
   });
 
   it("surfaces autonomous goal state and a durable markdown completion notice", () => {
