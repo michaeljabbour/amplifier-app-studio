@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     env,
+    ffi::{OsStr, OsString},
     path::PathBuf,
     process::{Command, Stdio},
 };
@@ -167,11 +168,16 @@ pub async fn configure_provider(
         args.extend(["--base-url".to_owned(), base_url]);
     }
 
-    let mut child = tokio::process::Command::new(&binary)
+    let mut command = tokio::process::Command::new(&binary);
+    command
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = runtime_path(&binary) {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start provider setup: {error}"))?;
     let mut stdin = child
@@ -223,6 +229,61 @@ pub(crate) fn binary_or_command() -> PathBuf {
     resolve_binary().unwrap_or_else(|| PathBuf::from("amplifier-tui"))
 }
 
+/// Build a deterministic executable search path for the out-of-process
+/// runtime and everything it launches (notably `uv`). Finder and updater
+/// restarts do not inherit the user's interactive shell PATH on macOS, even
+/// though Studio can still resolve `~/.local/bin/amplifier-tui` directly.
+/// Keep the runtime binary's own directory first, preserve inherited entries,
+/// then add the conventional per-user and platform tool locations.
+pub(crate) fn runtime_path(executable: &std::path::Path) -> Option<OsString> {
+    runtime_path_from(
+        executable,
+        env::var_os("PATH").as_deref(),
+        dirs::home_dir().as_deref(),
+    )
+}
+
+fn runtime_path_from(
+    executable: &std::path::Path,
+    inherited: Option<&OsStr>,
+    home: Option<&std::path::Path>,
+) -> Option<OsString> {
+    let mut directories = Vec::<PathBuf>::new();
+    let mut push = |directory: PathBuf| {
+        if !directory.as_os_str().is_empty() && !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    };
+
+    if let Some(parent) = executable.parent() {
+        push(parent.to_path_buf());
+    }
+    if let Some(path) = inherited {
+        for directory in env::split_paths(path) {
+            push(directory);
+        }
+    }
+    if let Some(home) = home {
+        push(home.join(".local/bin"));
+        push(home.join(".cargo/bin"));
+        #[cfg(target_os = "windows")]
+        {
+            push(home.join("AppData/Local/Programs/Python/Scripts"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        push(PathBuf::from("/opt/homebrew/bin"));
+        push(PathBuf::from("/usr/local/bin"));
+    }
+    #[cfg(unix)]
+    for directory in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
+        push(PathBuf::from(directory));
+    }
+
+    env::join_paths(directories).ok()
+}
+
 fn resolve_binary() -> Option<PathBuf> {
     if let Some(configured) = env::var_os(RUNTIME_BINARY_ENV) {
         let candidate = PathBuf::from(configured);
@@ -262,7 +323,12 @@ fn resolve_binary() -> Option<PathBuf> {
 }
 
 fn read_version(executable: &PathBuf) -> Option<String> {
-    let output = Command::new(executable).arg("--version").output().ok()?;
+    let mut command = Command::new(executable);
+    command.arg("--version");
+    if let Some(path) = runtime_path(executable) {
+        command.env("PATH", path);
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -271,10 +337,12 @@ fn read_version(executable: &PathBuf) -> Option<String> {
 }
 
 fn read_provider_status(executable: &PathBuf) -> Option<ProviderStatus> {
-    let output = Command::new(executable)
-        .args(["provider", "status", "--format", "json"])
-        .output()
-        .ok()?;
+    let mut command = Command::new(executable);
+    command.args(["provider", "status", "--format", "json"]);
+    if let Some(path) = runtime_path(executable) {
+        command.env("PATH", path);
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -295,5 +363,31 @@ mod tests {
         if !runtime.installed {
             assert!(!runtime.provider_configured);
         }
+    }
+
+    #[test]
+    fn runtime_path_keeps_runtime_and_user_tool_directories_without_duplicates() {
+        let runtime_dir = PathBuf::from("runtime-bin");
+        let home = PathBuf::from("example-home");
+        let inherited =
+            env::join_paths([PathBuf::from("system-bin"), runtime_dir.clone()]).expect("test path");
+        let path = runtime_path_from(
+            &runtime_dir.join("amplifier-tui"),
+            Some(&inherited),
+            Some(&home),
+        )
+        .expect("runtime path");
+        let directories = env::split_paths(&path).collect::<Vec<_>>();
+
+        assert_eq!(directories[0], runtime_dir);
+        assert!(directories.contains(&home.join(".local/bin")));
+        assert!(directories.contains(&home.join(".cargo/bin")));
+        assert_eq!(
+            directories
+                .iter()
+                .filter(|entry| **entry == PathBuf::from("runtime-bin"))
+                .count(),
+            1
+        );
     }
 }

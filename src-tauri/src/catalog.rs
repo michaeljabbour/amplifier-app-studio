@@ -119,12 +119,17 @@ fn normalize_github_bundle(uri: &str) -> Result<String, String> {
 
 fn run_cli(cwd: &std::path::Path, args: &[&str]) -> Result<String, String> {
     let binary = runtime_setup::binary_or_command();
-    let output = Command::new(&binary)
+    let mut command = Command::new(&binary);
+    command
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
-        .env("COLUMNS", "5000")
+        .env("COLUMNS", "5000");
+    if let Some(path) = runtime_setup::runtime_path(&binary) {
+        command.env("PATH", path);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("Could not run {}: {error}", binary.display()))?;
     if !output.status.success() {
