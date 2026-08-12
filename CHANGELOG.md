@@ -15,6 +15,12 @@ path for signed public artifacts.
   runtime installation support.
 - Added App Use, Browser Use, Imagen, Attractor, terminal, bundle, output, and
   provider surfaces without hiding the coordinator chat.
+- Added native desktop image drops with validated PNG, JPEG, GIF, and WebP
+  attachments, while retaining browser file drops for the web client.
+- Corrected completed-agent inspection so recorded responses and reasoning are
+  never presented as live activity.
+- Added all-agent cost reconstruction with provider-reported, RunPod-estimated,
+  partial, and unavailable states instead of presenting missing prices as $0.
 - Hardened desktop release gating, Windows Authenticode configuration, unified
   updater metadata, and macOS notarization prerequisites.
 
