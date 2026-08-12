@@ -1,13 +1,15 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { appendImageFiles, formatImageBytes, hasImageFiles, SUPPORTED_IMAGE_TYPES } from "../imageAttachments";
+import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import { machinePresence } from "../machinePresence";
-import type { ComposerImage, SessionViewState } from "../protocol";
+import type { ComposerAttachment, SessionViewState } from "../protocol";
+import { AttachmentStrip } from "./AttachmentStrip";
 
 interface Props {
   state: SessionViewState;
-  onSend: (text: string, images: ComposerImage[]) => Promise<boolean>;
+  onSend: (text: string, attachments: ComposerAttachment[]) => Promise<boolean>;
   onDraft: (text: string) => void;
-  onImages: (images: ComposerImage[]) => void;
+  onAttachments: (attachments: ComposerAttachment[]) => void;
+  onPickAttachments: () => Promise<ComposerAttachment[]>;
   onAutopilot: () => void;
   autopilotActive: boolean;
   autopilotAvailable: boolean;
@@ -16,8 +18,8 @@ interface Props {
 export function Composer(props: Props) {
   const [sending, setSending] = createSignal(false);
   const [startersOpen, setStartersOpen] = createSignal(false);
-  const [draggingImages, setDraggingImages] = createSignal(false);
-  const [imageError, setImageError] = createSignal<string>();
+  const [draggingAttachments, setDraggingAttachments] = createSignal(false);
+  const [attachmentError, setAttachmentError] = createSignal<string>();
   let textarea: HTMLTextAreaElement | undefined;
   const presence = createMemo(() => machinePresence(props.state));
 
@@ -27,27 +29,37 @@ export function Composer(props: Props) {
   });
 
   const send = async () => {
-    const images = props.state.composerImages;
-    const value = props.state.composerDraft.trim() || (images.length ? "Please review the attached image(s)." : "");
+    const attachments = props.state.composerAttachments;
+    const value = props.state.composerDraft.trim() || (attachments.length ? "Please review the attached file(s)." : "");
     if (!value || sending()) return;
     setSending(true);
     try {
-      if (await props.onSend(value, images)) {
+      if (await props.onSend(value, attachments)) {
         props.onDraft("");
-        props.onImages([]);
-        setImageError(undefined);
+        props.onAttachments([]);
+        setAttachmentError(undefined);
       }
     } finally {
       setSending(false);
     }
   };
 
-  const addImageFiles = async (files: File[]) => {
+  const addFiles = async (files: File[]) => {
     try {
-      props.onImages(await appendImageFiles(props.state.composerImages, files));
-      setImageError(undefined);
+      props.onAttachments(await appendAttachmentFiles(props.state.composerAttachments, files));
+      setAttachmentError(undefined);
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : "Could not read the dropped image.");
+      setAttachmentError(error instanceof Error ? error.message : "Could not read the dropped file.");
+    }
+  };
+
+  const pickFiles = async () => {
+    try {
+      const attachments = await props.onPickAttachments();
+      if (attachments.length) props.onAttachments(appendComposerAttachments(props.state.composerAttachments, attachments));
+      setAttachmentError(undefined);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "Could not add the selected files.");
     }
   };
 
@@ -61,33 +73,33 @@ export function Composer(props: Props) {
   return (
     <div
       class="composer-shell"
-      classList={{ "dragging-images": draggingImages() }}
+      classList={{ "dragging-attachments": draggingAttachments() }}
       onDragEnter={(event) => {
         const transfer = event.dataTransfer;
-        if (transfer && hasImageFiles(transfer)) {
+        if (transfer && hasAttachmentFiles(transfer)) {
           event.preventDefault();
-          setDraggingImages(true);
+          setDraggingAttachments(true);
         }
       }}
       onDragOver={(event) => {
         const transfer = event.dataTransfer;
-        if (transfer && hasImageFiles(transfer)) {
+        if (transfer && hasAttachmentFiles(transfer)) {
           event.preventDefault();
           transfer.dropEffect = "copy";
-          setDraggingImages(true);
+          setDraggingAttachments(true);
         }
       }}
       onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingAttachments(false);
       }}
       onDrop={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        setDraggingImages(false);
-        void addImageFiles(Array.from(event.dataTransfer?.files || []));
+        setDraggingAttachments(false);
+        void addFiles(Array.from(event.dataTransfer?.files || []));
       }}
     >
-      <Show when={draggingImages()}><div class="composer-drop-target">Drop images to attach</div></Show>
+      <Show when={draggingAttachments()}><div class="composer-drop-target">Drop files to attach</div></Show>
       <div class="composer-mode">
         <div class={`machine-presence ${presence().tone}`} role="status" aria-live="polite">
           <span class="machine-avatar" classList={{ live: presence().live }} aria-hidden="true"><i /><i /><b /></span>
@@ -127,10 +139,10 @@ export function Composer(props: Props) {
             : "Message Amplifier"}
         onInput={(event) => props.onDraft(event.currentTarget.value)}
         onPaste={(event) => {
-          const files = Array.from(event.clipboardData?.files || []).filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
+          const files = Array.from(event.clipboardData?.files || []).filter(isSupportedBrowserFile);
           if (files.length) {
             event.preventDefault();
-            void addImageFiles(files);
+            void addFiles(files);
           }
         }}
         onKeyDown={(event) => {
@@ -140,22 +152,13 @@ export function Composer(props: Props) {
           }
         }}
       />
-      <Show when={props.state.composerImages.length}>
-        <div class="composer-images" aria-label="Attached images">
-          <For each={props.state.composerImages}>{(image) => (
-            <div class="composer-image">
-              <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
-              <span><strong>{image.name}</strong><small>{formatImageBytes(image.size)}</small></span>
-              <button
-                type="button"
-                aria-label={`Remove ${image.name}`}
-                onClick={() => props.onImages(props.state.composerImages.filter((item) => item.id !== image.id))}
-              >×</button>
-            </div>
-          )}</For>
-        </div>
+      <Show when={props.state.composerAttachments.length}>
+        <AttachmentStrip
+          attachments={props.state.composerAttachments}
+          onRemove={(id) => props.onAttachments(props.state.composerAttachments.filter((item) => item.id !== id))}
+        />
       </Show>
-      <Show when={imageError()}><div class="composer-image-error" role="alert">{imageError()}</div></Show>
+      <Show when={attachmentError()}><div class="composer-attachment-error" role="alert">{attachmentError()}</div></Show>
       <Show when={startersOpen()}>
         <div class="starter-menu" role="region" aria-label="Ways to start">
           <div><strong>Ways to start</strong><span>Choose one, then make it yours before sending.</span></div>
@@ -171,9 +174,10 @@ export function Composer(props: Props) {
       <div class="composer-actions">
         <div class="composer-left-actions">
           <button type="button" class="starter-trigger" aria-expanded={startersOpen()} onClick={() => setStartersOpen((open) => !open)}>Ways to start</button>
+          <button type="button" class="attachment-trigger" disabled={sending()} onClick={() => void pickFiles()}>Add files</button>
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>
-        <button disabled={(!props.state.composerDraft.trim() && !props.state.composerImages.length) || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
+        <button disabled={(!props.state.composerDraft.trim() && !props.state.composerAttachments.length) || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
           {props.state.busy ? "Steer" : "Send"}<span aria-hidden="true">↑</span>
         </button>
       </div>

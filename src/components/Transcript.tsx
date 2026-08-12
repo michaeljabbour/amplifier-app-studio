@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { SessionViewState, TranscriptBlock } from "../protocol";
+import { AttachmentStrip } from "./AttachmentStrip";
 import { Markdown } from "./Markdown";
 
 interface Props {
@@ -231,15 +232,11 @@ function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId
           <Show when={block().kind === "user"}>
             <div class="block-label">YOU · {(block() as Extract<TranscriptBlock, { kind: "user" }>).mode || "auto"}</div>
             <Markdown class="user-text" text={(block() as Extract<TranscriptBlock, { kind: "user" }>).text} />
-            <Show when={(block() as Extract<TranscriptBlock, { kind: "user" }>).images?.length}>
-              <div class="user-images" aria-label="Prompt image attachments">
-                <For each={(block() as Extract<TranscriptBlock, { kind: "user" }>).images}>{(image) => (
-                  <figure>
-                    <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
-                    <figcaption>{image.name}</figcaption>
-                  </figure>
-                )}</For>
-              </div>
+            <Show when={(block() as Extract<TranscriptBlock, { kind: "user" }>).attachments?.length}>
+              <AttachmentStrip
+                attachments={(block() as Extract<TranscriptBlock, { kind: "user" }>).attachments || []}
+                transcript
+              />
             </Show>
           </Show>
           <Show when={block().kind === "answer"}>

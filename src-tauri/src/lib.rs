@@ -1,6 +1,8 @@
 mod catalog;
 mod image_drop;
 mod protocol;
+#[cfg(desktop)]
+mod runtime_settings;
 mod runtime_setup;
 mod session;
 mod store;
@@ -240,11 +242,44 @@ async fn configure_provider(
     runtime_setup::configure_provider(provider_type, api_key, model, base_url).await
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn read_runtime_settings(
+    project_dir: String,
+) -> Result<runtime_settings::RuntimeSettingsSnapshot, String> {
+    runtime_settings::read(project_dir).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn apply_runtime_settings(
+    project_dir: String,
+    changes: Vec<runtime_settings::RuntimeSettingChange>,
+) -> Result<runtime_settings::RuntimeSettingsSnapshot, String> {
+    runtime_settings::apply(project_dir, changes).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn load_attachment_paths(
+    paths: Vec<String>,
+) -> Result<Vec<image_drop::NativeAttachment>, String> {
+    let paths = paths
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    tauri::async_runtime::spawn_blocking(move || image_drop::load_attachments(&paths))
+        .await
+        .map_err(|error| format!("Attachment loading task failed: {error}"))?
+}
+
 #[tauri::command]
 fn default_project_dir() -> Result<String, String> {
-    std::env::current_dir()
+    dirs::home_dir()
+        .map(Ok)
+        .unwrap_or_else(std::env::current_dir)
         .map(|path| path.to_string_lossy().into_owned())
-        .map_err(|error| format!("Could not read the current directory: {error}"))
+        .map_err(|error| format!("Could not determine a default project directory: {error}"))
 }
 
 #[cfg(desktop)]
@@ -286,6 +321,7 @@ pub fn run() {
         .setup(|_app| {
             #[cfg(desktop)]
             {
+                _app.handle().plugin(tauri_plugin_dialog::init())?;
                 _app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
                 _app.handle().plugin(tauri_plugin_opener::init())?;
@@ -307,6 +343,12 @@ pub fn run() {
             install_runtime,
             configure_provider,
             default_project_dir,
+            #[cfg(desktop)]
+            load_attachment_paths,
+            #[cfg(desktop)]
+            read_runtime_settings,
+            #[cfg(desktop)]
+            apply_runtime_settings,
             #[cfg(desktop)]
             open_output,
             #[cfg(desktop)]

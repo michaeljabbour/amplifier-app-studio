@@ -1,8 +1,9 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { appendImageFiles, formatImageBytes, hasImageFiles, SUPPORTED_IMAGE_TYPES } from "../imageAttachments";
-import type { ComposerImage, StoredSession } from "../protocol";
+import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
+import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
 import { storedSessionResumeBlocker } from "../sessionAvailability";
+import { AttachmentStrip } from "./AttachmentStrip";
 
 interface Props {
   sessions: StoredSession[];
@@ -12,7 +13,7 @@ interface Props {
   checking: boolean;
   installing: boolean;
   error?: string;
-  onSend: (text: string, images: ComposerImage[]) => Promise<void>;
+  onSend: (text: string, attachments: ComposerAttachment[]) => Promise<void>;
   onResume: (session: StoredSession) => Promise<void>;
   onNew: () => void;
   onDrawer: () => void;
@@ -20,14 +21,15 @@ interface Props {
   onConfigureProvider: () => void;
   providerSetupSupported: boolean;
   onSettings: () => void;
-  images: ComposerImage[];
-  onImages: (images: ComposerImage[]) => void;
+  attachments: ComposerAttachment[];
+  onAttachments: (attachments: ComposerAttachment[]) => void;
+  onPickAttachments: () => Promise<ComposerAttachment[]>;
 }
 
 export function CoordinatorHome(props: Props) {
   const [text, setText] = createSignal("");
-  const images = () => props.images;
-  const [draggingImages, setDraggingImages] = createSignal(false);
+  const attachments = () => props.attachments;
+  const [draggingAttachments, setDraggingAttachments] = createSignal(false);
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const recent = createMemo(() => props.sessions.slice(0, 24));
@@ -50,21 +52,31 @@ export function CoordinatorHome(props: Props) {
   };
 
   const send = async () => {
-    const value = text().trim() || (images().length ? "Please review the attached image(s)." : "");
+    const value = text().trim() || (attachments().length ? "Please review the attached file(s)." : "");
     if (!value || !ready()) return;
     await run(async () => {
-      await props.onSend(value, images());
+      await props.onSend(value, attachments());
       setText("");
-      props.onImages([]);
+      props.onAttachments([]);
     });
   };
 
-  const addImageFiles = async (files: File[]) => {
+  const addFiles = async (files: File[]) => {
     try {
-      props.onImages(await appendImageFiles(images(), files));
+      props.onAttachments(await appendAttachmentFiles(attachments(), files));
       setLocalError(undefined);
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "Could not read the dropped image.");
+      setLocalError(error instanceof Error ? error.message : "Could not read the dropped file.");
+    }
+  };
+
+  const pickFiles = async () => {
+    try {
+      const selected = await props.onPickAttachments();
+      if (selected.length) props.onAttachments(appendComposerAttachments(attachments(), selected));
+      setLocalError(undefined);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Could not add the selected files.");
     }
   };
 
@@ -151,32 +163,32 @@ export function CoordinatorHome(props: Props) {
 
         <div
           class="home-composer"
-          classList={{ "dragging-images": draggingImages() }}
+          classList={{ "dragging-attachments": draggingAttachments() }}
           onDragEnter={(event) => {
             const transfer = event.dataTransfer;
-            if (transfer && hasImageFiles(transfer)) {
+            if (transfer && hasAttachmentFiles(transfer)) {
               event.preventDefault();
-              setDraggingImages(true);
+              setDraggingAttachments(true);
             }
           }}
           onDragOver={(event) => {
             const transfer = event.dataTransfer;
-            if (transfer && hasImageFiles(transfer)) {
+            if (transfer && hasAttachmentFiles(transfer)) {
               event.preventDefault();
               transfer.dropEffect = "copy";
-              setDraggingImages(true);
+              setDraggingAttachments(true);
             }
           }}
           onDragLeave={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingAttachments(false);
           }}
           onDrop={(event) => {
             event.preventDefault();
-            setDraggingImages(false);
-            void addImageFiles(Array.from(event.dataTransfer?.files || []));
+            setDraggingAttachments(false);
+            void addFiles(Array.from(event.dataTransfer?.files || []));
           }}
         >
-          <Show when={draggingImages()}><div class="composer-drop-target">Drop images to start with</div></Show>
+          <Show when={draggingAttachments()}><div class="composer-drop-target">Drop files to start with</div></Show>
           <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting coordinator…" : ready() ? "Ready when you are" : props.checking ? "Checking runtime…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : "Runtime setup required"}</div>
           <textarea
             value={text()}
@@ -185,10 +197,10 @@ export function CoordinatorHome(props: Props) {
             aria-label="Message Amplifier"
             onInput={(event) => setText(event.currentTarget.value)}
             onPaste={(event) => {
-              const files = Array.from(event.clipboardData?.files || []).filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
+              const files = Array.from(event.clipboardData?.files || []).filter(isSupportedBrowserFile);
               if (files.length) {
                 event.preventDefault();
-                void addImageFiles(files);
+                void addFiles(files);
               }
             }}
             onKeyDown={(event) => {
@@ -198,20 +210,19 @@ export function CoordinatorHome(props: Props) {
               }
             }}
           />
-          <Show when={images().length}>
-            <div class="composer-images" aria-label="Attached images">
-              <For each={images()}>{(image) => (
-                <div class="composer-image">
-                  <img src={`data:${image.mediaType};base64,${image.data}`} alt={image.name} />
-                  <span><strong>{image.name}</strong><small>{formatImageBytes(image.size)}</small></span>
-                  <button type="button" aria-label={`Remove ${image.name}`} onClick={() => props.onImages(images().filter((item) => item.id !== image.id))}>×</button>
-                </div>
-              )}</For>
-            </div>
+          <Show when={attachments().length}>
+            <AttachmentStrip
+              attachments={attachments()}
+              onRemove={(id) => props.onAttachments(attachments().filter((item) => item.id !== id))}
+            />
           </Show>
           <div class="home-composer-actions">
-            <div><button type="button" onClick={props.onNew}>Configure session</button><span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span></div>
-            <button type="button" disabled={(!text().trim() && !images().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
+            <div class="home-composer-tools">
+              <button type="button" onClick={props.onNew}>Configure session</button>
+              <button type="button" onClick={() => void pickFiles()}>Add files</button>
+              <span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span>
+            </div>
+            <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
           </div>
           <Show when={localError() || props.error}><small class="home-composer-error">{localError() || props.error}</small></Show>
         </div>

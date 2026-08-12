@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { promptWithDocumentAttachments } from "./attachments";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
 import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded } from "./reducer";
 
@@ -385,6 +386,7 @@ describe("session reducer", () => {
 
   it("keeps submitted image attachments with the optimistic user message", () => {
     const image = {
+      kind: "image" as const,
       id: "image-1",
       name: "diagram.png",
       mediaType: "image/png" as const,
@@ -396,8 +398,32 @@ describe("session reducer", () => {
     expect(state.blocks.at(-1)).toMatchObject({
       kind: "user",
       text: "Review this diagram",
-      images: [image],
+      attachments: [image],
     });
+  });
+
+  it("reconciles extracted document context without duplicating or exposing its body", () => {
+    const document = {
+      kind: "document" as const,
+      id: "document-1",
+      name: "brief.md",
+      mediaType: "text/markdown",
+      text: "# Brief\n\nKeep this visible as an attachment.",
+      size: 46,
+      truncated: false,
+    };
+    const runtimeText = promptWithDocumentAttachments("Review the brief", [document]);
+    let state = markPromptSubmitted(started(), "Review the brief", [document], runtimeText);
+
+    state = reduceRecord(state, runtime(2, {
+      kind: "prompt_submit",
+      prompt: runtimeText,
+      mode: "chat",
+    }));
+
+    const userBlocks = state.blocks.filter((block) => block.kind === "user");
+    expect(userBlocks).toHaveLength(1);
+    expect(userBlocks[0]).toMatchObject({ text: "Review the brief", attachments: [document] });
   });
 
   it("makes a prompt transport failure visible and returns control", () => {

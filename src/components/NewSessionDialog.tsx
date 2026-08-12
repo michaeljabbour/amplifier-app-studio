@@ -5,7 +5,9 @@ import { toolContractFailure } from "../providerSafety";
 interface Props {
   initial: NewSessionInput;
   catalog: CapabilityCatalog;
+  nativeProjectPicker: boolean;
   onCancel: () => void;
+  onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
   onStart: (input: NewSessionInput) => Promise<void>;
 }
 
@@ -17,6 +19,7 @@ export function NewSessionDialog(props: Props) {
   const [mode, setMode] = createSignal(props.initial.mode || "");
   const [error, setError] = createSignal("");
   const [starting, setStarting] = createSignal(false);
+  const [pickingProject, setPickingProject] = createSignal(false);
   const overrideMismatch = createMemo(() => Boolean(model().trim()) !== Boolean(provider().trim()));
   const selectedProvider = createMemo(() => props.catalog.providers.find((item) => item.name === provider().trim()));
   const unsafeProvider = createMemo(() => selectedProvider()?.toolCompatible === false ? selectedProvider() : undefined);
@@ -56,6 +59,20 @@ export function NewSessionDialog(props: Props) {
     }
   };
 
+  const pickProject = async () => {
+    if (pickingProject()) return;
+    setPickingProject(true);
+    setError("");
+    try {
+      const selected = await props.onPickProjectDir(projectDir());
+      if (selected) setProjectDir(selected);
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setPickingProject(false);
+    }
+  };
+
   return (
     <div class="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onCancel()}>
       <form class="session-dialog" onSubmit={submit}>
@@ -82,11 +99,26 @@ export function NewSessionDialog(props: Props) {
           </div>
         </Show>
 
-        <label class="field full-field">
-          <span>Project directory</span>
-          <input value={projectDir()} onInput={(event) => setProjectDir(event.currentTarget.value)} placeholder="/Users/you/dev/project" autofocus />
-          <small>The child process runs here; Amplifier’s existing filesystem boundaries still apply.</small>
-        </label>
+        <div class="field full-field">
+          <span>{props.initial.resumeId ? "Original project folder" : "Project folder"}</span>
+          <div class="path-picker-control">
+            <input
+              value={projectDir()}
+              readOnly={props.nativeProjectPicker}
+              onInput={(event) => setProjectDir(event.currentTarget.value)}
+              placeholder={props.nativeProjectPicker ? "Choose a folder…" : "/runtime-host/project"}
+              aria-label="Selected project folder"
+            />
+            <Show when={props.nativeProjectPicker}>
+              <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void pickProject()}>
+                {pickingProject() ? "Choosing…" : "Choose folder…"}
+              </button>
+            </Show>
+          </div>
+          <small>{props.nativeProjectPicker
+            ? "Studio uses the system folder picker. The Amplifier runtime starts in the selected folder."
+            : "Enter a folder on the configured runtime host; its operating-system picker is not available to this client."}</small>
+        </div>
 
         <details class="advanced-composition" open={!props.initial.capabilityName && !props.initial.resumeId}>
           <summary>Advanced composition <span>bundle · mode · provider · model</span></summary>
