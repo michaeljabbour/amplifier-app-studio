@@ -220,7 +220,7 @@ const STARTERS = [
   {
     title: "Visualize the run",
     description: "Map agents, tools, decisions, loops, and handoffs.",
-    prompt: "Visualize this system: [system or workflow]. Map its agents, tools, decisions, handoffs, feedback loops, and failure paths. Produce a clear diagram source plus a concise explanation of the important patterns.",
+    prompt: "Visualize this system: [system or workflow]. Map its agents, tools, decisions, handoffs, feedback loops, and failure paths. Render the result inline in Studio using an amplifier-html fence for an interactive self-contained visual, amplifier-svg for a static visual, or amplifier-dot for Graphviz; follow it with a concise explanation of the important patterns. Do not use remote assets or network requests.",
   },
   {
     title: "Review the human-agent fit",
