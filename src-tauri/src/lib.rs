@@ -280,6 +280,35 @@ async fn load_attachment_paths(
         .map_err(|error| format!("Attachment loading task failed: {error}"))?
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn write_diagnostics(path: String, contents: String) -> Result<(), String> {
+    const MAX_DIAGNOSTICS_BYTES: usize = 64 * 1024 * 1024;
+    if contents.len() > MAX_DIAGNOSTICS_BYTES {
+        return Err("Diagnostics exceed Studio's 64 MB export limit".to_owned());
+    }
+    let path = std::path::PathBuf::from(path.trim());
+    if !path.is_absolute() {
+        return Err("Choose an absolute diagnostics destination".to_owned());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Choose a diagnostics destination with a parent directory".to_owned())?;
+    if !parent.is_dir() {
+        return Err("The diagnostics destination directory is unavailable".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, contents).map_err(|error| {
+            format!(
+                "Could not write diagnostics to '{}': {error}",
+                path.display()
+            )
+        })
+    })
+    .await
+    .map_err(|error| format!("Diagnostics export task failed: {error}"))?
+}
+
 #[tauri::command]
 fn default_project_dir() -> Result<String, String> {
     dirs::home_dir()
@@ -352,6 +381,8 @@ pub fn run() {
             default_project_dir,
             #[cfg(desktop)]
             load_attachment_paths,
+            #[cfg(desktop)]
+            write_diagnostics,
             #[cfg(desktop)]
             read_runtime_settings,
             #[cfg(desktop)]

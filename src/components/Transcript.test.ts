@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSessionState } from "../reducer";
-import { transcriptAtBottom, transcriptScrollMarker } from "./Transcript";
+import { runtimeFailureCopy, transcriptAtBottom, transcriptScrollMarker } from "./Transcript";
 
 describe("transcript following", () => {
   it("detaches as soon as the reader moves up instead of fighting within a bottom threshold", () => {
@@ -29,5 +29,16 @@ describe("transcript following", () => {
     expect(transcriptScrollMarker(next)).not.toBe(transcriptScrollMarker(state));
     expect(transcriptScrollMarker({ ...next, liveTail: { blockType: "text", text: "streaming" } }))
       .not.toBe(transcriptScrollMarker(next));
+  });
+
+  it("explains approval-routing and moved-project failures in recovery language", () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    expect(runtimeFailureCopy({
+      ...state,
+      exitCode: 1,
+      error: "Amplifier runtime exited with code 1",
+      logs: ["ValueError: choice 'Project answer' is not one of ('Allow once', 'Deny')"],
+    }).title).toContain("wrong Amplifier request");
+    expect(runtimeFailureCopy({ ...state, exitCode: 4 }).title).toContain("incomplete session copy");
   });
 });

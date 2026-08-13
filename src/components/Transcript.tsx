@@ -170,12 +170,13 @@ export function Transcript(props: Props) {
         </Show>
 
         <Show when={props.state.phase === "error" && props.state.error}>
-          <div class="fatal-card">
-            <div class="eyebrow">SESSION ERROR{props.state.exitCode ? ` · EXIT ${props.state.exitCode}` : ""}</div>
-            <strong>{props.state.error}</strong>
+          <div class="fatal-card" role="alert">
+            <div class="eyebrow">{runtimeFailureCopy(props.state).kicker}</div>
+            <strong>{runtimeFailureCopy(props.state).title}</strong>
+            <p>{runtimeFailureCopy(props.state).detail}</p>
             <Show when={props.state.logs.length}>
               <details>
-                <summary>Runtime log</summary>
+                <summary>Technical details</summary>
                 <pre>{props.state.logs.slice(-30).join("\n")}</pre>
               </details>
             </Show>
@@ -194,12 +195,44 @@ export function Transcript(props: Props) {
   );
 }
 
+export function runtimeFailureCopy(state: SessionViewState): { kicker: string; title: string; detail: string } {
+  const technical = state.logs.join("\n");
+  if (/choice .+ is not one of/i.test(technical)) {
+    return {
+      kicker: "SESSION STOPPED · RESPONSE ROUTING",
+      title: "Studio sent an answer to the wrong Amplifier request",
+      detail: "The stored conversation is intact. Retry resume reopens the last durable state; Studio now keeps project decisions and tool approvals on separate lanes.",
+    };
+  }
+  if (state.exitCode === 4) {
+    return {
+      kicker: "SESSION MOVE DETECTED · RESUME NEEDED",
+      title: "This project location has only an incomplete session copy",
+      detail: "Choose the repository's current folder when you retry. Studio will recover the complete transcript from its original store and preserve that recovery copy.",
+    };
+  }
+  if (state.exitCode === 2) {
+    return {
+      kicker: "SESSION LOCATION NEEDED",
+      title: "Amplifier could not find this session in the selected project",
+      detail: "Retry resume and choose the folder that currently contains the project. Studio will look across prior project locations for the durable history.",
+    };
+  }
+  return {
+    kicker: `SESSION STOPPED${state.exitCode ? ` · RUNTIME EXIT ${state.exitCode}` : ""}`,
+    title: state.error || "Amplifier stopped unexpectedly",
+    detail: "Studio preserved the durable session data it received. Retry resumes the latest stored session; technical details remain available for diagnosis.",
+  };
+}
+
 export function transcriptScrollMarker(state: SessionViewState): string {
   const last = state.blocks.at(-1);
   const content = !last
     ? ""
     : last.kind === "tool"
       ? `${last.summary}:${last.detail}`
+      : last.kind === "recipe"
+        ? `${last.name}:${last.status}:${last.steps.map((step) => `${step.index}:${step.status}`).join(",")}:${last.messages.join("|")}`
       : last.kind === "thinking" || last.kind === "user" || last.kind === "answer" || last.kind === "notice"
         ? last.text
         : "";
@@ -221,8 +254,12 @@ function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId
   const block = () => props.block;
   return (
     <Show
-      when={block().kind !== "tool" && block().kind !== "thinking"}
-      fallback={block().kind === "tool" ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} /> : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} onExpanded={props.onThinkingExpanded} />}
+      when={block().kind !== "tool" && block().kind !== "thinking" && block().kind !== "recipe"}
+      fallback={block().kind === "tool"
+        ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} />
+        : block().kind === "recipe"
+          ? <RecipeView block={block() as Extract<TranscriptBlock, { kind: "recipe" }>} />
+          : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} onExpanded={props.onThinkingExpanded} />}
     >
       <article class={`block block-${block().kind}`}>
         <div class="block-gutter">
@@ -252,6 +289,47 @@ function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId
         </div>
       </article>
     </Show>
+  );
+}
+
+function RecipeView(props: { block: Extract<TranscriptBlock, { kind: "recipe" }> }) {
+  const completed = () => props.block.steps.filter((step) => step.status === "completed").length;
+  const progress = () => props.block.status === "completed"
+    ? `${props.block.total} steps completed`
+    : props.block.total
+      ? `${Math.min(completed() + (props.block.steps.some((step) => step.status === "running") ? 1 : 0), props.block.total)} of ${props.block.total}`
+      : "activity";
+  return (
+    <article class={`recipe-row ${props.block.status}`}>
+      <details>
+        <summary>
+          <span class="recipe-status" aria-hidden="true">
+            {props.block.status === "completed" ? "✓" : props.block.status === "failed" ? "!" : props.block.status === "attention" ? "·" : "◌"}
+          </span>
+          <span class="recipe-heading"><small>RECIPE</small><strong>{props.block.name}</strong></span>
+          <span class="recipe-progress">{progress()}</span>
+          <span class="tool-chevron">›</span>
+        </summary>
+        <div class="recipe-detail">
+          <Show when={props.block.steps.length > 0}>
+            <ol>
+              <For each={props.block.steps}>{(step) => (
+                <li class={step.status}>
+                  <span>{step.status === "completed" ? "✓" : step.status === "failed" ? "!" : step.status === "running" ? "→" : "·"}</span>
+                  <strong>{step.name}</strong>
+                  <Show when={step.kind}><small>{step.kind}</small></Show>
+                </li>
+              )}</For>
+            </ol>
+          </Show>
+          <Show when={props.block.messages.length > 0}>
+            <div class="recipe-messages">
+              <For each={props.block.messages}>{(message) => <p>{message}</p>}</For>
+            </div>
+          </Show>
+        </div>
+      </details>
+    </article>
   );
 }
 

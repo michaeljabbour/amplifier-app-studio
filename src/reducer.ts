@@ -164,6 +164,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         effort,
         effortLevels: levels.length ? levels : next.effortLevels,
         effortPending: undefined,
+        effortConfirmedAtMs: record.ok === false ? next.effortConfirmedAtMs : Date.now(),
       };
       return record.ok === false
         ? appendBlock(reconciled, {
@@ -800,6 +801,9 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
             createdAtMs: eventTimestampMs(event),
           },
         };
+      }
+      if (stringValue(event.source) === "recipe") {
+        return reduceRecipeNotification(next, stringValue(event.message), noticeLevel(event.level));
       }
       if (isInternalRuntimeNotice(event)) return next;
       const recovery = configurationRecovery(stringValue(event.message));
@@ -2211,6 +2215,90 @@ function finalizeAnswer(state: SessionViewState, response: string): SessionViewS
 function appendBlock(state: SessionViewState, block: NewTranscriptBlock): SessionViewState {
   const complete = { ...block, id: `b${state.nextBlock}` } as TranscriptBlock;
   return { ...state, blocks: [...state.blocks, complete], nextBlock: state.nextBlock + 1 };
+}
+
+function reduceRecipeNotification(
+  state: SessionViewState,
+  message: string,
+  level: "info" | "warning" | "error" | "success",
+): SessionViewState {
+  const start = message.match(/Starting recipe:\s*(.+?)\s*\((\d+)\s+steps?\)/i);
+  if (start) {
+    return appendBlock(state, {
+      kind: "recipe",
+      name: start[1]?.trim() || "recipe",
+      total: Number(start[2]) || 0,
+      status: "running",
+      steps: [],
+      messages: [],
+    });
+  }
+
+  const completion = message.match(/Recipe completed:\s*(.+?)\s*$/i);
+  if (completion) {
+    return updateRecipeBlock(state, completion[1]?.trim(), (recipe) => ({
+      ...recipe,
+      status: "completed",
+      steps: recipe.steps.map((step) => ({ ...step, status: "completed" })),
+    }));
+  }
+
+  const step = message.match(/^\s*\[(\d+)\/(\d+)]\s+(.+?)(?:\s+\(([^)]+)\))?\s*$/);
+  if (step) {
+    const index = Number(step[1]);
+    const total = Number(step[2]);
+    const name = step[3]?.trim() || `Step ${index}`;
+    const kind = step[4]?.trim() || undefined;
+    return updateRecipeBlock(state, undefined, (recipe) => {
+      const without = recipe.steps.filter((item) => item.index !== index).map((item) => ({
+        ...item,
+        status: item.status === "running" ? "completed" as const : item.status,
+      }));
+      return {
+        ...recipe,
+        total: total || recipe.total,
+        status: level === "error" ? "failed" : recipe.status,
+        steps: [...without, {
+          index,
+          total,
+          name,
+          kind,
+          status: level === "error" ? "failed" as const : "running" as const,
+        }].sort((left, right) => left.index - right.index),
+      };
+    });
+  }
+
+  return updateRecipeBlock(state, undefined, (recipe) => ({
+    ...recipe,
+    status: level === "error" ? "failed" : /waiting for approval/i.test(message) ? "attention" : recipe.status,
+    messages: [...recipe.messages, message.trim()].filter(Boolean).slice(-12),
+  }));
+}
+
+function updateRecipeBlock(
+  state: SessionViewState,
+  name: string | undefined,
+  update: (recipe: Extract<TranscriptBlock, { kind: "recipe" }>) => Extract<TranscriptBlock, { kind: "recipe" }>,
+): SessionViewState {
+  const index = findLastIndex(state.blocks, (block) => block.kind === "recipe"
+    && block.status !== "completed"
+    && (!name || block.name === name));
+  if (index < 0) {
+    return appendBlock(state, {
+      kind: "recipe",
+      name: name || "Recipe activity",
+      total: 0,
+      status: "running",
+      steps: [],
+      messages: [],
+    });
+  }
+  const recipe = state.blocks[index];
+  if (recipe.kind !== "recipe") return state;
+  const blocks = [...state.blocks];
+  blocks[index] = update(recipe);
+  return { ...state, blocks };
 }
 
 function isChildEvent(state: SessionViewState, event: UIEvent): boolean {

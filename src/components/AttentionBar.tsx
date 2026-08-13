@@ -6,7 +6,21 @@ const BEST_JUDGMENT = "Use your best judgment according to the active goal";
 
 interface Props {
   state: SessionViewState;
-  onChoose: (choice: string) => Promise<void>;
+  onChoose: (response: AttentionResponse) => Promise<void>;
+}
+
+export type AttentionResponse =
+  | { kind: "approval"; ticketId: string; choice: string }
+  | { kind: "decision"; decisionId: string; answer: string };
+
+export function attentionResponseFor(state: SessionViewState, choice: string): AttentionResponse | undefined {
+  if (state.pendingApproval) {
+    return { kind: "approval", ticketId: state.pendingApproval.ticketId, choice };
+  }
+  if (state.pendingDecision) {
+    return { kind: "decision", decisionId: state.pendingDecision.decisionId, answer: choice };
+  }
+  return undefined;
 }
 
 export function goalAlignedRecommendedChoice(
@@ -37,7 +51,10 @@ export function AttentionBar(props: Props) {
   const [armedDecision, setArmedDecision] = createSignal("");
   const [autoSubmitted, setAutoSubmitted] = createSignal("");
   const approval = () => props.state.pendingApproval;
-  const decision = () => props.state.pendingDecision;
+  // Approvals block tool execution and may expire, so they are the active
+  // attention item when both protocol lanes are present. Most importantly,
+  // every label, choice and submission below now comes from the same lane.
+  const decision = () => approval() ? undefined : props.state.pendingDecision;
   const choices = () => approval()?.options || decision()?.choices || [];
   const prompt = () => approval()?.prompt || decision()?.question || "Amplifier needs your input";
   const goalActive = () => props.state.autopilot
@@ -71,9 +88,11 @@ export function AttentionBar(props: Props) {
 
   const choose = async (choice: string) => {
     if (submitting() || !choice.trim()) return;
+    const response = attentionResponseFor(props.state, choice);
+    if (!response) return;
     setSubmitting(choice);
     try {
-      await props.onChoose(choice);
+      await props.onChoose(response);
     } finally {
       setSubmitting(undefined);
     }

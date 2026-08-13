@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { AttentionBar } from "./components/AttentionBar";
+import { AttentionBar, type AttentionResponse } from "./components/AttentionBar";
 import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
 import { CoordinatorHome } from "./components/CoordinatorHome";
@@ -22,7 +22,7 @@ import {
   imageAttachments,
   promptWithDocumentAttachments,
 } from "./attachments";
-import { nativeProjectPickerAvailable, pickAttachments, pickProjectDirectory } from "./nativePickers";
+import { nativeProjectPickerAvailable, pickAttachments, pickProjectDirectory, saveDiagnosticsFile } from "./nativePickers";
 import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -359,28 +359,32 @@ export default function App() {
     }
   };
 
-  const chooseAttention = async (choice: string) => {
+  const chooseAttention = async (response: AttentionResponse) => {
     const session = active();
     if (!session) return;
-    const expected = {
-      approvalTicketId: session.pendingApproval?.ticketId,
-      decisionId: session.pendingDecision?.decisionId,
-    };
     try {
-      if (session.pendingApproval) {
+      if (response.kind === "approval" && session.pendingApproval?.ticketId === response.ticketId) {
         await sendOp(session.guiId, {
           op: "approve",
-          ticket_id: session.pendingApproval.ticketId,
-          choice,
+          ticket_id: response.ticketId,
+          choice: response.choice,
         });
-      } else if (session.pendingDecision) {
+        update(session.guiId, (state) => resolveAttention(state, { approvalTicketId: response.ticketId }));
+      } else if (response.kind === "decision" && session.pendingDecision?.decisionId === response.decisionId) {
         await sendOp(session.guiId, {
           op: "decision",
-          decision_id: session.pendingDecision.decisionId,
-          answer: choice,
+          decision_id: response.decisionId,
+          answer: response.answer,
         });
+        update(session.guiId, (state) => resolveAttention(state, { decisionId: response.decisionId }));
+      } else {
+        update(session.guiId, (state) => addLocalNotice(
+          state,
+          "That request changed before Studio could answer it. Review the current Amplifier prompt and choose again.",
+          "warning",
+        ));
+        return;
       }
-      update(session.guiId, (state) => resolveAttention(state, expected));
       void requestStatus(session.guiId);
     } catch (error) {
       reportSendError(session.guiId, error);
@@ -585,23 +589,24 @@ export default function App() {
     }
   };
 
-  const exportSessionDiagnostics = (session: SessionViewState) => {
+  const exportSessionDiagnostics = async (session: SessionViewState) => {
     const payload = {
       schemaVersion: 1,
       exportedAt: new Date().toISOString(),
       session,
     };
-    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
     const label = (session.runtimeSessionId || session.resumeId || session.guiId).replace(/[^a-zA-Z0-9._-]+/g, "-");
-    anchor.href = url;
-    anchor.download = `amplifier-studio-${label}-diagnostics.json`;
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    queueMicrotask(() => URL.revokeObjectURL(url));
+    try {
+      const saved = await saveDiagnosticsFile(
+        `amplifier-studio-${label}-diagnostics.json`,
+        `${JSON.stringify(payload, null, 2)}\n`,
+      );
+      if (saved) {
+        update(session.guiId, (state) => addLocalNotice(state, `Diagnostics saved to ${saved}`, "success"));
+      }
+    } catch (error) {
+      update(session.guiId, (state) => addLocalNotice(state, `Diagnostics export failed: ${cleanError(error)}`, "error"));
+    }
   };
 
   const applyAppUpdate = async () => {
@@ -728,12 +733,9 @@ export default function App() {
                 onRetryRestore={() => retrySessionRestore(session().guiId)}
                 onOpenRestoreAnyway={() => openSessionWithoutFullRestore(session().guiId)}
                 onThinkingExpanded={(blockId, expanded) => update(session().guiId, (state) => setThinkingExpanded(state, blockId, expanded))}
-                onRetry={session().projectDir ? () => void relaunchFailedSession(session(), false) : undefined}
-                retryLabel={session().resumeId ? "Retry resume" : "Retry"}
-                onResume={session().runtimeSessionId && session().runtimeSessionId !== session().resumeId
-                  ? () => void relaunchFailedSession(session(), true)
-                  : undefined}
-                onExport={() => exportSessionDiagnostics(session())}
+                onRetry={session().projectDir ? () => void relaunchFailedSession(session(), true) : undefined}
+                retryLabel={session().runtimeSessionId || session().resumeId ? "Retry resume" : "Retry"}
+                onExport={() => void exportSessionDiagnostics(session())}
               />
               <div class="input-zone">
                 <Show
