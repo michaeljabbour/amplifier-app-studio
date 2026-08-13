@@ -34,8 +34,7 @@ export interface RuntimeStatus {
   installed: boolean;
   executable?: string;
   version?: string;
-  adapter: "neutral" | "tui-compatibility" | "configured" | "missing";
-  compatibilityMode: boolean;
+  adapter: "neutral" | "configured" | "missing";
   installSupported: boolean;
   providerStatusAvailable: boolean;
   providerConfigured: boolean;
