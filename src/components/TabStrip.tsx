@@ -88,13 +88,18 @@ export function TabStrip(props: Props) {
           class={`app-update-button ${props.update.status}`}
           disabled={props.updateBlocked || props.update.status === "downloading" || props.update.status === "installing"}
           onClick={props.onUpdate}
-          title={props.updateBlocked
-            ? "Update ready. Finish or interrupt active turns before restarting."
-            : props.update.notes || props.update.message || "Install the latest Amplifier Studio release"}
+          title={appUpdateButtonTitle(props.update, props.updateBlocked)}
         >
           <span aria-hidden="true" />
           {updateLabel(props.update)}
         </button>
+      </Show>
+      <Show when={props.update.status === "error" && props.update.message}>
+        <div class="app-update-error" role="alert" onMouseDown={(event) => event.stopPropagation()}>
+          <strong>Studio update did not install</strong>
+          <span>{props.update.message}</span>
+          <small>Retry checks the release again before another install attempt.</small>
+        </div>
       </Show>
       <button class="icon-button settings-button" aria-label="Studio settings" onClick={props.onSettings} title="Studio and Amplifier settings">
         <span aria-hidden="true">⚙</span>
@@ -106,6 +111,12 @@ export function TabStrip(props: Props) {
       </div>
     </header>
   );
+}
+
+export function appUpdateButtonTitle(update: AppUpdateState, blocked: boolean): string {
+  if (blocked) return "Update ready. Finish or interrupt active turns before restarting.";
+  if (update.status === "error") return update.message || "The Studio update did not install. Retry to check the release again.";
+  return update.notes || update.message || "Install the latest Amplifier Studio release";
 }
 
 function updateLabel(update: AppUpdateState): string {

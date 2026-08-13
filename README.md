@@ -193,6 +193,14 @@ The browser-to-runtime pipe can be checked without consuming a model turn:
 connect to `/api/session/<gui-id>`, send a `start` message, wait for
 `session.started`, send `context.get`, then send `stop`.
 
+## Inline visual artifacts
+
+Coordinator Markdown can include explicit `amplifier-dot`, `amplifier-svg`,
+and `amplifier-html` fences. Studio renders DOT locally, sanitizes static SVG,
+and gives interactive HTML a unique-origin sandbox with no network or Tauri
+access. Ordinary code fences stay code. The complete authoring and security
+contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATION-PROTOCOL.md).
+
 ## Publishing desktop updates
 
 The release workflow in `.github/workflows/publish.yml` builds macOS (Apple

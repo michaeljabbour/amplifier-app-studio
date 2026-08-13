@@ -56,6 +56,9 @@
 :root[data-theme="made"] .brand-ticks i { width: 7px; height: 1px; background: #b68235; }
 :root[data-theme="made"] .app-update-button { border-color: var(--line); background: rgba(70,107,82,.05); color: #466b52; font-family: var(--font-body); }
 :root[data-theme="made"] .app-update-button:hover:not(:disabled) { background: rgba(70,107,82,.1); color: #304d39; }
+:root[data-theme="made"] .app-update-error { border-color: rgba(154,69,69,.3); border-radius: 0; background: #f8f4f4; box-shadow: 0 12px 30px rgba(49,41,35,.12); color: #7d3737; }
+:root[data-theme="made"] .app-update-error strong { color: #7d3737; }
+:root[data-theme="made"] .app-update-error small { color: #716d6a; }
 :root[data-theme="made"] .top-workbench-actions button { color: #605d5d; }
 :root[data-theme="made"] .top-workbench-actions button:hover,
 :root[data-theme="made"] .top-workbench-actions button.active { background: rgba(182,130,53,.06); color: #201f1d; }
@@ -175,6 +178,15 @@
 :root[data-theme="made"] .tool-row pre,
 :root[data-theme="made"] .fatal-card pre { border-color: var(--line); border-radius: 0; background: #eae9e9; color: #454242; }
 :root[data-theme="made"] .markdown blockquote { border-left-color: #b68235; color: #454242; }
+:root[data-theme="made"] .visual-artifact { border-color: #c9c4bf; border-radius: 0; background: #f8f4f4; box-shadow: 0 18px 42px rgba(49,41,35,.1); color: #201f1d; }
+:root[data-theme="made"] .visual-artifact > header { border-color: #c9c4bf; }
+:root[data-theme="made"] .visual-artifact > header span { color: #7d5411; }
+:root[data-theme="made"] .visual-artifact > header strong { color: #201f1d; font-family: var(--font-display); }
+:root[data-theme="made"] .visual-artifact > header small { color: #716d6a; }
+:root[data-theme="made"] .visual-artifact > header button { border-color: #c9c4bf; border-radius: 0; background: transparent; color: #605d5d; }
+:root[data-theme="made"] .visual-artifact > header button:hover { border-color: #b68235; color: #7d5411; }
+:root[data-theme="made"] .visual-artifact-stage { background: #f5f2ee; }
+:root[data-theme="made"] .visual-artifact-source { background: #eae9e9 !important; color: #454242 !important; }
 :root[data-theme="made"] .tool-row,
 :root[data-theme="made"] .recipe-row,
 :root[data-theme="made"] .live-reasoning { border-color: var(--line); }
