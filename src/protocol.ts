@@ -123,13 +123,30 @@ export interface ToolBlock extends BaseBlock {
   detail: string;
 }
 
+export interface RecipeStepState {
+  index: number;
+  total: number;
+  name: string;
+  kind?: string;
+  status: "pending" | "running" | "completed" | "failed";
+}
+
+export interface RecipeBlock extends BaseBlock {
+  kind: "recipe";
+  name: string;
+  total: number;
+  status: "running" | "completed" | "attention" | "failed";
+  steps: RecipeStepState[];
+  messages: string[];
+}
+
 export interface NoticeBlock extends BaseBlock {
   kind: "notice";
   level: "info" | "warning" | "error" | "success";
   text: string;
 }
 
-export type TranscriptBlock = UserBlock | AnswerBlock | ThinkingBlock | ToolBlock | NoticeBlock;
+export type TranscriptBlock = UserBlock | AnswerBlock | ThinkingBlock | ToolBlock | RecipeBlock | NoticeBlock;
 
 export interface LiveTailState {
   blockType: string;
@@ -341,6 +358,7 @@ export interface SessionViewState {
   effort?: string;
   effortLevels: string[];
   effortPending?: string;
+  effortConfirmedAtMs?: number;
   blocks: TranscriptBlock[];
   liveTail?: LiveTailState;
   openThinkingId?: string;

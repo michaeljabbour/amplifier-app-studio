@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { appendAttachmentFiles } from "./attachments";
 import type { ComposerAttachment } from "./protocol";
 import { isTauriRuntime, usesWebBridge, type NativeAttachment } from "./transport";
@@ -44,6 +44,32 @@ export async function pickAttachments(): Promise<ComposerAttachment[]> {
     ...attachment,
     id: globalThis.crypto?.randomUUID?.() || `picked-attachment-${Date.now()}-${index}`,
   }));
+}
+
+export async function saveDiagnosticsFile(defaultName: string, contents: string): Promise<string | undefined> {
+  if (isTauriRuntime() && !usesWebBridge()) {
+    const selected = await saveDialog({
+      title: "Export Amplifier Studio diagnostics",
+      defaultPath: defaultName,
+      filters: [{ name: "JSON diagnostics", extensions: ["json"] }],
+    });
+    const path = typeof selected === "string" && selected.trim() ? selected : undefined;
+    if (!path) return undefined;
+    await invoke("write_diagnostics", { path, contents });
+    return path;
+  }
+
+  const blob = new Blob([contents], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = defaultName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  queueMicrotask(() => URL.revokeObjectURL(url));
+  return defaultName;
 }
 
 export function normalizePickerPaths(selected: unknown): string[] {

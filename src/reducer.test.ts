@@ -138,6 +138,54 @@ describe("session reducer", () => {
     expect(state.title).toBe("Review the decision experience and make it");
   });
 
+  it("folds noisy recipe notifications into one durable transcript activity block", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "notification",
+      source: "recipe",
+      level: "info",
+      message: "📋 Starting recipe: validate-bundle-repo (3 steps)",
+    }));
+    state = reduceRecord(state, runtime(3, {
+      kind: "notification",
+      source: "recipe",
+      level: "info",
+      message: "  [1/3] environment-check (bash)",
+    }));
+    state = reduceRecord(state, runtime(4, {
+      kind: "notification",
+      source: "recipe",
+      level: "info",
+      message: "  [2/3] composition-analysis (agent)",
+    }));
+    state = reduceRecord(state, runtime(5, {
+      kind: "notification",
+      source: "recipe",
+      level: "info",
+      message: "  [3/3] synthesize-report (agent)",
+    }));
+    state = reduceRecord(state, runtime(6, {
+      kind: "notification",
+      source: "recipe",
+      level: "info",
+      message: "✅ Recipe completed: validate-bundle-repo",
+    }));
+
+    const recipes = state.blocks.filter((block) => block.kind === "recipe");
+    expect(recipes).toHaveLength(1);
+    expect(recipes[0]).toMatchObject({
+      name: "validate-bundle-repo",
+      total: 3,
+      status: "completed",
+      steps: [
+        { index: 1, name: "environment-check", kind: "bash", status: "completed" },
+        { index: 2, name: "composition-analysis", kind: "agent", status: "completed" },
+        { index: 3, name: "synthesize-report", kind: "agent", status: "completed" },
+      ],
+    });
+    expect(state.blocks.some((block) => block.kind === "notice" && /Starting recipe/.test(block.text))).toBe(false);
+  });
+
   it("tracks child agents as the delegate branch of the coordinator loop", () => {
     let state = started();
     state = reduceRecord(state, runtime(2, { kind: "prompt_submit", prompt: "Survey it" }));
@@ -544,6 +592,7 @@ describe("session reducer", () => {
     expect(state.effort).toBe("high");
     expect(state.effortLevels).toEqual(["none", "low", "high"]);
     expect(state.effortPending).toBeUndefined();
+    expect(state.effortConfirmedAtMs).toEqual(expect.any(Number));
   });
 
   it("keeps stream deltas in the live tail and Channel B text in durable history", () => {

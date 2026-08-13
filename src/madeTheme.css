@@ -176,9 +176,18 @@
 :root[data-theme="made"] .fatal-card pre { border-color: var(--line); border-radius: 0; background: #eae9e9; color: #454242; }
 :root[data-theme="made"] .markdown blockquote { border-left-color: #b68235; color: #454242; }
 :root[data-theme="made"] .tool-row,
+:root[data-theme="made"] .recipe-row,
 :root[data-theme="made"] .live-reasoning { border-color: var(--line); }
 :root[data-theme="made"] .tool-row summary,
+:root[data-theme="made"] .recipe-row summary,
 :root[data-theme="made"] .live-reasoning summary { color: #605d5d; }
+:root[data-theme="made"] .recipe-row { border-radius: 0; background: #f8f4f4; }
+:root[data-theme="made"] .recipe-heading small { color: #7d5411; }
+:root[data-theme="made"] .recipe-heading strong { color: #2e2c2a; }
+:root[data-theme="made"] .recipe-progress { border-color: var(--line); border-radius: 0; color: #605d5d; }
+:root[data-theme="made"] .recipe-detail li strong { color: #454242; }
+:root[data-theme="made"] .recipe-detail li small,
+:root[data-theme="made"] .recipe-messages p { color: #716d6a; }
 :root[data-theme="made"] .thinking-text,
 :root[data-theme="made"] .thinking-text.markdown,
 :root[data-theme="made"] .thinking-text-live.markdown { color: #716d6a; }
@@ -189,6 +198,8 @@
 :root[data-theme="made"] .restore-card,
 :root[data-theme="made"] .fatal-card { border-radius: 0; background: #f8f4f4; box-shadow: none; }
 :root[data-theme="made"] .fatal-card { border-color: rgba(154,69,69,.32); color: #7d3737; }
+:root[data-theme="made"] .fatal-card > strong { color: #7d3737; }
+:root[data-theme="made"] .fatal-card > p { color: #605d5d; }
 :root[data-theme="made"] .fatal-card summary { color: #7d3737; }
 :root[data-theme="made"] .restore-card h2 { color: #493815; font-family: var(--font-display); }
 :root[data-theme="made"] .restore-card p,
@@ -276,6 +287,8 @@
 :root[data-theme="made"] .footer-bar { border-color: var(--line); background: #f8f4f4; color: #605d5d; }
 :root[data-theme="made"] .footer-bar > button { border-color: var(--line); color: #605d5d; }
 :root[data-theme="made"] .footer-bar > button:hover { background: rgba(182,130,53,.06); color: #201f1d; }
+:root[data-theme="made"] .effort-request { color: #7d5411; }
+:root[data-theme="made"] .effort-confirmed { color: #466b52; }
 :root[data-theme="made"] .footer-grow { color: #716d6a; }
 :root[data-theme="made"] .footer-cost { color: #466b52; }
 

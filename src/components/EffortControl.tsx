@@ -14,6 +14,12 @@ export function EffortControl(props: {
   const levels = () => props.state.effortLevels.length ? props.state.effortLevels : [...DEFAULT_EFFORT_LEVELS];
   const currentIndex = () => Math.max(0, levels().indexOf(props.state.effort || "none"));
   const previewLevel = () => levels()[preview()] || levels()[currentIndex()] || "none";
+  const current = () => props.state.effort || "runtime default";
+  const controlLabel = () => props.state.effortPending
+    ? `Amplifier effort is ${current()}; waiting for runtime confirmation of ${props.state.effortPending}`
+    : props.state.effortConfirmedAtMs
+      ? `Amplifier runtime confirmed effort ${current()}`
+      : `Amplifier effort is ${current()}`;
 
   const cancelTimer = () => {
     if (holdTimer !== undefined) window.clearTimeout(holdTimer);
@@ -27,7 +33,8 @@ export function EffortControl(props: {
     }}>
       <button
         classList={{ pending: Boolean(props.state.effortPending) }}
-        title="Click to cycle effort. Press and hold to choose an exact level."
+        title={`${controlLabel()}. Click to cycle; press and hold to choose an exact level.`}
+        aria-label={controlLabel()}
         aria-haspopup="dialog"
         aria-expanded={open()}
         onPointerDown={() => {
@@ -49,8 +56,13 @@ export function EffortControl(props: {
           props.onCycle();
         }}
       >
-        effort <strong>{props.state.effortPending || props.state.effort || "none"}</strong>
-        <Show when={props.state.effortPending}><span class="effort-pending" aria-label="Waiting for runtime confirmation" /></Show>
+        effort <strong>{current()}</strong>
+        <Show
+          when={props.state.effortPending}
+          fallback={<Show when={props.state.effortConfirmedAtMs}><span class="effort-confirmed">runtime ✓</span></Show>}
+        >
+          {(pending) => <><span class="effort-request">→ {pending()}</span><span class="effort-pending" aria-hidden="true" /></>}
+        </Show>
       </button>
       <Show when={open()}>
         <div class="effort-popover" role="dialog" aria-label="Choose Amplifier effort">
