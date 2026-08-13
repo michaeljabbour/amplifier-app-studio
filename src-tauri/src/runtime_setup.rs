@@ -7,12 +7,13 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.sh | bash -s --";
+#[cfg(test)]
+const RUNTIME_INSTALL_REF: &str = "c00f94d80e8118dd5b78775725457660608689ca";
+const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref c00f94d80e8118dd5b78775725457660608689ca --no-update-shell";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
-const LEGACY_RUNTIME_BINARY: &str = "amplifier-tui";
 #[cfg(target_os = "windows")]
-const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-app-tui/main/scripts/install.ps1'; & ([scriptblock]::Create($script))";
+const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'c00f94d80e8118dd5b78775725457660608689ca' -NoUpdateShell";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +22,6 @@ pub struct RuntimeStatus {
     pub executable: Option<String>,
     pub version: Option<String>,
     pub adapter: String,
-    pub compatibility_mode: bool,
     pub install_supported: bool,
     pub provider_status_available: bool,
     pub provider_configured: bool,
@@ -65,17 +65,12 @@ pub fn status() -> RuntimeStatus {
             }
         },
     );
-    let compatibility_mode = resolved
-        .as_ref()
-        .is_some_and(|runtime| runtime.adapter == RuntimeAdapter::TuiCompatibility);
     let adapter = resolved
         .as_ref()
         .map_or(RuntimeAdapter::Missing, |runtime| runtime.adapter)
         .as_str()
         .to_owned();
-    let message = if installed && compatibility_mode {
-        "Amplifier runtime is ready through the TUI compatibility adapter".to_owned()
-    } else if installed {
+    let message = if installed {
         "Amplifier runtime is ready".to_owned()
     } else if executable.is_some() {
         "The Amplifier runtime was found but did not pass its version check".to_owned()
@@ -90,7 +85,6 @@ pub fn status() -> RuntimeStatus {
         executable: executable.map(|path| path.to_string_lossy().into_owned()),
         version,
         adapter,
-        compatibility_mode,
         install_supported,
         provider_status_available,
         provider_configured,
@@ -246,7 +240,6 @@ fn clean_option(value: Option<String>, label: &str) -> Result<Option<String>, St
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeAdapter {
     Neutral,
-    TuiCompatibility,
     Configured,
     Missing,
 }
@@ -255,7 +248,6 @@ impl RuntimeAdapter {
     fn as_str(self) -> &'static str {
         match self {
             Self::Neutral => "neutral",
-            Self::TuiCompatibility => "tui-compatibility",
             Self::Configured => "configured",
             Self::Missing => "missing",
         }
@@ -372,16 +364,10 @@ fn runtime_candidates() -> Vec<(String, RuntimeAdapter)> {
     } else {
         ""
     };
-    vec![
-        (
-            format!("{NEUTRAL_RUNTIME_BINARY}{suffix}"),
-            RuntimeAdapter::Neutral,
-        ),
-        (
-            format!("{LEGACY_RUNTIME_BINARY}{suffix}"),
-            RuntimeAdapter::TuiCompatibility,
-        ),
-    ]
+    vec![(
+        format!("{NEUTRAL_RUNTIME_BINARY}{suffix}"),
+        RuntimeAdapter::Neutral,
+    )]
 }
 
 fn read_version(executable: &PathBuf) -> Option<String> {
@@ -434,7 +420,7 @@ mod tests {
         let inherited =
             env::join_paths([PathBuf::from("system-bin"), runtime_dir.clone()]).expect("test path");
         let path = runtime_path_from(
-            &runtime_dir.join("amplifier-tui"),
+            &runtime_dir.join(NEUTRAL_RUNTIME_BINARY),
             Some(&inherited),
             Some(&home),
         )
@@ -454,22 +440,30 @@ mod tests {
     }
 
     #[test]
-    fn neutral_runtime_precedes_the_tui_compatibility_adapter() {
+    fn only_the_neutral_runtime_is_a_discovery_candidate() {
         let candidates = runtime_candidates();
+        assert_eq!(candidates.len(), 1);
         assert!(candidates[0].0.starts_with(NEUTRAL_RUNTIME_BINARY));
         assert_eq!(candidates[0].1, RuntimeAdapter::Neutral);
-        assert!(candidates[1].0.starts_with(LEGACY_RUNTIME_BINARY));
-        assert_eq!(candidates[1].1, RuntimeAdapter::TuiCompatibility);
     }
 
     #[test]
     fn runtime_adapter_names_are_stable_transport_values() {
         assert_eq!(RuntimeAdapter::Neutral.as_str(), "neutral");
-        assert_eq!(
-            RuntimeAdapter::TuiCompatibility.as_str(),
-            "tui-compatibility"
-        );
         assert_eq!(RuntimeAdapter::Configured.as_str(), "configured");
         assert_eq!(RuntimeAdapter::Missing.as_str(), "missing");
+    }
+
+    #[test]
+    fn installers_pin_the_reviewed_runtime_revision() {
+        assert!(INSTALL_COMMAND.contains("michaeljabbour/amplifier-runtime"));
+        assert!(INSTALL_COMMAND.contains(RUNTIME_INSTALL_REF));
+        assert!(!INSTALL_COMMAND.contains("amplifier-app-tui"));
+        #[cfg(target_os = "windows")]
+        {
+            assert!(WINDOWS_INSTALL_COMMAND.contains("michaeljabbour/amplifier-runtime"));
+            assert!(WINDOWS_INSTALL_COMMAND.contains(RUNTIME_INSTALL_REF));
+            assert!(!WINDOWS_INSTALL_COMMAND.contains("amplifier-app-tui"));
+        }
     }
 }

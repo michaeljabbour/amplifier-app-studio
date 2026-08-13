@@ -288,7 +288,6 @@ export function CoordinatorHome(props: Props) {
           <span classList={{ active: ready() }} />
           {props.transport}
           {props.runtime?.version ? ` · ${props.runtime.version}` : ""}
-          {props.runtime?.compatibilityMode ? " · TUI compatibility adapter" : ""}
         </div>
       </section>
     </main>

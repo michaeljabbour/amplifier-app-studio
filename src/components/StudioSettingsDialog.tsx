@@ -401,15 +401,15 @@ function MaintenanceSection(props: { snapshot?: RuntimeSettingsSnapshot; loading
   const paths = () => Object.entries(props.snapshot?.paths || {}).filter(([key]) => key !== "schema");
   return (
     <div class="settings-section">
-      <SectionHeading kicker="MAINTENANCE" title="Installation & files" description="Read-only state and safe command hints. Studio does not run updates, doctor repairs, or resets from this page." />
+      <SectionHeading kicker="MAINTENANCE" title="Installation & files" description="Read-only runtime state and safe inspection commands. Studio does not execute these commands from this page." />
       <div class="maintenance-summary"><div><span>Installed version</span><strong>{props.snapshot?.version || "Unavailable"}</strong></div><button type="button" class="secondary-button" disabled={props.loading} onClick={props.onReload}>Refresh state</button></div>
       <div class="maintenance-grid">
         <For each={paths()}>{([label, value]) => <div><span>{label.replaceAll("_", " ")}</span><code>{String(value)}</code></div>}</For>
       </div>
       <div class="maintenance-commands">
-        <div><strong>Installation health</strong><code>amplifier-tui doctor</code><p>Inspect the installation, PATH, provider setup, and platform integration.</p></div>
-        <div><strong>Safe reset preview</strong><code>amplifier-tui reset --dry-run</code><p>Preview cache and registry cleanup while preserving keys and settings.</p></div>
-        <div><strong>Update runtime</strong><code>amplifier-tui update</code><p>Check and apply the published runtime update channel.</p></div>
+        <div><strong>Installed runtime</strong><code>amplifier-runtime --version</code><p>Verify that the shared session host is installed and callable.</p></div>
+        <div><strong>Provider readiness</strong><code>amplifier-runtime provider status --format json</code><p>Inspect the redacted provider configuration Studio will use.</p></div>
+        <div><strong>Settings locations</strong><code>amplifier-runtime config paths --json</code><p>Show the durable global, project, local, and key-file paths.</p></div>
       </div>
       <h4 class="maintenance-history-title">Five most recent redacted settings changes</h4>
       <Show when={props.snapshot?.recentChanges.length} fallback={<div class="settings-empty compact">No settings changes have been recorded yet.</div>}>

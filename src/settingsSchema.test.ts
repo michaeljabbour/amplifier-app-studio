@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RUNTIME_SETTINGS_FIELDS, RUNTIME_SETTINGS_SECTIONS, settingsFieldsInSection } from "./settingsSchema";
 
 describe("runtime settings schema", () => {
-  it("matches the 29-field amplifier-tui registry", () => {
+  it("matches the 29-field shared runtime registry", () => {
     expect(RUNTIME_SETTINGS_SECTIONS).toHaveLength(6);
     expect(RUNTIME_SETTINGS_FIELDS).toHaveLength(29);
     expect(new Set(RUNTIME_SETTINGS_FIELDS.map((field) => field.path)).size).toBe(29);

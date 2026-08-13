@@ -54,7 +54,7 @@ Native/Web clients
      Personal Studio Host       Managed Workspace
      Mac/Windows/Linux          ephemeral VM/container
               \                     /
-              amplifier-tui serve
+             amplifier-runtime serve
                     |
         workspace + tools + provider credentials
 ```
@@ -68,8 +68,8 @@ embedding host filesystem paths in chat records.
 
 ### 1. This computer
 
-The current Tauri-to-Rust-to-`amplifier-tui serve` path. Best privacy and lowest
-setup for macOS/Linux. It remains the default when available.
+The current Tauri-to-Rust-to-`amplifier-runtime serve` path. Best privacy and
+lowest setup for macOS/Linux. It remains the default when available.
 
 ### 2. My machine
 

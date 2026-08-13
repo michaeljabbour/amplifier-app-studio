@@ -7,9 +7,9 @@ release-gated as documented below. Studio keeps
 multiple Amplifier sessions alive in parallel without embedding or
 reimplementing the Python agent runtime.
 
-Studio and the terminal UI are becoming peer clients of a neutral Amplifier
-session runtime. The current TUI executable remains a labelled compatibility
-adapter during that extraction; it is not the target ownership boundary.
+Studio and the terminal UI are peer clients of the neutral
+[`amplifier-runtime`](https://github.com/michaeljabbour/amplifier-runtime)
+session host. Studio has no executable or package dependency on the TUI.
 
 The project is MIT licensed. The current release truth, including mobile,
 security, runtime-installation, and signing gates, is maintained in
@@ -17,9 +17,7 @@ security, runtime-installation, and signing gates, is maintained in
 
 The interface is SolidJS inside each platform's native Tauri WebView. All app
 and bridge logic is Rust. Every live tab owns one out-of-process
-`serve --attachable` runtime on the selected host. Studio prefers
-`amplifier-runtime` and temporarily falls back to `amplifier-tui` with an
-explicit compatibility label.
+`amplifier-runtime serve --attachable` process on the selected host.
 
 ## Runtime topology
 
@@ -94,10 +92,9 @@ cross this boundary.
 
 ## Desktop development
 
-Requirements are Node 22+, Rust 1.77+, and an Amplifier runtime installation
-that includes `serve`. The bridge prefers `amplifier-runtime`, then uses
-`amplifier-tui` as a compatibility adapter. It checks `~/.local/bin` before
-`PATH` for each executable.
+Requirements are Node 22+, Rust 1.77+, and an `amplifier-runtime` installation.
+The bridge checks `~/.local/bin` before `PATH`, or uses the exact executable set
+through `AMPLIFIER_STUDIO_RUNTIME_BIN`.
 
 ```bash
 npm install
@@ -147,8 +144,8 @@ loopback-only.
 
 For development against a specific runtime checkout, set
 `AMPLIFIER_STUDIO_RUNTIME_BIN` to the exact compatible executable. Packaged
-builds otherwise prefer `amplifier-runtime`, then the TUI compatibility
-adapter, in `~/.local/bin` and then `PATH`.
+builds otherwise resolve only `amplifier-runtime`, first in `~/.local/bin` and
+then on `PATH`.
 
 ## Android
 
@@ -276,10 +273,9 @@ The center conversation is intentionally permanent: selecting an agent,
 output, bundle, provider, or context view opens it beside the Coordinator chat
 instead of navigating away from the conversation that owns the work.
 
-The current compatibility implementation uses `amplifier-tui serve` because
-it already exposes live deltas, approvals, steering, subagent events, control
-leases, and durable replay. The accepted direction is to extract that UI-free
-kernel into a neutral runtime consumed by Studio and the TUI as peers.
+Studio now uses `amplifier-runtime serve` directly for live deltas, approvals,
+steering, subagent events, control leases, and durable replay. The TUI consumes
+the same published runtime as a peer rather than acting as Studio's engine.
 [`amplifier-agent`](https://github.com/microsoft/amplifier-agent) is the
 optional active-session Autopilot controller, not a replacement persistence
 engine and not a reason to start a second session. The full boundary,

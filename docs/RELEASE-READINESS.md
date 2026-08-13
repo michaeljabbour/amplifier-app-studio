@@ -7,17 +7,16 @@ one-time roadmap.
 ## Engine and installation
 
 1. **What does Studio actually depend on?** Desktop Studio invokes
-   `amplifier-tui serve`, the JSONL host shipped by `amplifier-app-tui`.
-   That Python package brings `amplifier-core` and `amplifier-foundation`.
-   Studio does not import or execute `amplifier-app-cli`, and
-   `amplifier-agent` is a future engine-adapter direction rather than a current
-   dependency.
+   `amplifier-runtime serve`, the UI-neutral JSONL host published from the
+   standalone `amplifier-runtime` repository. Runtime brings `amplifier-core`
+   and `amplifier-foundation`; Studio does not import or execute the TUI or the
+   reference CLI.
 2. **Is Python embedded in the app?** No. The desktop bridge runs the runtime
    out of process. This protects the protocol boundary, but it means the GUI
    and engine currently have separate lifecycles.
 3. **Can Studio set up a clean machine?** The welcome screen can run the
-   donor's hardened shell installer on macOS/Linux or its PowerShell installer
-   on Windows, then verifies `amplifier-tui --version`. Windows bootstrap is
+   runtime's pinned shell installer on macOS/Linux or its PowerShell installer
+   on Windows, then verifies `amplifier-runtime --version`. Windows bootstrap is
    implemented but remains release-proven only when it passes a clean Windows
    install/launch test. The long-term target is a signed, versioned runtime
    pack with an A/B repair slot.
