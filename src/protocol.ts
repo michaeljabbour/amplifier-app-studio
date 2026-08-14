@@ -148,7 +148,12 @@ export interface NoticeBlock extends BaseBlock {
   text: string;
 }
 
-export type TranscriptBlock = UserBlock | AnswerBlock | ThinkingBlock | ToolBlock | RecipeBlock | NoticeBlock;
+export interface OutputBlock extends BaseBlock {
+  kind: "output";
+  output: SessionOutput;
+}
+
+export type TranscriptBlock = UserBlock | AnswerBlock | ThinkingBlock | ToolBlock | RecipeBlock | NoticeBlock | OutputBlock;
 
 export interface LiveTailState {
   blockType: string;

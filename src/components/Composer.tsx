@@ -218,9 +218,19 @@ const STARTERS = [
     prompt: "Turn this question into a decision: [question]. Gather the relevant evidence, distinguish observation from inference, state uncertainty and trade-offs, then recommend the smallest defensible next move.",
   },
   {
-    title: "Visualize the run",
-    description: "Map agents, tools, decisions, loops, and handoffs.",
-    prompt: "Visualize this system: [system or workflow]. Map its agents, tools, decisions, handoffs, feedback loops, and failure paths. Render the result inline in Studio using an amplifier-html fence for an interactive self-contained visual, amplifier-svg for a static visual, or amplifier-dot for Graphviz; follow it with a concise explanation of the important patterns. Do not use remote assets or network requests.",
+    title: "Diagram a system",
+    description: "Show how the parts connect and where work flows.",
+    prompt: "Show me how [system or workflow] works and how its parts connect.",
+  },
+  {
+    title: "Make it interactive",
+    description: "Explore a process with motion or controls.",
+    prompt: "Make [process or idea] interactive so I can explore how it works.",
+  },
+  {
+    title: "Create an image",
+    description: "Generate original imagery with the image provider.",
+    prompt: "Create an image of [subject], in [style], for [purpose].",
   },
   {
     title: "Review the human-agent fit",

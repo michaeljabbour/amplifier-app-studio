@@ -1267,6 +1267,40 @@ describe("session reducer", () => {
     expect(state.outputs[0]?.id).toBe("/tmp/flow.dot");
   });
 
+  it("renders typed Imagen artifacts inline in the transcript", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "tool_pre",
+      tool_name: "mcp_imagegen_generate_image",
+      tool_call_id: "image-call",
+      tool_input: { prompt: "A conductor made of light" },
+    }));
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_post",
+      tool_name: "mcp_imagegen_generate_image",
+      tool_call_id: "image-call",
+      result: { content: "Image generated" },
+      artifacts: [{
+        path: "/tmp/project/.git/amplifier-studio/outputs/conductor.png",
+        kind: "image",
+        media_type: "image/png",
+      }],
+    }));
+
+    expect(state.outputs).toEqual([expect.objectContaining({
+      kind: "image",
+      title: "conductor.png",
+      source: "mcp imagegen generate image",
+    })]);
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "output",
+      output: {
+        path: "/tmp/project/.git/amplifier-studio/outputs/conductor.png",
+        kind: "image",
+      },
+    });
+  });
+
   it("attributes child outputs to the producing lane without inventing a runtime host", () => {
     let state = started();
     state = reduceRecord(state, childRuntime(2, {

@@ -211,6 +211,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .transcript-attachments .attachment-chip { grid-template-columns: 52px minmax(0, 190px); min-width: 250px; padding: 7px; }
 .transcript-attachments .attachment-chip img, .transcript-attachments .attachment-file-kind { width: 52px; height: 52px; }
 .transcript-attachments .attachment-chip > button { display: none; }
+.inline-output-card { overflow: hidden; margin-top: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(6,12,19,.58); box-shadow: 0 18px 48px rgba(0,0,0,.18); }
+.inline-output-card img { display: block; width: 100%; max-height: min(72vh, 860px); object-fit: contain; background: #05090e; }
+.inline-output-loading { display: grid; min-height: 180px; place-items: center; padding: 24px; color: var(--dim); font-size: 10px; }
+.inline-output-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 9px 12px; border-top: 1px solid var(--line); }
+.inline-output-caption strong { overflow: hidden; color: var(--text); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.inline-output-caption span { flex: 0 0 auto; color: var(--dim); font-size: 8px; }
 .composer-mode { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 13px 0; color: #6d8095; font-size: 8px; font-weight: 900; letter-spacing: 0.14em; }
 .composer-mode span.steer { color: var(--amber); }.composer-mode small { color: var(--dim); font-size: 8px; letter-spacing: .02em; }
 .composer-intent { display: flex; align-items: center; gap: 8px; white-space: nowrap; }

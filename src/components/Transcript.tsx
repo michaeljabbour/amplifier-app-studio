@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { SessionViewState, TranscriptBlock } from "../protocol";
+import { loadOutputPreview } from "../transport";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { Markdown } from "./Markdown";
 
@@ -117,7 +118,7 @@ export function Transcript(props: Props) {
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={props.state.blocks}>{(block) => <BlockView block={block} onThinkingExpanded={props.onThinkingExpanded} />}</For>
+        <For each={props.state.blocks}>{(block) => <BlockView block={block} projectDir={props.state.projectDir} onThinkingExpanded={props.onThinkingExpanded} />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
           {(tail) => (
@@ -233,6 +234,8 @@ export function transcriptScrollMarker(state: SessionViewState): string {
       ? `${last.summary}:${last.detail}`
       : last.kind === "recipe"
         ? `${last.name}:${last.status}:${last.steps.map((step) => `${step.index}:${step.status}`).join(",")}:${last.messages.join("|")}`
+      : last.kind === "output"
+        ? `${last.output.kind}:${last.output.path}`
       : last.kind === "thinking" || last.kind === "user" || last.kind === "answer" || last.kind === "notice"
         ? last.text
         : "";
@@ -250,12 +253,14 @@ function formatDuration(milliseconds: number): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId: string, expanded: boolean) => void }) {
+function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinkingExpanded: (blockId: string, expanded: boolean) => void }) {
   const block = () => props.block;
   return (
     <Show
-      when={block().kind !== "tool" && block().kind !== "thinking" && block().kind !== "recipe"}
-      fallback={block().kind === "tool"
+      when={block().kind !== "tool" && block().kind !== "thinking" && block().kind !== "recipe" && block().kind !== "output"}
+      fallback={block().kind === "output"
+        ? <OutputView block={block() as Extract<TranscriptBlock, { kind: "output" }>} projectDir={props.projectDir} />
+        : block().kind === "tool"
         ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} />
         : block().kind === "recipe"
           ? <RecipeView block={block() as Extract<TranscriptBlock, { kind: "recipe" }>} />
@@ -289,6 +294,61 @@ function BlockView(props: { block: TranscriptBlock; onThinkingExpanded: (blockId
         </div>
       </article>
     </Show>
+  );
+}
+
+function OutputView(props: {
+  block: Extract<TranscriptBlock, { kind: "output" }>;
+  projectDir: string;
+}) {
+  let card: HTMLDivElement | undefined;
+  const [preview, setPreview] = createSignal<{ mediaType: string; data: string }>();
+  const [error, setError] = createSignal("");
+
+  onMount(() => {
+    const load = () => {
+      void loadOutputPreview(props.projectDir, props.block.output.path)
+        .then(setPreview)
+        .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+    };
+    if (!("IntersectionObserver" in window) || !card) {
+      load();
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      load();
+    }, { rootMargin: "800px 0px" });
+    observer.observe(card);
+    onCleanup(() => observer.disconnect());
+  });
+
+  return (
+    <article class="block block-output">
+      <div class="block-gutter"><span class="answer-glyph">✦</span></div>
+      <div class="block-body">
+        <div class="block-label">AMPLIFIER · GENERATED IMAGE</div>
+        <div class="inline-output-card" ref={card}>
+          <Show
+            when={preview()}
+            fallback={<div class="inline-output-loading">{error() || "Loading generated image…"}</div>}
+            keyed
+          >
+            {(loaded) => (
+              <img
+                src={`data:${loaded.mediaType};base64,${loaded.data}`}
+                alt={props.block.output.title}
+              />
+            )}
+          </Show>
+          <div class="inline-output-caption">
+            <strong>{props.block.output.title}</strong>
+            <span>{props.block.output.source || "Generated output"}</span>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 

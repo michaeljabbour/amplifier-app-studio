@@ -49,6 +49,12 @@ export interface TranscriptionStatus {
   message: string;
 }
 
+export interface OutputPreview {
+  mediaType: string;
+  data: string;
+  size?: number;
+}
+
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 export type NativeAttachment = WithoutId<ComposerAttachment>;
 
@@ -243,6 +249,19 @@ export async function openLocalOutput(projectDir: string, path: string): Promise
   }
   requireTauri();
   await invoke("open_output", { projectDir, path });
+}
+
+export async function loadOutputPreview(projectDir: string, path: string): Promise<OutputPreview> {
+  if (usesWebBridge()) {
+    const bridge = bridgeBaseUrl();
+    if (!bridge) throw new Error("The Rust bridge is not configured");
+    const url = new URL("api/output-preview", `${bridge}/`);
+    url.searchParams.set("projectDir", projectDir);
+    url.searchParams.set("path", path);
+    return fetchJson<OutputPreview>(url);
+  }
+  requireTauri();
+  return invoke<OutputPreview>("read_output_preview", { projectDir, path });
 }
 
 export async function launchSession(
