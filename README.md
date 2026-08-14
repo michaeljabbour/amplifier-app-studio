@@ -174,6 +174,22 @@ same session through Runtime's live attach socket, with stored resume as the
 recovery floor. Set `AMPLIFIER_HOME` to persistent storage on ephemeral VMs or
 pods if sessions must survive replacement of the compute instance itself.
 
+Release and operations checks can exercise that contract without exposing the
+host token on the command line:
+
+```bash
+export AMPLIFIER_HOST_TOKEN="$(security find-generic-password -w -s amplifier-host -a my-host)"
+uv run --script scripts/remote-host-continuity.py \
+  --url https://my-host.example.ts.net \
+  --project-dir /srv/amplifier/projects/demo \
+  --provider anthropic \
+  --model claude-opus-5
+```
+
+The check submits a real Studio protocol turn, drops the client connection
+after Amplifier accepts the prompt, waits offline, reattaches to the same
+runtime, replays the missed records, and requires a completed model response.
+
 For development against a specific runtime checkout, set
 `AMPLIFIER_STUDIO_RUNTIME_BIN` to the exact compatible executable. Packaged
 builds otherwise resolve only `amplifier-runtime`, first in `~/.local/bin` and
