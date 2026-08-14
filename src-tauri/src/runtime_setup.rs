@@ -8,12 +8,12 @@ use std::{
 use tokio::io::AsyncWriteExt;
 
 #[cfg(test)]
-const RUNTIME_INSTALL_REF: &str = "c00f94d80e8118dd5b78775725457660608689ca";
-const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref c00f94d80e8118dd5b78775725457660608689ca --no-update-shell";
+const RUNTIME_INSTALL_REF: &str = "c590aa7ac15f067adbcc46a25e7b666d3d1a59e7";
+const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref c590aa7ac15f067adbcc46a25e7b666d3d1a59e7 --no-update-shell";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 #[cfg(target_os = "windows")]
-const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'c00f94d80e8118dd5b78775725457660608689ca' -NoUpdateShell";
+const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'c590aa7ac15f067adbcc46a25e7b666d3d1a59e7' -NoUpdateShell";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

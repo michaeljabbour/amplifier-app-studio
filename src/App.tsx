@@ -201,6 +201,7 @@ export default function App() {
           op: "submit",
           text: initialPrompt.runtimeText,
           manage_project_plan: true,
+          presentation_capabilities: ["markdown", "amplifier-html", "amplifier-svg", "amplifier-dot", "auto-height"],
           ...(imageAttachments(initialPrompt.attachments).length
             ? { attachments: imageAttachments(initialPrompt.attachments).map((image) => ({ media_type: image.mediaType, data: image.data })) }
             : {}),
@@ -327,6 +328,7 @@ export default function App() {
         op: "submit",
         text: runtimeText,
         manage_project_plan: true,
+        presentation_capabilities: ["markdown", "amplifier-html", "amplifier-svg", "amplifier-dot", "auto-height"],
         ...(imageAttachments(attachments).length
           ? { attachments: imageAttachments(attachments).map((image) => ({ media_type: image.mediaType, data: image.data })) }
           : {}),
@@ -376,7 +378,6 @@ export default function App() {
           decision_id: response.decisionId,
           answer: response.answer,
         });
-        update(session.guiId, (state) => resolveAttention(state, { decisionId: response.decisionId }));
       } else {
         update(session.guiId, (state) => addLocalNotice(
           state,
@@ -388,6 +389,7 @@ export default function App() {
       void requestStatus(session.guiId);
     } catch (error) {
       reportSendError(session.guiId, error);
+      throw error;
     }
   };
 

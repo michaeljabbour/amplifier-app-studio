@@ -127,6 +127,66 @@ describe("session reducer", () => {
     });
   });
 
+  it("records an accepted decision in chat and shows when Amplifier applies it", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "notification",
+      level: "decision",
+      decision_id: "decision-1",
+      question: "Which route should we use?",
+      choices: ["Direct (Recommended)", "Adapter"],
+    }));
+    state = reduceRecord(state, runtime(3, {
+      kind: "decision_answered",
+      decision_id: "decision-1",
+      question: "Which route should we use?",
+      answer: "Direct (Recommended)",
+    }));
+
+    expect(state.pendingDecision).toBeUndefined();
+    expect(state.activity).toContain("Decision recorded");
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "notice",
+      level: "success",
+      text: expect.stringContaining("Decision recorded: Direct (Recommended)"),
+    });
+
+    state = reduceRecord(state, runtime(4, {
+      kind: "decision_applied",
+      decision_id: "decision-1",
+      answer: "Direct (Recommended)",
+    }));
+    expect(state.activity).toContain("Decision applied");
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "notice",
+      text: expect.stringContaining("next reasoning step"),
+    });
+  });
+
+  it("keeps a rejected decision actionable and explains the runtime error", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "notification",
+      level: "decision",
+      decision_id: "decision-1",
+      question: "Which route?",
+      choices: ["Direct", "Adapter"],
+    }));
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "decision.result",
+      ok: false,
+      decision_id: "decision-1",
+      error: "decision is already answered",
+    });
+
+    expect(state.pendingDecision).toMatchObject({
+      decisionId: "decision-1",
+      submissionError: "decision is already answered",
+    });
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "error" });
+  });
+
   it("replaces numeric tab labels with a concise first-prompt title", () => {
     let state = started();
     expect(state.title).toBe("Ready for your first prompt");
@@ -618,6 +678,27 @@ describe("session reducer", () => {
     expect(state.busy).toBe(false);
   });
 
+  it("reconciles a redacted durable text block with its authoritative final response", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "content_block_end",
+      block_type: "text",
+      block: { text: '<svg viewBox="[REDACTED:PII]"><circle /></svg>' },
+    }));
+
+    state = reduceRecord(state, runtime(3, {
+      kind: "prompt_complete",
+      response: '<svg viewBox="0 0 640 400"><circle /></svg>',
+    }));
+
+    const answers = state.blocks.filter((block) => block.kind === "answer");
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({
+      text: '<svg viewBox="0 0 640 400"><circle /></svg>',
+      final: true,
+    });
+  });
+
   it("correlates tool completion by tool_call_id", () => {
     let state = started();
     state = reduceRecord(
@@ -715,13 +796,38 @@ describe("session reducer", () => {
     })]);
   });
 
-  it("bounds steering and reports unconsumed items at turn end", () => {
+  it("bounds steering and preserves unconfirmed course corrections at turn end", () => {
     let state = { ...started(), busy: true };
     for (let index = 0; index < 40; index += 1) state = queueLocalSteer(state);
     expect(state.queuedSteers).toBe(32);
     state = reduceRecord(state, { schema_version: 1, type: "turn.completed", response: "done" });
     expect(state.queuedSteers).toBe(0);
-    expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("32 queued steers"))).toBe(true);
+    expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("32 course corrections") && block.text.includes("remains in chat"))).toBe(true);
+  });
+
+  it("continues a late steer as a visible follow-up without duplicating its optimistic echo", () => {
+    let state = markSteerSubmitted({ ...started(), busy: true }, "Use the smaller fix");
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "steer.deferred",
+      count: 1,
+      reason: "final_boundary_passed",
+    });
+    expect(state.activity).toBe("Continuing with your course correction");
+    expect(state.blocks.at(-1)).toMatchObject({
+      kind: "notice",
+      level: "info",
+      text: expect.stringContaining("follow-up turn"),
+    });
+
+    state = reduceRecord(state, runtime(9, {
+      kind: "prompt_submit",
+      prompt: "Use the smaller fix",
+      mode: "auto",
+    }));
+    expect(state.blocks.filter((block) => block.kind === "user" && block.text === "Use the smaller fix")).toHaveLength(1);
+    expect(state.queuedSteers).toBe(0);
+    expect(state.busy).toBe(true);
   });
 
   it("echoes a submitted steer immediately while Amplifier keeps working", () => {
