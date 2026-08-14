@@ -44,7 +44,7 @@ export function CoordinatorHome(props: Props) {
   const [locationOpen, setLocationOpen] = createSignal(false);
   const recent = createMemo(() => props.sessions.slice(0, 24));
   const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
-  const runtimeAvailable = () => props.runtime?.installed === true;
+  const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
   const ready = () => runtimeAvailable() && providerStatusAvailable() && props.runtime?.providerConfigured === true;
 
@@ -142,7 +142,7 @@ export function CoordinatorHome(props: Props) {
             <p>Studio uses Amplifier’s existing Python runtime out of process.</p>
             <div>
               <Show when={props.runtime?.installSupported} fallback={<button class="secondary-button" onClick={props.onSettings}>Configure bridge</button>}>
-                <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? "Installing…" : "Install Amplifier runtime"}</button>
+                <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? props.runtime?.installed ? "Updating…" : "Installing…" : props.runtime?.installed ? "Update Amplifier runtime" : "Install Amplifier runtime"}</button>
               </Show>
               <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
             </div>
