@@ -115,8 +115,10 @@ fn summarize(
         "recovered"
     } else if metadata_exists && transcript_exists && transcript.is_none() {
         "transcript_lost"
-    } else if !metadata_exists {
+    } else if !metadata_exists && message_count > 0 {
         "indexing"
+    } else if !metadata_exists {
+        "empty"
     } else {
         "ok"
     };
@@ -136,12 +138,16 @@ fn summarize(
     };
     let project_dir = nonempty_string_field(&metadata, "working_dir")
         .or_else(|| project_dir_hint.map(str::to_owned));
-    let summary = friendly_summary(
-        transcript_summary.last_assistant.as_deref(),
-        turn_count_from(&metadata),
-        message_count,
-        project_dir.as_deref(),
-    );
+    let summary = if state == "empty" {
+        "No resumable conversation was written for this runtime attempt.".to_owned()
+    } else {
+        friendly_summary(
+            transcript_summary.last_assistant.as_deref(),
+            turn_count_from(&metadata),
+            message_count,
+            project_dir.as_deref(),
+        )
+    };
 
     StoredSession {
         name,
@@ -501,6 +507,43 @@ mod tests {
         let mut file = File::create(&path).expect("transcript");
         writeln!(file, "not json").expect("write");
         assert_eq!(read_transcript_with_backup(&path), None);
+    }
+
+    #[test]
+    fn event_only_runtime_attempt_is_empty_not_perpetually_indexing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("events.jsonl"),
+            "{\"event\":\"session:end\"}\n",
+        )
+        .expect("event log");
+        let summary = summarize(
+            temp.path(),
+            "session-empty".into(),
+            "-project".into(),
+            Some("/project"),
+        );
+        assert_eq!(summary.state, "empty");
+        assert_eq!(summary.message_count, 0);
+        assert!(summary.summary.contains("No resumable conversation"));
+    }
+
+    #[test]
+    fn transcript_without_metadata_is_labeled_as_missing_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("transcript.jsonl"),
+            "{\"role\":\"user\",\"content\":\"unfinished\"}\n",
+        )
+        .expect("transcript");
+        let summary = summarize(
+            temp.path(),
+            "session-partial".into(),
+            "-project".into(),
+            Some("/project"),
+        );
+        assert_eq!(summary.state, "indexing");
+        assert_eq!(summary.message_count, 1);
     }
 
     #[test]

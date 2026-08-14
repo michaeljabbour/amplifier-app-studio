@@ -36,8 +36,16 @@ describe("renderMarkdown", () => {
     expect(segments[2]).toEqual({ kind: "markdown", source: "\n\nAfter" });
   });
 
-  it("leaves an incomplete visual fence as ordinary markdown while streaming", () => {
+  it("collapses an incomplete visual fence into a pending artifact while streaming", () => {
     expect(extractVisualSegments("```amplifier-html\n<div>partial"))
-      .toEqual([{ kind: "markdown", source: "```amplifier-html\n<div>partial" }]);
+      .toEqual([{ kind: "pending-artifact", format: "html", source: "<div>partial" }]);
+  });
+
+  it("preserves prose before a pending visual without exposing streamed source", () => {
+    expect(extractVisualSegments("Evidence follows.\n\n```amplifier-dot\ndigraph spark {"))
+      .toEqual([
+        { kind: "markdown", source: "Evidence follows.\n\n" },
+        { kind: "pending-artifact", format: "dot", source: "digraph spark {" },
+      ]);
   });
 });

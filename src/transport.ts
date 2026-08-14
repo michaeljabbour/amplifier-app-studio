@@ -233,8 +233,8 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
   if (tokenLength < 32 || tokenLength > 4096) {
     throw new Error("Bridge tokens must contain 32 to 4096 bytes");
   }
-  // Until native keychain-backed storage lands, credentials are deliberately
-  // scoped to this browser/app session instead of persistent Web storage.
+  // Unproven bridge credentials stay session-only. After a native Studio
+  // session starts successfully, App promotes the host token to Keychain.
   tokens[bridge] = token;
   sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, JSON.stringify({ tokens }));
 }
@@ -274,6 +274,43 @@ export async function removeRuntimeHost(id: string): Promise<RuntimeHost[]> {
 export async function storeRuntimeHostToken(id: string, token: string): Promise<void> {
   requireTauri();
   await invoke("store_runtime_host_token", { id, token });
+}
+
+export function durableRuntimeHostForSession(input: NewSessionInput, hosts: RuntimeHost[]): RuntimeHost | undefined {
+  const url = input.hostUrl ? normalizedBridgeUrl(input.hostUrl) : undefined;
+  if (!url || input.hostId === "local") return undefined;
+  const existing = hosts.find((host) => host.tokenRef !== "local"
+    && host.tokenRef !== "session"
+    && normalizedBridgeUrl(host.url) === url);
+  if (existing) {
+    return { ...existing, url, defaultProjectRoot: input.projectDir || existing.defaultProjectRoot };
+  }
+  const parsed = new URL(url);
+  const suppliedName = input.hostName?.trim();
+  const genericName = !suppliedName || /^(configured|connected) host$/i.test(suppliedName);
+  const id = runtimeHostId(url);
+  return {
+    id,
+    name: genericName ? `Compute · ${parsed.host}` : suppliedName,
+    url,
+    tokenRef: `keychain:${id}`,
+    defaultProjectRoot: input.projectDir || undefined,
+  };
+}
+
+export function runtimeHostId(url: string): string {
+  const parsed = new URL(url);
+  const base = `${parsed.hostname}-${parsed.port || (parsed.protocol === "https:" ? "443" : "80")}`
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "remote";
+  let hash = 2166136261;
+  for (const character of url) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const suffix = (hash >>> 0).toString(36);
+  return `host-${base.slice(0, Math.max(1, 57 - suffix.length))}-${suffix}`.slice(0, 63);
 }
 
 export async function listHostDirectories(hostUrl: string, path?: string, hostId?: string): Promise<HostDirectoryListing> {
@@ -451,7 +488,7 @@ export async function stopSession(guiId: string): Promise<boolean> {
 }
 
 export async function listStoredSessions(projectDir?: string, hostUrl?: string, hostId?: string): Promise<StoredSession[]> {
-  const bridge = hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
+  const bridge = hostId === "local" ? undefined : hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
   if (bridge) {
     await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/stored-sessions");
@@ -507,9 +544,12 @@ export async function defaultProjectDir(): Promise<string> {
   return invoke<string>("default_project_dir");
 }
 
-export async function getRuntimeStatus(): Promise<RuntimeStatus> {
-  const bridge = bridgeBaseUrl();
-  if (bridge) return fetchJson<RuntimeStatus>(hostApiUrl(bridge, "/runtime"));
+export async function getRuntimeStatus(hostUrl?: string, hostId?: string): Promise<RuntimeStatus> {
+  const bridge = hostId === "local" ? undefined : hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
+  if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
+    return fetchJson<RuntimeStatus>(hostApiUrl(bridge, "/runtime"), undefined, bridge);
+  }
   requireTauri();
   return invoke<RuntimeStatus>("runtime_status");
 }

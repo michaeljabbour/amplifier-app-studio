@@ -17,7 +17,7 @@ marked.use({
 export function Markdown(props: Props) {
   const html = createMemo(() => renderMarkdown(props.text));
   const segments = createMemo(() => extractVisualSegments(props.text));
-  const hasArtifacts = createMemo(() => segments().some((segment) => segment.kind === "artifact"));
+  const hasArtifacts = createMemo(() => segments().some((segment) => segment.kind !== "markdown"));
   return (
     <Show
       when={hasArtifacts()}
@@ -30,12 +30,14 @@ export function Markdown(props: Props) {
     >
       <div class={`markdown markdown-artifact-document ${props.compact ? "markdown-compact" : ""} ${props.class || ""}`.trim()}>
         <For each={segments()}>{(segment) => (
-          <Show
-            when={segment.kind === "artifact" ? segment : undefined}
-            keyed
-            fallback={<div class="markdown-fragment" innerHTML={renderMarkdown(segment.source)} />}
-          >
-            {(artifact) => <VisualArtifact format={artifact.format} source={artifact.source} />}
+          <Show when={segment.kind !== "markdown"} fallback={<div class="markdown-fragment" innerHTML={renderMarkdown(segment.source)} />}>
+            <Show
+              when={segment.kind === "artifact" ? segment : undefined}
+              keyed
+              fallback={<PendingVisualArtifact format={segment.kind === "pending-artifact" ? segment.format : "html"} source={segment.source} />}
+            >
+              {(artifact) => <VisualArtifact format={artifact.format} source={artifact.source} />}
+            </Show>
           </Show>
         )}</For>
       </div>
@@ -45,7 +47,8 @@ export function Markdown(props: Props) {
 
 export type MarkdownVisualSegment =
   | { kind: "markdown"; source: string }
-  | { kind: "artifact"; format: VisualArtifactFormat; source: string };
+  | { kind: "artifact"; format: VisualArtifactFormat; source: string }
+  | { kind: "pending-artifact"; format: VisualArtifactFormat; source: string };
 
 const VISUAL_FENCE = /```amplifier-(html|svg|dot)[^\n]*\n([\s\S]*?)```/gi;
 
@@ -58,8 +61,35 @@ export function extractVisualSegments(source: string): MarkdownVisualSegment[] {
     segments.push({ kind: "artifact", format: match[1].toLowerCase() as VisualArtifactFormat, source: match[2].trim() });
     cursor = index + match[0].length;
   }
-  if (cursor < source.length) segments.push({ kind: "markdown", source: source.slice(cursor) });
+  if (cursor < source.length) {
+    const tail = source.slice(cursor);
+    const pending = tail.match(/```amplifier-(html|svg|dot)[^\n]*\n([\s\S]*)$/i);
+    if (pending?.index !== undefined) {
+      if (pending.index > 0) segments.push({ kind: "markdown", source: tail.slice(0, pending.index) });
+      segments.push({
+        kind: "pending-artifact",
+        format: pending[1].toLowerCase() as VisualArtifactFormat,
+        source: pending[2],
+      });
+    } else {
+      segments.push({ kind: "markdown", source: tail });
+    }
+  }
   return segments.length ? segments : [{ kind: "markdown", source: source || "" }];
+}
+
+function PendingVisualArtifact(props: { format: VisualArtifactFormat; source: string }) {
+  const lines = () => props.source ? props.source.split("\n").length : 0;
+  return (
+    <section class="visual-artifact visual-artifact-pending" role="status" aria-live="polite">
+      <div class="visual-artifact-building-mark" aria-hidden="true"><i /><i /><i /></div>
+      <div>
+        <span>BUILDING {props.format === "html" ? "INTERACTIVE VISUAL" : props.format === "svg" ? "SVG VISUAL" : "DOT DIAGRAM"}</span>
+        <strong>Composing the presentation…</strong>
+        <small>{lines()} line{lines() === 1 ? "" : "s"} received · preview appears when complete</small>
+      </div>
+    </section>
+  );
 }
 
 export function renderMarkdown(source: string): string {

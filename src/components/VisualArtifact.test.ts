@@ -6,6 +6,7 @@ import {
   buildSandboxedHtmlDocument,
   clampArtifactHeight,
   isArtifactResizeMessage,
+  renderDotArtifact,
   sanitizeVisualSvg,
   visualArtifactSourceError,
   visualArtifactTitle,
@@ -41,6 +42,35 @@ describe("visual artifacts", () => {
     expect(svg).not.toContain("<image");
     expect(svg).not.toContain("onclick");
     expect(svg).not.toContain('width="900"');
+  });
+
+  it("accepts Graphviz XML wrappers and renders the Spark topology used by remote compute", async () => {
+    const wrapped = sanitizeVisualSvg('<?xml version="1.0"?><!DOCTYPE svg><svg width="20" height="10"><title>Spark</title><rect width="20" height="10"/></svg>');
+    expect(wrapped).toContain('aria-label="Spark"');
+
+    const dot = `digraph spark {
+      rankdir=TB;
+      bgcolor="transparent";
+      node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#444444", fontcolor="#111111"];
+      subgraph cluster_soc {
+        label="GB10 Superchip";
+        X [label="10× Cortex-X925\\ncpu 5-9, 15-19\\n3.9–4.0 GHz", fillcolor="#d9f0c2"];
+        A [label="10× Cortex-A725\\ncpu 0-4, 10-14\\n2.8 GHz", fillcolor="#eef7e3"];
+        G [label="GB10 GPU\\nBlackwell, CUDA 13.0", fillcolor="#c9e6f5"];
+        M [label="119 GiB LPDDR5X — UNIFIED\\nno copies, but also no isolation", fillcolor="#ffe9b8", shape=box3d];
+        X -> M [label=" coherent"];
+        A -> M [label=" coherent"];
+        G -> M [label=" coherent"];
+      }
+      D [label="Desktop stack\\nGNOME · snaps · cups · bluetooth", fillcolor="#f7d4d4"];
+      S [label="16 GiB swapfile\\nswappiness = 60", fillcolor="#f7d4d4"];
+      D -> M [label=" ~2-3 GiB", color="#c04040"];
+      M -> S [label=" page-out = GPU stall", color="#c04040"];
+    }`;
+    const svg = await renderDotArtifact(dot);
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("GB10 Superchip");
+    expect(svg).toContain('aria-label="spark"');
   });
 
   it("derives inert titles and rejects empty or oversized payloads", () => {
