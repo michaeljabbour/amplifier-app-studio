@@ -58,6 +58,8 @@
 .settings-form-field input, .settings-context-bar input, .runtime-setting-control input, .runtime-setting-control select, .runtime-setting-control textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 0; outline: 0; padding: 9px 10px; background: var(--panel-2); color: var(--text); font-size: 10px; }
 .settings-form-field input:focus, .settings-context-bar input:focus, .runtime-setting-control input:focus, .runtime-setting-control select:focus, .runtime-setting-control textarea:focus { border-color: var(--blue); }
 .settings-form-field small { color: var(--dim); font-size: 8px; line-height: 1.5; }
+.settings-form-actions { display: flex; align-items: center; gap: 12px; }
+.settings-form-actions small { max-width: 430px; color: var(--dim); font-size: 8px; line-height: 1.45; }
 .compute-pool { max-width: 690px; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
 .compute-pool-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .compute-pool-heading span, .compute-pool-heading strong { display: block; }
@@ -76,6 +78,10 @@
 .compute-host-list button:disabled { opacity: .5; cursor: wait; }
 .session-home-field { margin-top: 20px; border: 1px solid var(--line); border-left: 2px solid var(--blue); padding: 13px 14px; background: color-mix(in srgb, var(--blue) 4%, transparent); }
 .session-home-field select { width: 100%; border: 1px solid var(--line-strong); padding: 9px 10px; background: var(--panel-2); color: var(--text); font-size: 10px; }
+.settings-target-host { max-width: 760px; display: grid; grid-template-columns: auto minmax(240px, 1fr); align-items: center; gap: 7px 12px; margin-top: 22px; }
+.settings-target-host > span { color: var(--muted); font-size: 8px; }
+.settings-target-host select { border: 1px solid var(--line-strong); padding: 8px 10px; background: var(--panel-2); color: var(--text); font-size: 9px; }
+.settings-target-host small { grid-column: 2; color: var(--dim); font-size: 7px; }
 .settings-context-bar { max-width: 760px; display: flex; align-items: center; gap: 8px; margin-top: 22px; border: 1px solid var(--line); padding: 9px 10px; background: var(--panel-2); }
 .settings-context-bar > div { min-width: 0; flex: 1; }
 .settings-context-bar span, .settings-context-bar strong { display: block; }
@@ -83,6 +89,8 @@
 .settings-context-bar strong { overflow: hidden; margin-top: 3px; font: 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .settings-context-bar input { min-width: 0; flex: 1; }
 .settings-context-bar .icon-button { width: 32px; height: 32px; color: var(--muted); }
+.settings-remote-directory-browser { max-width: 760px; border: 1px solid var(--line); border-top: 0; padding: 10px; background: var(--panel-2); }
+.settings-remote-directory-browser > div:first-child { overflow: hidden; color: var(--muted); font: 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .scope-control { max-width: 760px; display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin: 13px 0 20px; }
 .scope-control > span { margin-right: 9px; color: var(--muted); font-size: 8px; }
 .scope-control button { border: 1px solid var(--line); border-right-width: 0; padding: 6px 9px; background: transparent; color: var(--muted); cursor: pointer; font-size: 8px; text-transform: capitalize; }
