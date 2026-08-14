@@ -1,7 +1,7 @@
 {
   "name": "amplifier-app-studio",
   "private": true,
-  "version": "0.1.26",
+  "version": "0.1.27",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "build": "npm run typecheck && vite build",
     "release:check": "node scripts/check-release-version.mjs",
     "preview": "vite preview",
-    "web:bridge": "cargo run --manifest-path src-tauri/Cargo.toml --bin amplifier-studio-server",
+    "web:bridge": "cargo run --manifest-path src-tauri/Cargo.toml --bin amplifier-host",
     "web:serve": "npm run build && npm run web:bridge",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",

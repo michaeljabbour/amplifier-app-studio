@@ -100,6 +100,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tab-status.phase-starting, .tab-status.phase-degraded, .tab-status.phase-closing { background: var(--amber); }
 .tab-status.phase-error { background: var(--red); }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12px; font-weight: 600; }
+.tab-host { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; padding: 2px 5px; color: var(--dim); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
 .tab-close { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 5px; color: transparent; font-size: 16px; line-height: 1; }
 .session-tab:hover .tab-close, .session-tab.active .tab-close { color: var(--dim); }
 .tab-close:hover { color: var(--text) !important; background: rgba(255, 255, 255, 0.08); }
@@ -335,6 +336,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .path-picker-control input { min-width: 0; flex: 1; }
 .path-picker-control input[readonly] { color: #9fb0c0; cursor: default; }
 .path-picker-control button { flex: 0 0 auto; height: 37px; white-space: nowrap; }
+.remote-directory-browser { margin: -4px 22px 18px; border: 1px solid var(--line); border-radius: 9px; padding: 10px; background: rgba(4, 10, 17, .4); }
+.remote-directory-browser > div:first-child { overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 11px var(--font-mono); }
+.remote-directory-actions { display: flex; gap: 8px; margin: 9px 0; }
+.remote-directory-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 150px; overflow: auto; }
+.remote-directory-list button { overflow: hidden; text-overflow: ellipsis; text-align: left; border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; background: transparent; color: var(--text); }
+.remote-directory-list button:hover { border-color: var(--blue); background: rgba(79, 183, 255, .07); }
 .form-error { margin: -7px 24px 15px; padding: 9px 11px; border: 1px solid rgba(255, 118, 127, .22); border-radius: 6px; background: rgba(255, 118, 127, .06); color: #dda0a4; font-size: 10px; }
 .dialog-footer { display: flex; align-items: center; gap: 9px; padding: 14px 24px; border-top: 1px solid var(--line); background: rgba(0, 0, 0, .12); }.process-note { flex: 1; color: var(--dim); font-size: 8px; }.process-note span { color: var(--blue); margin-right: 6px; }
 .capability-selection { margin: 18px 24px 0; border: 1px solid rgba(79,183,255,.25); border-radius: 9px; padding: 13px 14px; background: rgba(79,183,255,.055); }

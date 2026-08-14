@@ -43,6 +43,22 @@ export interface RuntimeStatus {
   message: string;
 }
 
+export interface RuntimeHost {
+  id: string;
+  name: string;
+  url: string;
+  tokenRef: string;
+  defaultProjectRoot?: string;
+}
+
+export interface HostDirectoryListing {
+  version: number;
+  path: string;
+  parent?: string;
+  roots: string[];
+  directories: Array<{ name: string; path: string }>;
+}
+
 export interface TranscriptionStatus {
   available: boolean;
   provider?: string;
@@ -109,6 +125,7 @@ interface BridgeConnection extends SessionConnection {
 }
 
 interface BridgeEnvelope {
+  version?: number;
   type?: string;
   channel?: string;
   payload?: unknown;
@@ -119,8 +136,10 @@ interface BridgeEnvelope {
 const bridgeConnections = new Map<string, BridgeConnection>();
 const BRIDGE_STORAGE_KEY = "amplifier-studio.bridge-url";
 const BRIDGE_TOKEN_STORAGE_KEY = "amplifier-studio.bridge-token";
-const WS_PROTOCOL = "amplifier-studio";
-const WS_BEARER_PREFIX = "amplifier-studio.bearer.";
+const HOST_PROTOCOL_VERSION = 1;
+const HOST_API_PREFIX = "/v1/api";
+const WS_PROTOCOL = "amplifier-host.v1";
+const WS_BEARER_PREFIX = "amplifier-host.bearer.";
 const NON_DURABLE_EVENT_KINDS = new Set([
   "stream_block_start",
   "stream_block_delta",
@@ -148,12 +167,18 @@ export function configuredBridgeUrl(): string {
     || "";
 }
 
-export function configuredBridgeToken(): string {
+export function configuredBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
   const stored = sessionStorage.getItem(BRIDGE_TOKEN_STORAGE_KEY);
   if (!stored) return "";
   try {
-    const parsed = JSON.parse(stored) as { bridge?: unknown; token?: unknown };
-    const bridge = normalizedBridgeUrl(configuredBridgeUrl());
+    const parsed = JSON.parse(stored) as {
+      bridge?: unknown;
+      token?: unknown;
+      tokens?: Record<string, unknown>;
+    };
+    const bridge = normalizedBridgeUrl(bridgeUrl);
+    if (!bridge) return "";
+    if (parsed.tokens && typeof parsed.tokens[bridge] === "string") return parsed.tokens[bridge] as string;
     return typeof parsed.token === "string" && parsed.bridge === bridge ? parsed.token : "";
   } catch {
     return "";
@@ -180,8 +205,28 @@ export function saveBridgeUrl(value: string): void {
 
 export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()): void {
   const token = value.trim();
+  const bridge = normalizedBridgeUrl(bridgeUrl);
+  if (!bridge) throw new Error("Enter a valid bridge URL before saving its token");
+  const tokens: Record<string, string> = {};
+  const stored = sessionStorage.getItem(BRIDGE_TOKEN_STORAGE_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as { bridge?: unknown; token?: unknown; tokens?: Record<string, unknown> };
+      if (parsed.tokens) {
+        for (const [key, candidate] of Object.entries(parsed.tokens)) {
+          if (typeof candidate === "string") tokens[key] = candidate;
+        }
+      } else if (typeof parsed.bridge === "string" && typeof parsed.token === "string") {
+        tokens[parsed.bridge] = parsed.token;
+      }
+    } catch {
+      // Replace damaged session-only credential state below.
+    }
+  }
   if (!token) {
-    sessionStorage.removeItem(BRIDGE_TOKEN_STORAGE_KEY);
+    delete tokens[bridge];
+    if (Object.keys(tokens).length) sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, JSON.stringify({ tokens }));
+    else sessionStorage.removeItem(BRIDGE_TOKEN_STORAGE_KEY);
     return;
   }
   const tokenLength = new TextEncoder().encode(token).byteLength;
@@ -190,9 +235,54 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
   }
   // Until native keychain-backed storage lands, credentials are deliberately
   // scoped to this browser/app session instead of persistent Web storage.
-  const bridge = normalizedBridgeUrl(bridgeUrl);
-  if (!bridge) throw new Error("Enter a valid bridge URL before saving its token");
-  sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, JSON.stringify({ bridge, token }));
+  tokens[bridge] = token;
+  sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, JSON.stringify({ tokens }));
+}
+
+export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
+  const local: RuntimeHost = { id: "local", name: "This Mac", url: "", tokenRef: "local" };
+  if (isTauriRuntime()) {
+    const remote = await invoke<RuntimeHost[]>("list_runtime_hosts");
+    const configured = bridgeBaseUrl();
+    if (configured) {
+      const selected = remote.find((host) => normalizedBridgeUrl(host.url) === configured);
+      if (selected) return [selected, local, ...remote.filter((host) => host.id !== selected.id)];
+      return [
+        { id: "configured", name: "Configured host", url: configured, tokenRef: "session" },
+        local,
+        ...remote,
+      ];
+    }
+    return [local, ...remote];
+  }
+  const url = bridgeBaseUrl();
+  return url
+    ? [{ id: "connected", name: "Connected host", url, tokenRef: "session" }]
+    : [local];
+}
+
+export async function saveRuntimeHost(host: RuntimeHost): Promise<RuntimeHost[]> {
+  requireTauri();
+  return invoke<RuntimeHost[]>("save_runtime_host", { host });
+}
+
+export async function removeRuntimeHost(id: string): Promise<RuntimeHost[]> {
+  requireTauri();
+  return invoke<RuntimeHost[]>("remove_runtime_host", { id });
+}
+
+export async function storeRuntimeHostToken(id: string, token: string): Promise<void> {
+  requireTauri();
+  await invoke("store_runtime_host_token", { id, token });
+}
+
+export async function listHostDirectories(hostUrl: string, path?: string, hostId?: string): Promise<HostDirectoryListing> {
+  const bridge = normalizedBridgeUrl(hostUrl);
+  if (!bridge) throw new Error("The runtime host URL is invalid");
+  await ensureBridgeToken(bridge, hostId);
+  const url = hostApiUrl(bridge, "/directories");
+  if (path?.trim()) url.searchParams.set("path", path.trim());
+  return fetchJson<HostDirectoryListing>(url, undefined, bridge);
 }
 
 export function transportLabel(): string {
@@ -201,13 +291,17 @@ export function transportLabel(): string {
 }
 
 export function localRuntimeSettingsAvailable(): boolean {
-  return isTauriRuntime() && !usesWebBridge();
+  return isTauriRuntime() || usesWebBridge();
 }
 
 export async function readRuntimeSettings(projectDir: string): Promise<RuntimeSettingsSnapshot> {
-  if (!localRuntimeSettingsAvailable()) {
-    throw new Error("Durable Amplifier settings are edited on the local desktop runtime");
+  const bridge = bridgeBaseUrl();
+  if (bridge) {
+    const url = hostApiUrl(bridge, "/runtime-settings");
+    url.searchParams.set("projectDir", projectDir);
+    return fetchJson<RuntimeSettingsSnapshot>(url);
   }
+  requireTauri();
   return invoke<RuntimeSettingsSnapshot>("read_runtime_settings", { projectDir });
 }
 
@@ -215,9 +309,15 @@ export async function applyRuntimeSettings(
   projectDir: string,
   changes: RuntimeSettingChange[],
 ): Promise<RuntimeSettingsSnapshot> {
-  if (!localRuntimeSettingsAvailable()) {
-    throw new Error("Durable Amplifier settings are edited on the local desktop runtime");
+  const bridge = bridgeBaseUrl();
+  if (bridge) {
+    return fetchJson<RuntimeSettingsSnapshot>(hostApiUrl(bridge, "/runtime-settings"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectDir, changes }),
+    });
   }
+  requireTauri();
   return invoke<RuntimeSettingsSnapshot>("apply_runtime_settings", { projectDir, changes });
 }
 
@@ -245,8 +345,25 @@ export async function listenNativeAttachmentDrops(
 }
 
 export async function openLocalOutput(projectDir: string, path: string): Promise<void> {
-  if (usesWebBridge()) {
-    throw new Error("Remote outputs need artifact download support from the runtime host");
+  const bridge = bridgeBaseUrl();
+  if (bridge) {
+    const url = hostApiUrl(bridge, "/output");
+    url.searchParams.set("projectDir", projectDir);
+    url.searchParams.set("path", path);
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${requireBridgeToken()}` },
+    });
+    if (!response.ok) {
+      const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
+      throw new Error(value?.error || `Host output request failed (${response.status})`);
+    }
+    const blobUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = path.split(/[\\/]/).pop() || "amplifier-output";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+    return;
   }
   requireTauri();
   await invoke("open_output", { projectDir, path });
@@ -256,7 +373,7 @@ export async function loadOutputPreview(projectDir: string, path: string): Promi
   if (usesWebBridge()) {
     const bridge = bridgeBaseUrl();
     if (!bridge) throw new Error("The Rust bridge is not configured");
-    const url = new URL("api/output-preview", `${bridge}/`);
+    const url = hostApiUrl(bridge, "/output-preview");
     url.searchParams.set("projectDir", projectDir);
     url.searchParams.set("path", path);
     return fetchJson<OutputPreview>(url);
@@ -269,8 +386,14 @@ export async function launchSession(
   options: StartSessionOptions,
   handlers: SessionHandlers,
 ): Promise<SessionConnection> {
-  const bridge = bridgeBaseUrl();
-  if (bridge) return launchBridgeSession(bridge, options, handlers);
+  const bridge = options.hostId === "local" ? undefined : bridgeBaseUrl(options.hostUrl);
+  if (bridge) {
+    if (!configuredBridgeToken(bridge) && isTauriRuntime() && options.hostId) {
+      const token = await invoke<string>("resolve_runtime_host_token", { id: options.hostId });
+      saveBridgeToken(token, bridge);
+    }
+    return launchBridgeSession(bridge, options, handlers);
+  }
 
   requireTauri();
   const unlisten = await Promise.all([
@@ -327,10 +450,11 @@ export async function stopSession(guiId: string): Promise<boolean> {
   return invoke<boolean>("stop_session", { guiId });
 }
 
-export async function listStoredSessions(projectDir?: string): Promise<StoredSession[]> {
-  const bridge = bridgeBaseUrl();
+export async function listStoredSessions(projectDir?: string, hostUrl?: string, hostId?: string): Promise<StoredSession[]> {
+  const bridge = hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
   if (bridge) {
-    const url = new URL("/api/stored-sessions", bridge);
+    await ensureBridgeToken(bridge, hostId);
+    const url = hostApiUrl(bridge, "/stored-sessions");
     const project = clean(projectDir);
     if (project) url.searchParams.set("projectDir", project);
     return fetchJson<StoredSession[]>(url);
@@ -339,10 +463,11 @@ export async function listStoredSessions(projectDir?: string): Promise<StoredSes
   return invoke<StoredSession[]>("list_stored_sessions", { projectDir: clean(projectDir) });
 }
 
-export async function listCatalog(projectDir?: string): Promise<CapabilityCatalog> {
-  const bridge = bridgeBaseUrl();
+export async function listCatalog(projectDir?: string, hostUrl?: string, hostId?: string): Promise<CapabilityCatalog> {
+  const bridge = hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
   if (bridge) {
-    const url = new URL("/api/catalog", bridge);
+    await ensureBridgeToken(bridge, hostId);
+    const url = hostApiUrl(bridge, "/catalog");
     const project = clean(projectDir);
     if (project) url.searchParams.set("projectDir", project);
     return fetchJson<CapabilityCatalog>(url);
@@ -354,7 +479,7 @@ export async function listCatalog(projectDir?: string): Promise<CapabilityCatalo
 export async function addBundle(input: { projectDir?: string; uri: string; name?: string }): Promise<CapabilityCatalog> {
   const bridge = bridgeBaseUrl();
   if (bridge) {
-    return fetchJson<CapabilityCatalog>(new URL("/api/catalog/bundles", bridge), {
+    return fetchJson<CapabilityCatalog>(hostApiUrl(bridge, "/catalog/bundles"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -375,7 +500,7 @@ export async function addBundle(input: { projectDir?: string; uri: string; name?
 export async function defaultProjectDir(): Promise<string> {
   const bridge = bridgeBaseUrl();
   if (bridge) {
-    const config = await fetchJson<{ defaultProjectDir?: string }>(new URL("/api/config", bridge));
+    const config = await fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"));
     return config.defaultProjectDir || "";
   }
   if (!isTauriRuntime()) return "";
@@ -384,7 +509,7 @@ export async function defaultProjectDir(): Promise<string> {
 
 export async function getRuntimeStatus(): Promise<RuntimeStatus> {
   const bridge = bridgeBaseUrl();
-  if (bridge) return fetchJson<RuntimeStatus>(new URL("/api/runtime", bridge));
+  if (bridge) return fetchJson<RuntimeStatus>(hostApiUrl(bridge, "/runtime"));
   requireTauri();
   return invoke<RuntimeStatus>("runtime_status");
 }
@@ -417,7 +542,7 @@ export async function configureProvider(input: {
 
 export async function getTranscriptionStatus(): Promise<TranscriptionStatus> {
   const bridge = bridgeBaseUrl();
-  if (bridge) return fetchJson<TranscriptionStatus>(new URL("/api/transcription", bridge));
+  if (bridge) return fetchJson<TranscriptionStatus>(hostApiUrl(bridge, "/transcription"));
   requireTauri();
   return invoke<TranscriptionStatus>("transcription_status");
 }
@@ -425,7 +550,7 @@ export async function getTranscriptionStatus(): Promise<TranscriptionStatus> {
 export async function transcribeAudio(recording: AudioRecording): Promise<string> {
   const bridge = bridgeBaseUrl();
   if (bridge) {
-    const result = await fetchJson<{ text: string }>(new URL("/api/transcription", bridge), {
+    const result = await fetchJson<{ text: string }>(hostApiUrl(bridge, "/transcription"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(recording),
@@ -441,9 +566,9 @@ async function launchBridgeSession(
   options: StartSessionOptions,
   handlers: SessionHandlers,
 ): Promise<SessionConnection> {
-  const url = new URL(`/api/session/${encodeURIComponent(options.guiId)}`, bridge);
+  const url = hostApiUrl(bridge, `/session/${encodeURIComponent(options.guiId)}`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const token = requireBridgeToken();
+  const token = requireBridgeToken(bridge);
   const connection: BridgeConnection = {
     socket: undefined as unknown as WebSocket,
     disposed: false,
@@ -503,6 +628,14 @@ async function launchBridgeSession(
           envelope = JSON.parse(String(event.data)) as BridgeEnvelope;
         } catch {
           handlers.onLog({ stream: "bridge", message: "The Rust bridge sent invalid JSON" });
+          return;
+        }
+        if (envelope.version !== HOST_PROTOCOL_VERSION) {
+          handlers.onLog({
+            stream: "host",
+            message: `The host returned protocol version ${String(envelope.version)}; Studio requires version ${HOST_PROTOCOL_VERSION}`,
+          });
+          socket.close(4005, "unsupported host protocol version");
           return;
         }
 
@@ -680,11 +813,12 @@ function durableRuntimeEventId(record: ProtocolRecord): string | undefined {
     : undefined;
 }
 
-function bridgeBaseUrl(): string | undefined {
+function bridgeBaseUrl(explicit?: string): string | undefined {
   const queryValue = new URLSearchParams(window.location.search).get("bridge");
   // A link may select a bridge for this page load, but it never writes a
   // persistent trust decision. Persistence happens only through Settings.
-  const configured = queryValue
+  const configured = explicit?.trim()
+    || queryValue
     || localStorage.getItem(BRIDGE_STORAGE_KEY)
     || import.meta.env.VITE_STUDIO_BRIDGE_URL
     || (isTauriRuntime() ? undefined : window.location.origin);
@@ -705,12 +839,16 @@ function wireOptions(options: StartSessionOptions): Record<string, unknown> {
 
 function sendBridge(socket: WebSocket, value: Record<string, unknown>): void {
   if (socket.readyState !== WebSocket.OPEN) throw new Error("The Rust bridge connection is not open");
-  socket.send(JSON.stringify(value));
+  socket.send(JSON.stringify({ ...value, version: HOST_PROTOCOL_VERSION }));
 }
 
-async function fetchJson<T>(url: URL, init?: RequestInit): Promise<T> {
+function hostApiUrl(bridge: string, path: string): URL {
+  return new URL(`${HOST_API_PREFIX}${path}`, bridge);
+}
+
+async function fetchJson<T>(url: URL, init?: RequestInit, bridgeUrl?: string): Promise<T> {
   const headers = new Headers(init?.headers);
-  headers.set("authorization", `Bearer ${requireBridgeToken()}`);
+  headers.set("authorization", `Bearer ${requireBridgeToken(bridgeUrl || url.origin)}`);
   const response = await fetch(url, { ...init, headers });
   const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
   if (!response.ok) throw new Error(value?.error || `Bridge request failed (${response.status})`);
@@ -732,10 +870,17 @@ function clean(value: string | undefined): string | undefined {
   return cleaned || undefined;
 }
 
-function requireBridgeToken(): string {
-  const token = configuredBridgeToken().trim();
+function requireBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
+  const token = configuredBridgeToken(bridgeUrl).trim();
   if (!token) throw new Error("Enter the Rust bridge bearer token in Bridge settings");
   return token;
+}
+
+async function ensureBridgeToken(bridgeUrl: string, hostId?: string): Promise<void> {
+  if (configuredBridgeToken(bridgeUrl)) return;
+  if (!isTauriRuntime() || !hostId) return;
+  const token = await invoke<string>("resolve_runtime_host_token", { id: hostId });
+  saveBridgeToken(token, bridgeUrl);
 }
 
 function websocketBearerProtocol(token: string): string {

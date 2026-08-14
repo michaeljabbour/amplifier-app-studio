@@ -75,7 +75,7 @@ describe("bridge trust storage", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(sockets).toHaveLength(2);
     sockets[1].open();
-    expect(sockets[1].messages()).toEqual([{ type: "attach", since: 0 }]);
+    expect(sockets[1].messages()).toEqual([{ type: "attach", since: 0, version: 1 }]);
     sockets[1].message({ type: "ready", guiId: "gui-one", attached: true, since: 0 });
 
     // A live event may arrive after attachment but before history.begin. It is
@@ -92,7 +92,7 @@ describe("bridge trust storage", () => {
     sockets[1].disconnect();
     await vi.advanceTimersByTimeAsync(300);
     sockets[2].open();
-    expect(sockets[2].messages()).toEqual([{ type: "attach", since: 3 }]);
+    expect(sockets[2].messages()).toEqual([{ type: "attach", since: 3, version: 1 }]);
 
     connection.dispose();
     vi.useRealTimers();
@@ -122,7 +122,7 @@ describe("bridge trust storage", () => {
       confirmed = true;
       return value;
     });
-    expect(sockets[0].messages().at(-1)).toEqual({ type: "stop" });
+    expect(sockets[0].messages().at(-1)).toEqual({ type: "stop", version: 1 });
     await Promise.resolve();
     expect(confirmed).toBe(false);
 
@@ -196,7 +196,7 @@ class FakeWebSocket {
   }
 
   message(value: Record<string, unknown>): void {
-    this.emit("message", { data: JSON.stringify(value) });
+    this.emit("message", { data: JSON.stringify({ version: 1, ...value }) });
   }
 
   disconnect(): void {

@@ -3,6 +3,8 @@ mod catalog;
 mod image_drop;
 mod protocol;
 #[cfg(desktop)]
+mod remote_hosts;
+#[cfg(desktop)]
 mod runtime_settings;
 mod runtime_setup;
 mod session;
@@ -219,6 +221,48 @@ async fn add_bundle(
         .map_err(|error| format!("Bundle registration task failed: {error}"))?
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn list_runtime_hosts() -> Result<Vec<remote_hosts::RuntimeHost>, String> {
+    tauri::async_runtime::spawn_blocking(remote_hosts::list)
+        .await
+        .map_err(|error| format!("Host registry task failed: {error}"))?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn save_runtime_host(
+    host: remote_hosts::RuntimeHost,
+) -> Result<Vec<remote_hosts::RuntimeHost>, String> {
+    tauri::async_runtime::spawn_blocking(move || remote_hosts::upsert(host))
+        .await
+        .map_err(|error| format!("Host registry task failed: {error}"))?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn remove_runtime_host(id: String) -> Result<Vec<remote_hosts::RuntimeHost>, String> {
+    tauri::async_runtime::spawn_blocking(move || remote_hosts::remove(&id))
+        .await
+        .map_err(|error| format!("Host registry task failed: {error}"))?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn resolve_runtime_host_token(id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || remote_hosts::resolve_token(&id))
+        .await
+        .map_err(|error| format!("Host credential task failed: {error}"))?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn store_runtime_host_token(id: String, token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || remote_hosts::store_token(&id, &token))
+        .await
+        .map_err(|error| format!("Host credential task failed: {error}"))?
+}
+
 #[tauri::command]
 async fn runtime_status() -> Result<runtime_setup::RuntimeStatus, String> {
     tauri::async_runtime::spawn_blocking(runtime_setup::status)
@@ -428,6 +472,16 @@ pub fn run() {
             read_runtime_settings,
             #[cfg(desktop)]
             apply_runtime_settings,
+            #[cfg(desktop)]
+            list_runtime_hosts,
+            #[cfg(desktop)]
+            save_runtime_host,
+            #[cfg(desktop)]
+            remove_runtime_host,
+            #[cfg(desktop)]
+            resolve_runtime_host_token,
+            #[cfg(desktop)]
+            store_runtime_host_token,
             #[cfg(desktop)]
             open_output,
             #[cfg(desktop)]

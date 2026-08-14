@@ -16,8 +16,10 @@ security, runtime-installation, and signing gates, is maintained in
 [`docs/RELEASE-READINESS.md`](docs/RELEASE-READINESS.md).
 
 The interface is SolidJS inside each platform's native Tauri WebView. All app
-and bridge logic is Rust. Every live tab owns one out-of-process
-`amplifier-runtime serve --attachable` process on the selected host.
+and bridge logic is Rust. Every live tab attaches to one out-of-process
+`amplifier-runtime serve --attachable` process on its selected host.
+Network-owned runtimes are detached owners: client and host-daemon restarts
+do not stop them.
 
 ## Runtime topology
 
@@ -83,7 +85,10 @@ cross this boundary.
 - Read-only all-project session drawer with project-path recovery for TUI/CLI
   sessions and safe resume/reattach
 - Friendly errors for resume exit codes 2, 3, and 4
-- Runtime-selectable HTTPS bridge setting for native mobile clients
+- Named runtime-host registry shared with the TUI, per-tab host selection,
+  remote project browsing, HTTPS connections, and visible host badges
+- Versioned `/v1/` REST/WebSocket envelopes plus Runtime capability negotiation
+- Authenticated remote output download and redacted durable settings parity
 - Generated Windows `.ico`, macOS `.icns`, Android, and iOS icon sets
 - Signed desktop update discovery and install/restart through GitHub Releases
 - Tool-contract safety gates that keep known-corrupt experimental RunPod
@@ -119,8 +124,8 @@ window chrome. Platform configuration lives in `src-tauri/tauri.*.conf.json`.
 Build the SolidJS client and serve it from the Rust bridge:
 
 ```bash
-export AMPLIFIER_STUDIO_BRIDGE_TOKEN="$(openssl rand -hex 32)"
-export AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS="$PWD"
+export AMPLIFIER_HOST_TOKEN="$(openssl rand -hex 32)"
+export AMPLIFIER_HOST_ALLOWED_PROJECT_ROOTS="$PWD"
 npm run web:serve
 ```
 
@@ -131,9 +136,9 @@ allowed root is canonicalized before use. For split development, allow Vite's
 exact origin and run the bridge and client separately:
 
 ```bash
-export AMPLIFIER_STUDIO_BRIDGE_TOKEN="$(openssl rand -hex 32)"
-export AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS="$PWD"
-export AMPLIFIER_STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:1420"
+export AMPLIFIER_HOST_TOKEN="$(openssl rand -hex 32)"
+export AMPLIFIER_HOST_ALLOWED_PROJECT_ROOTS="$PWD"
+export AMPLIFIER_HOST_ALLOWED_ORIGINS="http://127.0.0.1:1420"
 npm run web:bridge
 npm run dev
 ```
@@ -141,6 +146,49 @@ npm run dev
 The token may instead come from `--token-file PATH`. A remote client must use
 an authenticated TLS tunnel or reverse proxy; the included host remains
 loopback-only.
+
+## Remote host
+
+The neutral Rust entry point is `amplifier-host`; the older
+`amplifier-studio-server` name remains only as a compatibility alias. A host
+can create its token and configuration and start in the foreground with one
+command:
+
+```bash
+amplifier-host enable \
+  --allow-project-root /srv/amplifier/projects \
+  --origin https://sam-lab.example.ts.net
+```
+
+`amplifier-host status` reports the redacted configuration and
+`amplifier-host token rotate` replaces the bearer token. The listener always
+refuses non-loopback binds; put Tailscale Serve, an SSH tunnel, or an
+authenticated TLS reverse proxy in front of it. Provider credentials stay on
+the host. Client-side known endpoints live in `~/.amplifier/hosts.yaml`, while
+tokens use environment or macOS Keychain references and are never written
+into that registry.
+
+Each remote Studio tab is pinned to a `(host, session-id)` pair. The host
+daemon may restart while the Python owner keeps running; Studio re-adopts the
+same session through Runtime's live attach socket, with stored resume as the
+recovery floor. Set `AMPLIFIER_HOME` to persistent storage on ephemeral VMs or
+pods if sessions must survive replacement of the compute instance itself.
+
+Release and operations checks can exercise that contract without exposing the
+host token on the command line:
+
+```bash
+export AMPLIFIER_HOST_TOKEN="$(security find-generic-password -w -s amplifier-host -a my-host)"
+uv run --script scripts/remote-host-continuity.py \
+  --url https://my-host.example.ts.net \
+  --project-dir /srv/amplifier/projects/demo \
+  --provider anthropic \
+  --model claude-opus-5
+```
+
+The check submits a real Studio protocol turn, drops the client connection
+after Amplifier accepts the prompt, waits offline, reattaches to the same
+runtime, replays the missed records, and requires a completed model response.
 
 For development against a specific runtime checkout, set
 `AMPLIFIER_STUDIO_RUNTIME_BIN` to the exact compatible executable. Packaged

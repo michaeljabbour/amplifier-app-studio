@@ -62,15 +62,18 @@ import {
   localRuntimeSettingsAvailable,
   launchSession,
   listCatalog,
+  listRuntimeHosts,
   listStoredSessions,
   sendOp,
   saveBridgeUrl,
   saveBridgeToken,
   stopSession,
+  storeRuntimeHostToken,
   transportLabel,
   transcribeAudio,
   usesWebBridge,
   type RuntimeStatus,
+  type RuntimeHost,
   type TranscriptionStatus,
   type NativeAttachmentDropEvent,
   type SessionConnection,
@@ -106,6 +109,9 @@ export default function App() {
   const [homeAttachments, setHomeAttachments] = createSignal<ComposerAttachment[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
+  const [runtimeHosts, setRuntimeHosts] = createSignal<RuntimeHost[]>([
+    { id: "local", name: "This Mac", url: "", tokenRef: "local" },
+  ]);
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
   const [runtimeInstalling, setRuntimeInstalling] = createSignal(false);
   const [runtimeError, setRuntimeError] = createSignal<string>();
@@ -136,6 +142,7 @@ export default function App() {
     if (rememberedProject) setDefaultDir(rememberedProject);
     else void defaultProjectDir().then(setDefaultDir).catch(() => undefined);
     void refreshRuntime();
+    void listRuntimeHosts().then(setRuntimeHosts).catch((error) => setRuntimeError(cleanError(error)));
     void refreshTranscription();
     queueMicrotask(() => void refreshStored());
     queueMicrotask(() => void refreshCatalog());
@@ -185,6 +192,7 @@ export default function App() {
     const type = typeof record.type === "string" ? record.type : "";
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
       initialized.add(guiId);
+      void sendOp(guiId, { op: "runtime.capabilities" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "context.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "effort.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "goal.status" }).catch((error) => reportSendError(guiId, error));
@@ -248,7 +256,7 @@ export default function App() {
       if (input.projectDir) {
         localStorage.setItem("amplifier-studio.project-dir", input.projectDir);
         setDefaultDir(input.projectDir);
-        void refreshCatalog(input.projectDir);
+        void refreshCatalog(input.projectDir, input.hostUrl, input.hostId);
       }
     } catch (error) {
       pendingInitialPrompts.delete(guiId);
@@ -397,7 +405,8 @@ export default function App() {
     setStoredLoading(true);
     setStoredError(undefined);
     try {
-      setStored(await listStoredSessions());
+      const session = active();
+      setStored(await listStoredSessions(undefined, session?.hostUrl, session?.hostId));
     } catch (error) {
       setStoredError(cleanError(error));
     } finally {
@@ -405,9 +414,9 @@ export default function App() {
     }
   };
 
-  const refreshCatalog = async (projectDir?: string) => {
+  const refreshCatalog = async (projectDir?: string, hostUrl?: string, hostId?: string) => {
     try {
-      setCatalog(await listCatalog(projectDir));
+      setCatalog(await listCatalog(projectDir, hostUrl, hostId));
       setCatalogError(undefined);
     } catch (error) {
       setCatalogError(cleanError(error));
@@ -803,9 +812,11 @@ export default function App() {
           initial={initial}
           catalog={catalog()}
           catalogError={catalogError()}
+          hosts={runtimeHosts()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
           onCancel={() => setDialog(undefined)}
           onPickProjectDir={pickProjectDirectory}
+          onHostChange={(host) => refreshCatalog(undefined, host.url || undefined, host.id)}
           onStart={start}
         />}
       </Show>
@@ -840,6 +851,10 @@ export default function App() {
           onSaveStudio={(theme, url, token) => {
             saveBridgeUrl(url);
             saveBridgeToken(token, url);
+            const matchingHost = runtimeHosts().find((host) => host.url.replace(/\/$/, "") === url.trim().replace(/\/$/, ""));
+            if (matchingHost?.tokenRef.startsWith("keychain:") && token.trim()) {
+              void storeRuntimeHostToken(matchingHost.id, token).catch((error) => setRuntimeError(cleanError(error)));
+            }
             saveStudioTheme(theme);
             setStudioTheme(theme);
             setTransport(transportLabel());
@@ -950,12 +965,16 @@ export default function App() {
   }
 
   async function prepareStoredResume(session: StoredSession) {
+    const host = active();
     const remembered = session.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
-    const projectDir = await selectProjectFolder(remembered);
-    if (nativeProjectPickerAvailable() && !projectDir) return;
+    const projectDir = host?.hostUrl ? remembered : await selectProjectFolder(remembered);
+    if (!host?.hostUrl && nativeProjectPickerAvailable() && !projectDir) return;
     setDrawerOpen(false);
     setDialog({
       projectDir: projectDir || "",
+      hostId: host?.hostId,
+      hostName: host?.hostName,
+      hostUrl: host?.hostUrl,
       resumeId: session.sessionId,
       resumeName: session.name,
     });
@@ -1068,7 +1087,9 @@ export default function App() {
   async function applyStoredSessionTitle(guiId: string, runtimeSessionId?: string) {
     if (!runtimeSessionId) return;
     try {
-      const match = (await listStoredSessions()).find((session) => session.sessionId === runtimeSessionId);
+      const current = sessions().find((session) => session.guiId === guiId);
+      const match = (await listStoredSessions(undefined, current?.hostUrl, current?.hostId))
+        .find((session) => session.sessionId === runtimeSessionId);
       if (!match?.name || /^Session [a-z0-9-]{1,12}$/i.test(match.name)) return;
       update(guiId, (state) => ({ ...state, title: match.name }));
     } catch {

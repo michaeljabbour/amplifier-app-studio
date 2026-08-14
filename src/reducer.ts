@@ -34,6 +34,9 @@ export function createSessionState(
   guiId: string,
   input: {
     projectDir: string;
+    hostId?: string;
+    hostName?: string;
+    hostUrl?: string;
     bundle?: string;
     model?: string;
     provider?: string;
@@ -46,6 +49,9 @@ export function createSessionState(
 ): SessionViewState {
   return {
     guiId,
+    hostId: input.hostId,
+    hostName: input.hostName,
+    hostUrl: input.hostUrl,
     capabilityId: input.capabilityId,
     capabilityName: input.capabilityName,
     projectDir: input.projectDir,
@@ -127,6 +133,22 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       };
     case "session.status":
       return markRestoreStatus(reduceSessionStatus(next, record));
+    case "runtime.capabilities": {
+      const protocol = isRecord(record.protocol) ? record.protocol : {};
+      const rawOperations = isRecord(record.operations) ? record.operations : {};
+      const operations: Record<string, string> = {};
+      for (const [name, value] of Object.entries(rawOperations)) {
+        if (isRecord(value) && typeof value.permission === "string") operations[name] = value.permission;
+      }
+      return {
+        ...next,
+        runtimeCapabilities: {
+          protocolVersion: numberValue(protocol.version),
+          features: stringList(record.features),
+          operations,
+        },
+      };
+    }
     case "runtime.event": {
       const event = asEvent(record.event);
       return event ? reduceEvent(next, event, record.replay === true) : next;

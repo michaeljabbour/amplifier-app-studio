@@ -42,6 +42,9 @@ export function TabStrip(props: Props) {
             >
               <span class={`tab-status phase-${session.phase}`} aria-hidden="true" />
               <span class="tab-title">{session.title}</span>
+              <Show when={session.hostName && session.hostId !== "local"}>
+                <span class="tab-host" title={`Runtime host: ${session.hostName}`}>{session.hostName}</span>
+              </Show>
               {session.busy && <span class="tab-pulse" aria-label="Working" />}
               <span
                 class="tab-close"

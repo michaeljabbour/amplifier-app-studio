@@ -1,19 +1,23 @@
-import { createMemo, createSignal, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
 import { toolContractFailure } from "../providerSafety";
+import { listHostDirectories, type HostDirectoryListing, type RuntimeHost } from "../transport";
 
 interface Props {
   initial: NewSessionInput;
   catalog: CapabilityCatalog;
   catalogError?: string;
+  hosts: RuntimeHost[];
   nativeProjectPicker: boolean;
   onCancel: () => void;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
+  onHostChange: (host: RuntimeHost) => Promise<void>;
   onStart: (input: NewSessionInput) => Promise<void>;
 }
 
 export function NewSessionDialog(props: Props) {
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
+  const [hostId, setHostId] = createSignal(props.initial.hostId || props.hosts[0]?.id || "local");
   const [bundle, setBundle] = createSignal(props.initial.bundle || "");
   const [model, setModel] = createSignal(props.initial.model || "");
   const [provider, setProvider] = createSignal(props.initial.provider || "");
@@ -21,10 +25,13 @@ export function NewSessionDialog(props: Props) {
   const [error, setError] = createSignal("");
   const [starting, setStarting] = createSignal(false);
   const [pickingProject, setPickingProject] = createSignal(false);
+  const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const overrideMismatch = createMemo(() => Boolean(model().trim()) !== Boolean(provider().trim()));
   const selectedProvider = createMemo(() => props.catalog.providers.find((item) => item.name === provider().trim()));
   const unsafeProvider = createMemo(() => selectedProvider()?.toolCompatible === false ? selectedProvider() : undefined);
   const unsafeOverride = createMemo(() => toolContractFailure(model(), provider()));
+  const selectedHost = createMemo(() => props.hosts.find((host) => host.id === hostId()) || props.hosts[0]);
+  const nativeProjectPicker = createMemo(() => props.nativeProjectPicker && !selectedHost()?.url);
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -45,6 +52,9 @@ export function NewSessionDialog(props: Props) {
     try {
       await props.onStart({
         projectDir: projectDir().trim(),
+        hostId: selectedHost()?.id,
+        hostName: selectedHost()?.name,
+        hostUrl: selectedHost()?.url || undefined,
         bundle: bundle().trim() || undefined,
         model: model().trim() || undefined,
         provider: provider().trim() || undefined,
@@ -67,6 +77,22 @@ export function NewSessionDialog(props: Props) {
     try {
       const selected = await props.onPickProjectDir(projectDir());
       if (selected) setProjectDir(selected);
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setPickingProject(false);
+    }
+  };
+
+  const browseRemote = async (path?: string) => {
+    const host = selectedHost();
+    if (!host?.url || pickingProject()) return;
+    setPickingProject(true);
+    setError("");
+    try {
+      const listing = await listHostDirectories(host.url, path, host.id);
+      setRemoteDirectories(listing);
+      if (!projectDir()) setProjectDir(listing.path);
     } catch (caught) {
       setError(String(caught));
     } finally {
@@ -106,26 +132,67 @@ export function NewSessionDialog(props: Props) {
           </div>
         )}</Show>
 
+        <label class="field full-field">
+          <span>Runtime host</span>
+          <select
+            value={hostId()}
+            onChange={(event) => {
+              const next = props.hosts.find((host) => host.id === event.currentTarget.value);
+              if (!next) return;
+              setHostId(next.id);
+              setProjectDir(next.defaultProjectRoot || "");
+              setRemoteDirectories(undefined);
+              void props.onHostChange(next).catch((caught) => setError(String(caught)));
+            }}
+          >
+            {props.hosts.map((host) => <option value={host.id}>{host.name}{host.url ? ` · ${host.url}` : " · local"}</option>)}
+          </select>
+          <small>Every tab is pinned to one host. Switching tabs does not move or stop its runtime.</small>
+        </label>
+
         <div class="field full-field">
           <span>{props.initial.resumeId ? "Original project folder" : "Project folder"}</span>
           <div class="path-picker-control">
             <input
               value={projectDir()}
-              readOnly={props.nativeProjectPicker}
+              readOnly={nativeProjectPicker() || Boolean(selectedHost()?.url)}
               onInput={(event) => setProjectDir(event.currentTarget.value)}
-              placeholder={props.nativeProjectPicker ? "Choose a folder…" : "/runtime-host/project"}
+              placeholder={nativeProjectPicker() ? "Choose a folder…" : "/runtime-host/project"}
               aria-label="Selected project folder"
             />
-            <Show when={props.nativeProjectPicker}>
+            <Show when={nativeProjectPicker()}>
               <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void pickProject()}>
                 {pickingProject() ? "Choosing…" : "Choose folder…"}
               </button>
             </Show>
+            <Show when={selectedHost()?.url}>
+              <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void browseRemote(projectDir() || undefined)}>
+                {pickingProject() ? "Loading…" : "Browse host…"}
+              </button>
+            </Show>
           </div>
-          <small>{props.nativeProjectPicker
+          <small>{nativeProjectPicker()
             ? "Studio uses the system folder picker. The Amplifier runtime starts in the selected folder."
-            : "Enter a folder on the configured runtime host; its operating-system picker is not available to this client."}</small>
+            : "Enter a path exposed by this runtime host. The host validates it against its allowed project roots."}</small>
         </div>
+
+        <Show when={remoteDirectories()} keyed>{(listing) => (
+          <div class="remote-directory-browser">
+            <div><strong>{listing.path}</strong></div>
+            <div class="remote-directory-actions">
+              <button type="button" class="secondary-button" onClick={() => setProjectDir(listing.path)}>Use this folder</button>
+              <Show when={listing.parent} keyed>{(parent) => (
+                <button type="button" class="secondary-button" onClick={() => void browseRemote(parent)}>Up</button>
+              )}</Show>
+            </div>
+            <div class="remote-directory-list">
+              <For each={listing.directories}>{(directory) => (
+                <button type="button" onClick={() => void browseRemote(directory.path)}>{directory.name}</button>
+              )}</For>
+              <Show when={!listing.directories.length}><span>No child folders</span></Show>
+            </div>
+          </div>
+        )}</Show>
 
         <details class="advanced-composition" open={!props.initial.capabilityName && !props.initial.resumeId}>
           <summary>Advanced composition <span>bundle · mode · provider · model</span></summary>
