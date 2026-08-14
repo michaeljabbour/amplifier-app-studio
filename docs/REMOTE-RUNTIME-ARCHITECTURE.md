@@ -136,6 +136,34 @@ process-local; durable host-restart identity, device principals, lease
 heartbeats, and operation idempotency must land before remote access is
 production-safe.
 
+## Shared session home and compute pool
+
+The first remote-host milestone keeps each session on the machine where it was
+created. A real compute pool needs one additional boundary: clients and workers
+share sessions through an authoritative control plane, not by mounting the live
+session directory read/write on every worker.
+
+The target design separates three durable data classes:
+
+- an append-only session ledger for events, replay cursors, approvals, writer
+  leases, placement, and checkpoints;
+- a content-addressed object store for generated artifacts, exports, and
+  diagnostics;
+- a per-session workspace volume or snapshot with one active write owner.
+
+Workers receive scoped execution leases and publish typed events and outputs
+through that plane. A worker can disappear without taking the logical session
+with it; another compatible worker resumes only from a recorded clean
+checkpoint. This also avoids treating a Unix socket advertised on one Linux
+host as though it were reachable from another host through a shared filesystem.
+
+The current three-Spark deployment is an incremental proof of the worker and
+transport layers. It does not yet claim cross-host session migration or a
+high-availability session database. The proposed control, storage, and worker
+boundaries are captured in the rendered architecture:
+
+![Amplifier remote compute and shared session home](remote-compute-shared-session.png)
+
 ## Host runtime pack
 
 Desktop and cloud hosts should install a signed, versioned runtime pack rather

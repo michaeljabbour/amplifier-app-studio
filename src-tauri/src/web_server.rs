@@ -48,6 +48,11 @@ const API_VERSION: u16 = 1;
 const TOKEN_ENV: &str = "AMPLIFIER_HOST_TOKEN";
 const ORIGINS_ENV: &str = "AMPLIFIER_HOST_ALLOWED_ORIGINS";
 const ROOTS_ENV: &str = "AMPLIFIER_HOST_ALLOWED_PROJECT_ROOTS";
+const NATIVE_STUDIO_ORIGINS: [&str; 3] = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+];
 const LEGACY_TOKEN_ENV: &str = "AMPLIFIER_STUDIO_BRIDGE_TOKEN";
 const LEGACY_ORIGINS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_ORIGINS";
 const LEGACY_ROOTS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS";
@@ -150,6 +155,10 @@ impl ServerOptions {
         if origins.is_empty() {
             origins.push(format!("http://{bind}"));
         }
+        // Tauri uses a platform-specific application origin. These exact
+        // origins still require the bearer token and let one host serve the
+        // macOS, Windows, and mobile shells without per-machine CORS surgery.
+        origins.extend(NATIVE_STUDIO_ORIGINS.iter().map(ToString::to_string));
         origins.sort();
         origins.dedup();
 
@@ -1152,7 +1161,15 @@ mod tests {
         ])
         .expect("valid server options");
         assert_eq!(options.bind.port(), 9999);
-        assert_eq!(options.allowed_origins, ["https://studio.example.com"]);
+        assert_eq!(
+            options.allowed_origins,
+            [
+                "http://tauri.localhost",
+                "https://studio.example.com",
+                "https://tauri.localhost",
+                "tauri://localhost",
+            ]
+        );
         assert_eq!(
             options.allowed_project_roots,
             [root.canonicalize().unwrap()]

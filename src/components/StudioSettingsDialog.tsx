@@ -31,7 +31,7 @@ interface Props {
   onThemePreview: (theme: StudioTheme) => void;
   onCancel: () => void;
   onRemoveRuntimeHost: (id: string) => Promise<void>;
-  onSaveStudio: (theme: StudioTheme, url: string, token: string, sessionHomeHostId: string) => void;
+  onSaveStudio: (theme: StudioTheme, url: string, token: string, sessionHomeHostId: string) => Promise<void>;
 }
 
 const STATIC_SECTIONS = [
@@ -151,7 +151,7 @@ export function StudioSettingsDialog(props: Props) {
         setSnapshot(await applyRuntimeSettings(projectDir(), staged()));
         setChanges({});
       }
-      props.onSaveStudio(theme(), url(), token(), sessionHomeHostId());
+      await props.onSaveStudio(theme(), url(), token(), sessionHomeHostId());
       props.onCancel();
     } catch (caught) {
       setReviewing(false);
@@ -332,14 +332,14 @@ function ConnectionSection(props: {
   const savedHosts = () => props.hosts.filter((host) => host.tokenRef.startsWith("keychain:") || host.tokenRef.startsWith("env:"));
   return (
     <div class="settings-section">
-      <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description="Desktop sessions use the local Rust bridge by default. A remote host is added to this pool after its first successful session, with its token protected by macOS Keychain." />
+      <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description="Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in macOS Keychain." />
       <div class="settings-field-stack">
         <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} disabled={props.locked} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Leave empty on desktop for the local process bridge. Remote hosts must use HTTPS outside loopback development.</small></label>
         <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} disabled={props.locked} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL.</small></label>
       </div>
       <div class="compute-pool">
         <div class="compute-pool-heading"><div><span>AVAILABLE COMPUTE</span><strong>{savedHosts().length} saved host{savedHosts().length === 1 ? "" : "s"}</strong></div><small>Each new session remains pinned to the host you choose.</small></div>
-        <Show when={savedHosts().length} fallback={<div class="settings-empty compact">No remote compute saved yet. Connect once and Studio will add the proven host here.</div>}>
+        <Show when={savedHosts().length} fallback={<div class="settings-empty compact">No remote compute saved yet. Enter the URL and token above, then choose Review changes. The first proven host becomes Session home.</div>}>
           <div class="compute-host-list">
             <For each={savedHosts()}>{(host) => (
               <article>

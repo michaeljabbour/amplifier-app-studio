@@ -6,6 +6,7 @@ import {
   configuredBridgeUrl,
   durableRuntimeHostForSession,
   launchSession,
+  probeRuntimeHost,
   runtimeHostId,
   saveBridgeToken,
   saveBridgeUrl,
@@ -14,6 +15,9 @@ import {
 
 describe("bridge trust storage", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.stubGlobal("localStorage", memoryStorage());
     vi.stubGlobal("sessionStorage", memoryStorage());
     localStorage.clear();
@@ -76,6 +80,40 @@ describe("bridge trust storage", () => {
       hostName: saved.name,
       hostUrl: saved.url,
     }, [saved])).toEqual({ ...saved, defaultProjectRoot: "/home/mjabbour/amplifier" });
+  });
+
+  it("proves a remote runtime and discovers its default project root before saving", async () => {
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4318");
+    vi.stubGlobal("fetch", vi.fn(async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.endsWith("/runtime")) {
+        return jsonResponse({
+          installed: true,
+          current: true,
+          adapter: "neutral",
+          installSupported: false,
+          providerStatusAvailable: true,
+          providerConfigured: true,
+          providerMessage: "ready",
+          message: "Amplifier Runtime is ready",
+        });
+      }
+      return jsonResponse({ defaultProjectDir: "/home/mjabbour/amplifier" });
+    }));
+
+    await expect(probeRuntimeHost("http://127.0.0.1:4318", "configured")).resolves.toEqual({
+      status: expect.objectContaining({ installed: true, adapter: "neutral" }),
+      defaultProjectDir: "/home/mjabbour/amplifier",
+    });
+  });
+
+  it("turns a WebKit load failure into an actionable host connection error", async () => {
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4318");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Load failed")));
+
+    await expect(probeRuntimeHost("http://127.0.0.1:4318", "configured")).rejects.toThrow(
+      "Check the SSH/Tailscale connection and make sure the host allows the native Studio origin",
+    );
   });
 
   it("reconnects from a durable cursor and deduplicates replay by event id", async () => {
@@ -169,6 +207,13 @@ describe("bridge trust storage", () => {
     connection.dispose();
   });
 });
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 function recordEnvelope(payload: Record<string, unknown>): Record<string, unknown> {
   return { type: "event", channel: "record", payload };
