@@ -7,6 +7,7 @@ import {
   durableRuntimeHostForSession,
   launchSession,
   probeRuntimeHost,
+  readRuntimeSettings,
   runtimeHostId,
   saveBridgeToken,
   saveBridgeUrl,
@@ -105,6 +106,30 @@ describe("bridge trust storage", () => {
       status: expect.objectContaining({ installed: true, adapter: "neutral" }),
       defaultProjectDir: "/home/mjabbour/amplifier",
     });
+  });
+
+  it("reads settings from the explicitly selected host instead of the globally configured bridge", async () => {
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4319");
+    const fetchMock = vi.fn(async (_input: URL | RequestInfo) => jsonResponse({
+      projectDir: "/home/mjabbour/amplifier",
+      values: [],
+      version: "0.1.6",
+      paths: {},
+      recentChanges: [],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await readRuntimeSettings(
+      "/home/mjabbour/amplifier",
+      "http://127.0.0.1:4319",
+      "spark-9602",
+    );
+
+    const requested = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requested.origin).toBe("http://127.0.0.1:4319");
+    expect(requested.pathname).toBe("/v1/api/runtime-settings");
+    expect(requested.searchParams.get("projectDir")).toBe("/home/mjabbour/amplifier");
   });
 
   it("turns a WebKit load failure into an actionable host connection error", async () => {

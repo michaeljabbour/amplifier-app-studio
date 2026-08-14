@@ -9,7 +9,9 @@ import {
 import type { StudioTheme } from "../theme";
 import {
   applyRuntimeSettings,
+  listHostDirectories,
   readRuntimeSettings,
+  type HostDirectoryListing,
   type RuntimeSettingChange,
   type RuntimeSettingsSnapshot,
   type RuntimeHost,
@@ -20,19 +22,19 @@ type SettingsSectionId = "appearance" | "connection" | "maintenance" | string;
 interface Props {
   initialProjectDir: string;
   initialTheme: StudioTheme;
-  initialUrl: string;
-  initialToken: string;
   runtimeHosts: RuntimeHost[];
   initialSessionHomeHostId: string;
-  bridgeLocked: boolean;
   runtimeSettingsAvailable: boolean;
   nativeProjectPicker: boolean;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
   onThemePreview: (theme: StudioTheme) => void;
   onCancel: () => void;
+  onAddRuntimeHost: (url: string, token: string) => Promise<RuntimeHost>;
   onRemoveRuntimeHost: (id: string) => Promise<void>;
-  onSaveStudio: (theme: StudioTheme, url: string, token: string, sessionHomeHostId: string) => Promise<void>;
+  onSaveStudio: (theme: StudioTheme, sessionHomeHostId: string) => Promise<void>;
 }
+
+const SETTINGS_CONTEXTS_KEY = "amplifier-studio.settings-project-contexts";
 
 const STATIC_SECTIONS = [
   { id: "appearance", title: "Appearance", summary: "Studio visual language" },
@@ -40,12 +42,24 @@ const STATIC_SECTIONS = [
 ];
 
 export function StudioSettingsDialog(props: Props) {
+  const initialSettingsHostId = props.runtimeHosts.some((host) => host.id === props.initialSessionHomeHostId)
+    ? props.initialSessionHomeHostId
+    : "local";
+  const initialSettingsHost = props.runtimeHosts.find((host) => host.id === initialSettingsHostId);
+  const [settingsContexts, setSettingsContexts] = createSignal<Record<string, string>>(loadSettingsContexts());
   const [section, setSection] = createSignal<SettingsSectionId>("appearance");
   const [scope, setScope] = createSignal<RuntimeSettingScope>("global");
-  const [projectDir, setProjectDir] = createSignal(props.initialProjectDir);
+  const [settingsHostId, setSettingsHostId] = createSignal(initialSettingsHostId);
+  const [projectDir, setProjectDir] = createSignal(
+    preferredSettingsContext(
+      initialSettingsHost,
+      settingsContexts()[initialSettingsHostId],
+      initialSettingsHostId === "local" ? props.initialProjectDir : "",
+    ),
+  );
   const [theme, setTheme] = createSignal<StudioTheme>(props.initialTheme);
-  const [url, setUrl] = createSignal(props.initialUrl);
-  const [token, setToken] = createSignal(props.initialToken);
+  const [url, setUrl] = createSignal("");
+  const [token, setToken] = createSignal("");
   const [sessionHomeHostId, setSessionHomeHostId] = createSignal(props.initialSessionHomeHostId);
   const [snapshot, setSnapshot] = createSignal<RuntimeSettingsSnapshot>();
   const [changes, setChanges] = createSignal<Record<string, RuntimeSettingChange>>({});
@@ -53,15 +67,18 @@ export function StudioSettingsDialog(props: Props) {
   const [saving, setSaving] = createSignal(false);
   const [picking, setPicking] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
+  const [addingHost, setAddingHost] = createSignal(false);
   const [removingHost, setRemovingHost] = createSignal("");
+  const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
 
   const staged = createMemo(() => Object.values(changes()));
   const studioChanged = createMemo(() => theme() !== props.initialTheme
-    || url() !== props.initialUrl
-    || token() !== props.initialToken
     || sessionHomeHostId() !== props.initialSessionHomeHostId);
+  const settingsHost = createMemo(() => props.runtimeHosts.find((host) => host.id === settingsHostId())
+    || props.runtimeHosts.find((host) => host.id === "local")
+    || props.runtimeHosts[0]);
   const currentRuntimeSection = createMemo(() => RUNTIME_SETTINGS_SECTIONS.find((item) => item.id === section()));
   const visibleFields = createMemo(() => {
     const needle = query().trim().toLocaleLowerCase();
@@ -72,7 +89,7 @@ export function StudioSettingsDialog(props: Props) {
   });
 
   onMount(() => {
-    if (props.runtimeSettingsAvailable) void loadSettings(projectDir());
+    if (props.runtimeSettingsAvailable) void loadSettings(projectDir(), settingsHost());
   });
 
   const close = () => {
@@ -85,13 +102,23 @@ export function StudioSettingsDialog(props: Props) {
     props.onThemePreview(value);
   };
 
-  const loadSettings = async (directory: string) => {
+  const rememberSettingsContext = (hostId: string, directory: string) => {
+    if (!directory.trim()) return;
+    setSettingsContexts((current) => {
+      const next = { ...current, [hostId]: directory.trim() };
+      localStorage.setItem(SETTINGS_CONTEXTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const loadSettings = async (directory: string, host = settingsHost()) => {
     if (!props.runtimeSettingsAvailable || !directory.trim()) return;
     setLoading(true);
     setError("");
     try {
-      setSnapshot(await readRuntimeSettings(directory));
+      setSnapshot(await readRuntimeSettings(directory, host?.url || undefined, host?.id));
       setChanges({});
+      rememberSettingsContext(host?.id || "local", directory);
     } catch (caught) {
       setSnapshot(undefined);
       setError(cleanError(caught));
@@ -108,12 +135,74 @@ export function StudioSettingsDialog(props: Props) {
       const selected = await props.onPickProjectDir(projectDir());
       if (selected) {
         setProjectDir(selected);
-        await loadSettings(selected);
+        await loadSettings(selected, settingsHost());
       }
     } catch (caught) {
       setError(cleanError(caught));
     } finally {
       setPicking(false);
+    }
+  };
+
+  const selectSettingsHost = async (id: string) => {
+    if (staged().length) {
+      setError("Review or undo the staged runtime edits before changing the settings host.");
+      return;
+    }
+    const host = props.runtimeHosts.find((candidate) => candidate.id === id);
+    if (!host) return;
+    const directory = preferredSettingsContext(
+      host,
+      settingsContexts()[host.id],
+      host.id === "local" ? props.initialProjectDir : "",
+    );
+    setSettingsHostId(host.id);
+    setProjectDir(directory);
+    setRemoteDirectories(undefined);
+    setSnapshot(undefined);
+    setError("");
+    if (directory) await loadSettings(directory, host);
+  };
+
+  const browseRemote = async (path?: string) => {
+    const host = settingsHost();
+    if (!host?.url || picking()) return;
+    setPicking(true);
+    setError("");
+    try {
+      setRemoteDirectories(await listHostDirectories(host.url, path, host.id));
+    } catch (caught) {
+      setError(cleanError(caught));
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const useRemoteFolder = async (path: string) => {
+    setProjectDir(path);
+    setRemoteDirectories(undefined);
+    await loadSettings(path, settingsHost());
+  };
+
+  const addHost = async () => {
+    if (addingHost()) return;
+    if (!url().trim() || !token().trim()) {
+      setError("Enter both the compute host URL and bearer token.");
+      return;
+    }
+    setAddingHost(true);
+    setError("");
+    try {
+      const host = await props.onAddRuntimeHost(url(), token());
+      setUrl("");
+      setToken("");
+      if (sessionHomeHostId() === "local" && props.runtimeHosts.filter((candidate) => candidate.id !== "local").length === 1) {
+        setSessionHomeHostId(host.id);
+      }
+    } catch (caught) {
+      setError(cleanError(caught));
+    } finally {
+      setAddingHost(false);
     }
   };
 
@@ -148,10 +237,11 @@ export function StudioSettingsDialog(props: Props) {
     setError("");
     try {
       if (staged().length) {
-        setSnapshot(await applyRuntimeSettings(projectDir(), staged()));
+        const host = settingsHost();
+        setSnapshot(await applyRuntimeSettings(projectDir(), staged(), host?.url || undefined, host?.id));
         setChanges({});
       }
-      await props.onSaveStudio(theme(), url(), token(), sessionHomeHostId());
+      await props.onSaveStudio(theme(), sessionHomeHostId());
       props.onCancel();
     } catch (caught) {
       setReviewing(false);
@@ -163,10 +253,16 @@ export function StudioSettingsDialog(props: Props) {
 
   const removeHost = async (id: string) => {
     if (removingHost()) return;
+    if (settingsHostId() === id && staged().length) {
+      setError("Review or undo the staged runtime edits before removing their settings host.");
+      return;
+    }
     setRemovingHost(id);
     setError("");
     try {
       await props.onRemoveRuntimeHost(id);
+      if (sessionHomeHostId() === id) setSessionHomeHostId("local");
+      if (settingsHostId() === id) await selectSettingsHost("local");
     } catch (caught) {
       setError(cleanError(caught));
     } finally {
@@ -220,10 +316,11 @@ export function StudioSettingsDialog(props: Props) {
                 token={token()}
                 hosts={props.runtimeHosts}
                 sessionHomeHostId={sessionHomeHostId()}
-                locked={props.bridgeLocked}
+                addingHost={addingHost()}
                 removingHost={removingHost()}
                 onUrl={setUrl}
                 onToken={setToken}
+                onAddHost={() => void addHost()}
                 onSessionHomeHost={setSessionHomeHostId}
                 onRemoveHost={(id) => void removeHost(id)}
               />
@@ -237,17 +334,23 @@ export function StudioSettingsDialog(props: Props) {
                 scope={scope()}
                 loading={loading()}
                 projectDir={projectDir()}
-                nativeProjectPicker={props.nativeProjectPicker}
+                hosts={props.runtimeHosts}
+                settingsHostId={settingsHostId()}
+                nativeProjectPicker={props.nativeProjectPicker && !settingsHost()?.url}
                 picking={picking()}
+                remoteDirectories={remoteDirectories()}
                 onScope={setScope}
                 onProject={setProjectDir}
+                onSettingsHost={(id) => void selectSettingsHost(id)}
                 onPickProject={() => void chooseProject()}
-                onReload={() => void loadSettings(projectDir())}
+                onBrowseRemote={(path) => void browseRemote(path)}
+                onUseRemoteFolder={(path) => void useRemoteFolder(path)}
+                onReload={() => void loadSettings(projectDir(), settingsHost())}
                 onStage={stage}
                 onClear={clearStage}
               />
             )}</Show>
-            <Show when={section() === "maintenance"}><MaintenanceSection snapshot={snapshot()} loading={loading()} onReload={() => void loadSettings(projectDir())} /></Show>
+            <Show when={section() === "maintenance"}><MaintenanceSection snapshot={snapshot()} loading={loading()} onReload={() => void loadSettings(projectDir(), settingsHost())} /></Show>
           </main>
         </div>
 
@@ -265,8 +368,6 @@ export function StudioSettingsDialog(props: Props) {
             changes={staged()}
             studioChanged={studioChanged()}
             theme={theme()}
-            urlChanged={url() !== props.initialUrl}
-            tokenChanged={token() !== props.initialToken}
             sessionHomeChanged={sessionHomeHostId() !== props.initialSessionHomeHostId}
             sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This Mac"}
             saving={saving()}
@@ -322,10 +423,11 @@ function ConnectionSection(props: {
   token: string;
   hosts: RuntimeHost[];
   sessionHomeHostId: string;
-  locked: boolean;
+  addingHost: boolean;
   removingHost: string;
   onUrl: (value: string) => void;
   onToken: (value: string) => void;
+  onAddHost: () => void;
   onSessionHomeHost: (id: string) => void;
   onRemoveHost: (id: string) => void;
 }) {
@@ -334,12 +436,13 @@ function ConnectionSection(props: {
     <div class="settings-section">
       <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description="Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in macOS Keychain." />
       <div class="settings-field-stack">
-        <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} disabled={props.locked} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Leave empty on desktop for the local process bridge. Remote hosts must use HTTPS outside loopback development.</small></label>
-        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} disabled={props.locked} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL.</small></label>
+        <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Use a loopback SSH tunnel on desktop, or HTTPS for a directly reachable remote host.</small></label>
+        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL.</small></label>
+        <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? "Testing & adding…" : "Add compute host"}</button><small>The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings.</small></div>
       </div>
       <div class="compute-pool">
         <div class="compute-pool-heading"><div><span>AVAILABLE COMPUTE</span><strong>{savedHosts().length} saved host{savedHosts().length === 1 ? "" : "s"}</strong></div><small>Each new session remains pinned to the host you choose.</small></div>
-        <Show when={savedHosts().length} fallback={<div class="settings-empty compact">No remote compute saved yet. Enter the URL and token above, then choose Review changes. The first proven host becomes Session home.</div>}>
+        <Show when={savedHosts().length} fallback={<div class="settings-empty compact">No remote compute saved yet. Enter the URL and token above, then add the proven host to this pool.</div>}>
           <div class="compute-host-list">
             <For each={savedHosts()}>{(host) => (
               <article>
@@ -359,7 +462,6 @@ function ConnectionSection(props: {
           <small>New sessions start here by default, and Stored sessions reads this host’s history. Existing sessions remain on the machine where they were created; Studio does not silently migrate them.</small>
         </label>
       </div>
-      <Show when={props.locked}><div class="settings-callout warning"><strong>Connection held steady.</strong><p>Close live sessions before changing the bridge. Durable runtime settings can still be edited for the next session.</p></div></Show>
     </div>
   );
 }
@@ -372,25 +474,56 @@ function RuntimeSection(props: {
   scope: RuntimeSettingScope;
   loading: boolean;
   projectDir: string;
+  hosts: RuntimeHost[];
+  settingsHostId: string;
   nativeProjectPicker: boolean;
   picking: boolean;
+  remoteDirectories?: HostDirectoryListing;
   onScope: (scope: RuntimeSettingScope) => void;
   onProject: (path: string) => void;
+  onSettingsHost: (id: string) => void;
   onPickProject: () => void;
+  onBrowseRemote: (path?: string) => void;
+  onUseRemoteFolder: (path: string) => void;
   onReload: () => void;
   onStage: (field: RuntimeSettingDefinition, action: "set" | "unset", value?: string) => void;
   onClear: (path: string) => void;
 }) {
+  const remoteHost = () => props.hosts.find((host) => host.id === props.settingsHostId)?.url;
   return (
     <div class="settings-section">
       <SectionHeading kicker="AMPLIFIER RUNTIME" title={props.section.title} description={`${props.section.summary}. Each edit is staged, redacted for review, and applies when the next session starts.`} />
+      <label class="settings-target-host">
+        <span>Settings host</span>
+        <select value={props.settingsHostId} onChange={(event) => props.onSettingsHost(event.currentTarget.value)}>
+          <For each={props.hosts}>{(host) => <option value={host.id}>{host.name}{host.url ? " · remote" : " · local"}</option>}</For>
+        </select>
+        <small>Read and edit settings on this machine. Session home is selected separately under Connection.</small>
+      </label>
       <div class="settings-context-bar">
         <div><span>Project context</span><strong title={props.projectDir}>{props.projectDir || "No project selected"}</strong></div>
-        <Show when={props.nativeProjectPicker} fallback={<input value={props.projectDir} onInput={(event) => props.onProject(event.currentTarget.value)} aria-label="Settings project folder" />}>
-          <button type="button" class="secondary-button" disabled={props.picking} onClick={props.onPickProject}>{props.picking ? "Choosing…" : "Choose folder…"}</button>
+        <Show when={remoteHost()} fallback={
+          <Show when={props.nativeProjectPicker} fallback={<input value={props.projectDir} onInput={(event) => props.onProject(event.currentTarget.value)} aria-label="Settings project folder" />}>
+            <button type="button" class="secondary-button" disabled={props.picking} onClick={props.onPickProject}>{props.picking ? "Choosing…" : "Choose folder…"}</button>
+          </Show>
+        }>
+          <button type="button" class="secondary-button" disabled={props.picking} onClick={() => props.onBrowseRemote(props.projectDir || undefined)}>{props.picking ? "Loading…" : "Browse host…"}</button>
         </Show>
         <button type="button" class="icon-button" disabled={props.loading} onClick={props.onReload} aria-label="Reload effective settings" title="Reload effective settings">↻</button>
       </div>
+      <Show when={props.remoteDirectories} keyed>{(listing) => (
+        <div class="settings-remote-directory-browser">
+          <div><strong>{listing.path}</strong></div>
+          <div class="remote-directory-actions">
+            <button type="button" class="secondary-button" onClick={() => props.onUseRemoteFolder(listing.path)}>Use this folder</button>
+            <Show when={listing.parent} keyed>{(parent) => <button type="button" class="secondary-button" onClick={() => props.onBrowseRemote(parent)}>Up</button>}</Show>
+          </div>
+          <div class="remote-directory-list">
+            <For each={listing.directories}>{(directory) => <button type="button" onClick={() => props.onBrowseRemote(directory.path)}>{directory.name}</button>}</For>
+            <Show when={!listing.directories.length}><span>No child folders</span></Show>
+          </div>
+        </div>
+      )}</Show>
       <div class="scope-control" role="group" aria-label="Settings write scope">
         <span>Write new edits to</span>
         <For each={["global", "project", "local"] as RuntimeSettingScope[]}>{(item) => <button type="button" classList={{ active: props.scope === item }} onClick={() => props.onScope(item)}>{item}</button>}</For>
@@ -492,8 +625,6 @@ function ReviewChanges(props: {
   changes: RuntimeSettingChange[];
   studioChanged: boolean;
   theme: StudioTheme;
-  urlChanged: boolean;
-  tokenChanged: boolean;
   sessionHomeChanged: boolean;
   sessionHomeName: string;
   saving: boolean;
@@ -505,7 +636,7 @@ function ReviewChanges(props: {
       <section class="settings-review" role="alertdialog" aria-modal="true" aria-labelledby="settings-review-title">
         <div class="eyebrow">REDACTED REVIEW</div><h3 id="settings-review-title">Save these changes?</h3><p>Runtime changes apply only to sessions started after this save.</p>
         <div class="settings-review-list">
-          <Show when={props.studioChanged}><div><span>Studio</span><strong>{props.theme === "made" ? "MADE Paper" : "Studio Night"}</strong><small>{props.urlChanged ? "bridge URL changed · " : ""}{props.tokenChanged ? "bridge token replaced · " : ""}{props.sessionHomeChanged ? `session home → ${props.sessionHomeName}` : "appearance / connection"}</small></div></Show>
+          <Show when={props.studioChanged}><div><span>Studio</span><strong>{props.theme === "made" ? "MADE Paper" : "Studio Night"}</strong><small>{props.sessionHomeChanged ? `session home → ${props.sessionHomeName}` : "appearance"}</small></div></Show>
           <For each={props.changes}>{(change) => {
             const field = runtimeSettingByPath(change.path);
             const rendered = change.action === "unset" ? "unset" : field?.kind === "secret" ? "configured" : change.value;
@@ -539,4 +670,27 @@ function scopeDescription(scope: RuntimeSettingScope): string {
 
 function cleanError(error: unknown): string {
   return String(error).replace(/^Error:\s*/, "");
+}
+
+function preferredSettingsContext(host: RuntimeHost | undefined, remembered: string | undefined, fallback: string): string {
+  const defaultRoot = host?.defaultProjectRoot?.trim() || "";
+  const saved = remembered?.trim() || "";
+  if (host?.url && saved && defaultRoot) {
+    const savedLooksMac = saved === "/Users" || saved.startsWith("/Users/");
+    const defaultLooksMac = defaultRoot === "/Users" || defaultRoot.startsWith("/Users/");
+    const savedLooksLinuxHome = saved === "/home" || saved.startsWith("/home/");
+    const defaultLooksLinuxHome = defaultRoot === "/home" || defaultRoot.startsWith("/home/");
+    if ((savedLooksMac && defaultLooksLinuxHome) || (savedLooksLinuxHome && defaultLooksMac)) return defaultRoot;
+  }
+  return saved || defaultRoot || fallback;
+}
+
+function loadSettingsContexts(): Record<string, string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(SETTINGS_CONTEXTS_KEY) || "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  } catch {
+    return {};
+  }
 }

@@ -50,7 +50,6 @@ import {
 import {
   createGuiId,
   addBundle,
-  configuredBridgeUrl,
   configureProvider,
   configuredBridgeToken,
   defaultProjectDir,
@@ -68,7 +67,6 @@ import {
   listStoredSessions,
   removeRuntimeHost,
   sendOp,
-  saveBridgeUrl,
   saveBridgeToken,
   saveRuntimeHost,
   stopSession,
@@ -875,11 +873,8 @@ export default function App() {
         <StudioSettingsDialog
           initialProjectDir={active()?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir()}
           initialTheme={studioTheme()}
-          initialUrl={configuredBridgeUrl()}
-          initialToken={configuredBridgeToken()}
           runtimeHosts={runtimeHosts()}
           initialSessionHomeHostId={sessionHomeHostId()}
-          bridgeLocked={sessions().length > 0}
           runtimeSettingsAvailable={localRuntimeSettingsAvailable()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
           onPickProjectDir={pickProjectDirectory}
@@ -888,48 +883,41 @@ export default function App() {
             applyStudioTheme(theme);
           }}
           onCancel={() => setSettingsOpen(false)}
+          onAddRuntimeHost={async (url, token) => {
+            const cleanedUrl = url.trim();
+            const cleanedToken = token.trim();
+            if (!cleanedUrl || !cleanedToken) throw new Error("Enter both the compute host URL and bearer token");
+            const normalized = cleanedUrl.replace(/\/$/, "");
+            const matchingHost = runtimeHosts().find((host) => host.url.replace(/\/$/, "") === normalized);
+            saveBridgeToken(cleanedToken, cleanedUrl);
+            const probe = await probeRuntimeHost(cleanedUrl, matchingHost?.id || "configured");
+            const host = durableRuntimeHostForSession({
+              projectDir: probe.defaultProjectDir,
+              hostId: matchingHost?.id || "configured",
+              hostName: matchingHost?.name || "Configured host",
+              hostUrl: cleanedUrl,
+            }, runtimeHosts());
+            if (!host) throw new Error("Studio could not create a durable record for this compute host");
+            const wasSaved = runtimeHosts().some((candidate) => candidate.id === host.id && candidate.tokenRef !== "session");
+            try {
+              await saveRuntimeHost(host);
+              await storeRuntimeHostToken(host.id, cleanedToken);
+            } catch (error) {
+              if (!wasSaved) await removeRuntimeHost(host.id).catch(() => undefined);
+              throw error;
+            }
+            const hosts = await listRuntimeHosts();
+            setRuntimeHosts(hosts);
+            return hosts.find((candidate) => candidate.id === host.id) || host;
+          }}
           onRemoveRuntimeHost={async (id) => {
             await removeRuntimeHost(id);
             setRuntimeHosts(await listRuntimeHosts());
             if (sessionHomeHostId() === id) setSessionHomeHost("local");
           }}
-          onSaveStudio={async (theme, url, token, homeHostId) => {
-            let selectedHome = homeHostId;
-            const cleanedUrl = url.trim();
-            if (cleanedUrl) {
-              const normalized = cleanedUrl.replace(/\/$/, "");
-              const matchingHost = runtimeHosts().find((host) => host.url.replace(/\/$/, "") === normalized);
-              if (token.trim()) saveBridgeToken(token, cleanedUrl);
-              else if (!matchingHost) throw new Error("Enter the bearer token for this compute host");
-
-              const probe = await probeRuntimeHost(cleanedUrl, matchingHost?.id || "configured");
-              const host = durableRuntimeHostForSession({
-                projectDir: probe.defaultProjectDir,
-                hostId: matchingHost?.id || "configured",
-                hostName: matchingHost?.name || "Configured host",
-                hostUrl: cleanedUrl,
-              }, runtimeHosts());
-              if (!host) throw new Error("Studio could not create a durable record for this compute host");
-              const hadSavedRemote = runtimeHosts().some((candidate) => candidate.id !== "local" && candidate.tokenRef !== "session");
-              const wasSaved = runtimeHosts().some((candidate) => candidate.id === host.id && candidate.tokenRef !== "session");
-              try {
-                await saveRuntimeHost(host);
-                if (token.trim()) await storeRuntimeHostToken(host.id, token);
-              } catch (error) {
-                if (!wasSaved) await removeRuntimeHost(host.id).catch(() => undefined);
-                throw error;
-              }
-              saveBridgeUrl(cleanedUrl);
-              const hosts = await listRuntimeHosts();
-              setRuntimeHosts(hosts);
-              if (homeHostId === "local" && !hadSavedRemote) {
-                selectedHome = host.id;
-              }
-            } else {
-              saveBridgeUrl("");
-            }
+          onSaveStudio={async (theme, homeHostId) => {
             saveStudioTheme(theme);
-            setSessionHomeHost(selectedHome);
+            setSessionHomeHost(homeHostId);
             setStudioTheme(theme);
             setTransport(transportLabel());
             const projectDir = await defaultProjectDir();

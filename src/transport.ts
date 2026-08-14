@@ -328,7 +328,7 @@ export async function listHostDirectories(hostUrl: string, path?: string, hostId
 }
 
 export function transportLabel(): string {
-  if (usesWebBridge()) return isTauriRuntime() ? "Native mobile · remote Rust bridge" : "Web · local Rust bridge";
+  if (usesWebBridge()) return isTauriRuntime() ? "Native desktop · remote Rust bridge" : "Web · Rust bridge";
   return "Native desktop · local Rust bridge";
 }
 
@@ -336,12 +336,19 @@ export function localRuntimeSettingsAvailable(): boolean {
   return isTauriRuntime() || usesWebBridge();
 }
 
-export async function readRuntimeSettings(projectDir: string): Promise<RuntimeSettingsSnapshot> {
-  const bridge = bridgeBaseUrl();
+export async function readRuntimeSettings(
+  projectDir: string,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<RuntimeSettingsSnapshot> {
+  const bridge = hostUrl
+    ? normalizedBridgeUrl(hostUrl)
+    : (!isTauriRuntime() ? bridgeBaseUrl() : undefined);
   if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/runtime-settings");
     url.searchParams.set("projectDir", projectDir);
-    return fetchJson<RuntimeSettingsSnapshot>(url);
+    return fetchJson<RuntimeSettingsSnapshot>(url, undefined, bridge);
   }
   requireTauri();
   return invoke<RuntimeSettingsSnapshot>("read_runtime_settings", { projectDir });
@@ -350,14 +357,19 @@ export async function readRuntimeSettings(projectDir: string): Promise<RuntimeSe
 export async function applyRuntimeSettings(
   projectDir: string,
   changes: RuntimeSettingChange[],
+  hostUrl?: string,
+  hostId?: string,
 ): Promise<RuntimeSettingsSnapshot> {
-  const bridge = bridgeBaseUrl();
+  const bridge = hostUrl
+    ? normalizedBridgeUrl(hostUrl)
+    : (!isTauriRuntime() ? bridgeBaseUrl() : undefined);
   if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
     return fetchJson<RuntimeSettingsSnapshot>(hostApiUrl(bridge, "/runtime-settings"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectDir, changes }),
-    });
+    }, bridge);
   }
   requireTauri();
   return invoke<RuntimeSettingsSnapshot>("apply_runtime_settings", { projectDir, changes });
@@ -366,7 +378,7 @@ export async function applyRuntimeSettings(
 export async function listenNativeAttachmentDrops(
   handler: (event: NativeAttachmentDropEvent) => void,
 ): Promise<UnlistenFn> {
-  if (!isTauriRuntime() || usesWebBridge()) return () => undefined;
+  if (!isTauriRuntime()) return () => undefined;
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "enter") {
       handler({ type: "enter" });
