@@ -168,11 +168,13 @@ the host. Client-side known endpoints live in `~/.amplifier/hosts.yaml`, while
 tokens use environment or macOS Keychain references and are never written
 into that registry.
 
-Each remote Studio tab is pinned to a `(host, session-id)` pair. The host
-daemon may restart while the Python owner keeps running; Studio re-adopts the
-same session through Runtime's live attach socket, with stored resume as the
-recovery floor. Set `AMPLIFIER_HOME` to persistent storage on ephemeral VMs or
-pods if sessions must survive replacement of the compute instance itself.
+Each remote Studio tab is pinned to a `(host, session-id)` pair. Closing or
+reopening the Studio client only detaches its authenticated socket: the host
+and Python owner keep running, and the client reattaches with replay. The Rust
+host process itself must remain available for live reattachment; after a host
+restart, stored resume is the current recovery floor. Set `AMPLIFIER_HOME` to
+persistent storage on ephemeral VMs or pods if stored sessions must survive
+replacement of the compute instance itself.
 
 Release and operations checks can exercise that contract without exposing the
 host token on the command line:

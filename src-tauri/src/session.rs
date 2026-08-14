@@ -463,9 +463,9 @@ impl SessionManager {
     /// Release every network-owned runtime without stopping it.
     ///
     /// The runtime's detached owner keeps the durable session and attach
-    /// socket alive after this host adapter exits. A replacement host can
-    /// re-adopt it through `serve --attach <session-id>` instead of turning a
-    /// daemon restart into lost work.
+    /// socket alive after this host adapter exits. A replacement host does not
+    /// yet reconstruct this manager's process handles, so deployments keep the
+    /// host stable and use stored resume after a host-process restart.
     pub async fn release_all(&self) -> Result<(), String> {
         self.accepting.store(false, Ordering::SeqCst);
         let handles = {
