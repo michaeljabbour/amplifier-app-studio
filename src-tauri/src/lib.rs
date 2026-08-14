@@ -445,6 +445,28 @@ pub fn run() {
         use std::sync::atomic::Ordering;
 
         app.run(move |app, event| {
+            // AppKit can restore the process without restoring an onscreen
+            // window. Make both a cold start and a dock reopen recover the
+            // configured main webview instead of leaving Studio headless.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Ready = &event {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+                return;
+            }
+
             if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
                 // The updater has already drained sessions before asking Tauri
                 // to restart, and Tauri does not allow restart to be delayed.
