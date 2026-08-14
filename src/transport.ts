@@ -51,6 +51,11 @@ export interface RuntimeHost {
   defaultProjectRoot?: string;
 }
 
+export interface RuntimeHostProbe {
+  status: RuntimeStatus;
+  defaultProjectDir: string;
+}
+
 export interface HostDirectoryListing {
   version: number;
   path: string;
@@ -554,6 +559,20 @@ export async function getRuntimeStatus(hostUrl?: string, hostId?: string): Promi
   return invoke<RuntimeStatus>("runtime_status");
 }
 
+export async function probeRuntimeHost(hostUrl: string, hostId?: string): Promise<RuntimeHostProbe> {
+  const bridge = normalizedBridgeUrl(hostUrl);
+  if (!bridge) throw new Error("Enter a valid Amplifier Host URL");
+  await ensureBridgeToken(bridge, hostId);
+  const [status, config] = await Promise.all([
+    fetchJson<RuntimeStatus>(hostApiUrl(bridge, "/runtime"), undefined, bridge),
+    fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"), undefined, bridge),
+  ]);
+  if (!status.installed) {
+    throw new Error(status.message || "Amplifier Runtime is not installed on this compute host");
+  }
+  return { status, defaultProjectDir: config.defaultProjectDir?.trim() || "" };
+}
+
 export async function installRuntime(): Promise<RuntimeStatus> {
   if (bridgeBaseUrl()) {
     throw new Error("Install the runtime on the Rust bridge host; remote installation is intentionally disabled");
@@ -889,7 +908,17 @@ function hostApiUrl(bridge: string, path: string): URL {
 async function fetchJson<T>(url: URL, init?: RequestInit, bridgeUrl?: string): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("authorization", `Bearer ${requireBridgeToken(bridgeUrl || url.origin)}`);
-  const response = await fetch(url, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, headers });
+  } catch (caught) {
+    const reason = caught instanceof Error && caught.message && caught.message !== "Load failed"
+      ? ` (${caught.message})`
+      : "";
+    throw new Error(
+      `Could not reach Amplifier Host at ${url.origin}${reason}. Check the SSH/Tailscale connection and make sure the host allows the native Studio origin.`,
+    );
+  }
   const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
   if (!response.ok) throw new Error(value?.error || `Bridge request failed (${response.status})`);
   return value as T;

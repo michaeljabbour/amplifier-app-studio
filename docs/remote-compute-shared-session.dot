@@ -1,0 +1,191 @@
+digraph AmplifierRemoteCompute {
+  graph [
+    rankdir=TB,
+    bgcolor="#f7f4f1",
+    pad="0.35",
+    nodesep="0.35",
+    ranksep="0.72",
+    splines=ortho,
+    fontname="Helvetica",
+    fontsize=18,
+    label="AMPLIFIER REMOTE COMPUTE · SHARED SESSION HOME",
+    labelloc=t,
+    labeljust=l
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#b9b2aa",
+    fillcolor="#fffdfb",
+    fontcolor="#272421",
+    fontname="Helvetica",
+    fontsize=11,
+    margin="0.18,0.12",
+    penwidth=1.15
+  ];
+
+  edge [
+    color="#766f68",
+    fontcolor="#5c554f",
+    fontname="Helvetica",
+    fontsize=9,
+    arrowsize=0.72,
+    penwidth=1.2
+  ];
+
+  subgraph cluster_clients {
+    label="CLIENTS · PRESENTATION AND LOCAL-ONLY CAPABILITIES";
+    color="#d6cfc8";
+    fillcolor="#fbf9f7";
+    style="rounded,filled";
+    fontcolor="#825c22";
+    fontsize=11;
+
+    studio [label="Amplifier Studio\nmacOS now · Windows later\nNative pickers, inline visuals, updater"];
+    tui [label="Amplifier TUI\nTerminal client\nSame Runtime protocol"];
+    mobile [label="Browser / mobile\nFuture authorized client\nNo host filesystem assumptions", style="rounded,filled,dashed"];
+    local_tools [label="Local capability relay\nComputer Use · OS-native actions\nExplicit approval required", fillcolor="#f4ede4"];
+
+    { rank=same; studio; tui; mobile; local_tools; }
+  }
+
+  identity [
+    label="TAILSCALE IDENTITY + HTTPS\nDevice enrollment · ACLs · encrypted transport\nAmplifier Host bearer token remains mandatory",
+    fillcolor="#efe6d8",
+    color="#b98a45",
+    penwidth=1.5
+  ];
+
+  subgraph cluster_control {
+    label="SHARED SESSION HOME · ONE AUTHORITATIVE CONTROL PLANE";
+    color="#ad8750";
+    fillcolor="#f4eee6";
+    style="rounded,filled";
+    fontcolor="#704817";
+    fontsize=11;
+
+    host_api [
+      label="Amplifier Host API\nAuthenticated WSS / REST\nLoopback service behind Tailscale Serve",
+      fillcolor="#fffaf3",
+      color="#b98a45"
+    ];
+    director [
+      label="Session director\nPlacement · health · capability inventory\nPins one active owner per session",
+      fillcolor="#fffaf3",
+      color="#b98a45"
+    ];
+    runtime_control [
+      label="Amplifier Runtime control\nDurable ids · approvals · plans · replay\nWriter leases · handoff · checkpoints",
+      fillcolor="#fffaf3",
+      color="#b98a45"
+    ];
+
+    host_api -> director [label=" authenticated operations "];
+    director -> runtime_control [label=" session lifecycle "];
+  }
+
+  subgraph cluster_storage {
+    label="DURABLE SHARED DATA · WORKERS NEVER MOUNT THE SESSION LEDGER DIRECTLY";
+    color="#78909c";
+    fillcolor="#edf2f4";
+    style="rounded,filled";
+    fontcolor="#38525e";
+    fontsize=11;
+
+    ledger [
+      label="Session ledger + control state\nAppend-only events · replay cursors\nLeases · approvals · placement audit\nPostgreSQL target",
+      fillcolor="#f8fbfc",
+      color="#78909c"
+    ];
+    objects [
+      label="Artifact object store\nImages · HTML · exports · diagnostics\nContent-addressed + retained\nS3 / MinIO target",
+      fillcolor="#f8fbfc",
+      color="#78909c"
+    ];
+    workspaces [
+      label="Per-session workspaces\nShared source snapshot + output volume\nOne write owner at a time\nNFSv4 / managed volume target",
+      fillcolor="#f8fbfc",
+      color="#78909c"
+    ];
+    data_gateway [
+      label="Scoped data gateway\nSession-authorized reads / writes\nNo raw ledger mount on workers",
+      fillcolor="#e4edf1",
+      color="#607d8b"
+    ];
+
+    { rank=same; ledger; objects; workspaces; }
+  }
+
+  subgraph cluster_workers {
+    label="AMPLIFIER COMPUTE POOL · REPLACEABLE EXECUTION LEASES";
+    color="#809b80";
+    fillcolor="#eef3ed";
+    style="rounded,filled";
+    fontcolor="#3e623e";
+    fontsize=11;
+
+    worker200 [
+      label="spark-9602 · 192.168.0.200\nLinux aarch64 · admin SSH\nAmplifier latest · Runtime 0.1.6\nGPU driver needs repair",
+      fillcolor="#fff4f2",
+      color="#b65f54"
+    ];
+    worker201 [
+      label="spark-288f · 192.168.0.201\nLinux aarch64 · NVIDIA GB10 · admin SSH\nAmplifier Host + Runtime 0.1.6\nInitial session-home candidate",
+      fillcolor="#f6fbf5",
+      color="#638063"
+    ];
+    worker202 [
+      label="spark-8be0 · 192.168.0.202\nLinux aarch64 · NVIDIA GB10 · admin SSH\nAmplifier latest · Runtime 0.1.6\nHost service provisioned",
+      fillcolor="#f6fbf5",
+      color="#638063"
+    ];
+    future_worker [
+      label="Future Mac / Windows worker\nAdvertises OS-specific capabilities\nNever receives implicit admin authority",
+      style="rounded,filled,dashed",
+      fillcolor="#f8faf7",
+      color="#809b80"
+    ];
+    scheduler [
+      label="Capability-aware scheduler\nGPU · OS · health · project access",
+      fillcolor="#e3ede1",
+      color="#638063"
+    ];
+
+    { rank=same; worker200; worker201; worker202; future_worker; }
+  }
+
+  studio -> identity [label=" connect / resume / approve "];
+  tui -> identity [label=" same typed protocol "];
+  mobile -> identity [style=dashed, label=" future "];
+  identity -> host_api [label=" HTTPS / WSS "];
+  studio -> local_tools [dir=both, label=" approved local actions "];
+
+  runtime_control -> ledger [dir=both, label=" events + control records "];
+  runtime_control -> objects [dir=both, label=" artifact manifests "];
+  director -> scheduler [label=" issue execution lease "];
+  scheduler -> worker200;
+  scheduler -> worker201;
+  scheduler -> worker202;
+  scheduler -> future_worker [style=dashed];
+
+  worker200 -> data_gateway;
+  worker201 -> data_gateway;
+  worker202 -> data_gateway;
+  future_worker -> data_gateway [style=dashed];
+  data_gateway -> runtime_control [label=" typed events + checkpoints "];
+  data_gateway -> objects [dir=both, label=" outputs "];
+  data_gateway -> workspaces [dir=both, label=" scoped workspace "];
+
+  legend [
+    shape=plain,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="10"><TR>
+      <TD><FONT COLOR="#638063">●</FONT> provisioned / working</TD>
+      <TD><FONT COLOR="#b98a45">●</FONT> shared control-plane work</TD>
+      <TD><FONT COLOR="#78909c">●</FONT> shared storage target</TD>
+      <TD><FONT COLOR="#b65f54">●</FONT> attention required</TD>
+      <TD>dashed = future extension</TD>
+    </TR></TABLE>>
+  ];
+  { rank=sink; legend; }
+}

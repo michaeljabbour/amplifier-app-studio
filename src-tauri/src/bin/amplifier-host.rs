@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::{env, fs, io::Read, path::PathBuf};
 
+const NATIVE_STUDIO_ORIGINS: [&str; 3] = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+];
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostConfig {
@@ -63,6 +69,11 @@ async fn enable(args: &[String]) -> Result<(), String> {
     }
     if origins.is_empty() {
         origins.push(format!("http://{bind}"));
+    }
+    for origin in NATIVE_STUDIO_ORIGINS {
+        if !origins.iter().any(|candidate| candidate == origin) {
+            origins.push(origin.to_owned());
+        }
     }
     let config = HostConfig {
         bind,
