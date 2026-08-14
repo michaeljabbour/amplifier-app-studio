@@ -178,6 +178,8 @@
 :root[data-theme="made"] .tool-row pre,
 :root[data-theme="made"] .fatal-card pre { border-color: var(--line); border-radius: 0; background: #eae9e9; color: #454242; }
 :root[data-theme="made"] .markdown blockquote { border-left-color: #b68235; color: #454242; }
+:root[data-theme="made"] .markdown th { background: #e1ded9; color: #493815; }
+:root[data-theme="made"] .markdown td { color: #2e2c2a; }
 :root[data-theme="made"] .visual-artifact { border-color: #c9c4bf; border-radius: 0; background: #f8f4f4; box-shadow: 0 18px 42px rgba(49,41,35,.1); color: #201f1d; }
 :root[data-theme="made"] .visual-artifact > header { border-color: #c9c4bf; }
 :root[data-theme="made"] .visual-artifact > header span { color: #7d5411; }

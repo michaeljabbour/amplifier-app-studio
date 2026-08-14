@@ -151,6 +151,32 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         toolCallId: stringValue(record.tool_call_id),
         prompt: stringValue(record.prompt),
       });
+    case "approval.result": {
+      if (record.ok !== false) return next;
+      const ticketId = stringValue(record.ticket_id);
+      const error = stringValue(record.error, "Amplifier did not accept that approval response");
+      const pendingApproval = next.pendingApproval?.ticketId === ticketId
+        ? { ...next.pendingApproval, submissionError: error }
+        : next.pendingApproval;
+      return appendBlock({ ...next, pendingApproval }, {
+        kind: "notice",
+        level: "error",
+        text: `Approval not accepted: ${error}`,
+      });
+    }
+    case "decision.result": {
+      if (record.ok !== false) return next;
+      const decisionId = stringValue(record.decision_id);
+      const error = stringValue(record.error, "Amplifier did not accept that decision");
+      const pendingDecision = next.pendingDecision?.decisionId === decisionId
+        ? { ...next.pendingDecision, submissionError: error }
+        : next.pendingDecision;
+      return appendBlock({ ...next, pendingDecision }, {
+        kind: "notice",
+        level: "error",
+        text: `Decision not accepted: ${error}`,
+      });
+    }
     case "context.state":
       return {
         ...next,
@@ -244,6 +270,16 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       };
     case "history.end":
       return markRestoreProgress(next, "history");
+    case "steer.deferred": {
+      const count = Math.max(1, numberValue(record.count, 1));
+      return appendBlock({ ...next, busy: true, activity: "Continuing with your course correction" }, {
+        kind: "notice",
+        level: "info",
+        text: count === 1
+          ? "Your course correction arrived after the last model boundary. Amplifier is continuing with it as a follow-up turn."
+          : `${count} course corrections arrived after the last model boundary. Amplifier is continuing with them as follow-up turns.`,
+      });
+    }
     case "turn.completed": {
       const response = stringValue(record.response).trim();
       next = finalizeAnswer(next, response);
@@ -251,7 +287,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         next = appendBlock(next, {
           kind: "notice",
           level: "warning",
-          text: `${next.queuedSteers} queued steer${next.queuedSteers === 1 ? "" : "s"} discarded at turn end`,
+          text: `${next.queuedSteers} course correction${next.queuedSteers === 1 ? " was" : "s were"} not confirmed by the runtime. The text remains in chat so you can retry it.`,
         });
       }
       return {
@@ -674,7 +710,11 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       const prompt = stringValue(event.prompt);
       const decoded = splitDocumentAttachments(prompt);
       const reconcilesPending = next.pendingPrompt?.runtimeText === prompt || next.pendingPrompt?.text === decoded.text;
-      if (!reconcilesPending) {
+      const reconcilesQueuedSteer = next.queuedSteers > 0 && next.blocks
+        .filter((block): block is Extract<TranscriptBlock, { kind: "user" }> => block.kind === "user" && block.mode === "steer")
+        .slice(-next.queuedSteers)
+        .some((block) => block.text.trim() === decoded.text.trim());
+      if (!reconcilesPending && !reconcilesQueuedSteer) {
         next = appendBlock(next, {
           kind: "user",
           text: decoded.text,
@@ -689,6 +729,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         ...next,
         title: derivedTitle || next.title,
         pendingPrompt: undefined,
+        queuedSteers: reconcilesQueuedSteer ? Math.max(0, next.queuedSteers - 1) : next.queuedSteers,
         mode,
         busy: !replay,
         activity: "Starting turn",
@@ -825,6 +866,11 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       });
     }
     case "approval_granted":
+      next = appendBlock(next, {
+        kind: "notice",
+        level: "success",
+        text: `Approval recorded: ${stringValue(event.choice, "Allow once")}${stringValue(event.prompt) ? `\n${stringValue(event.prompt)}` : ""}`,
+      });
       return {
         ...next,
         activity: "Continuing after approval",
@@ -841,6 +887,29 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         activity: "Continuing without blocked action",
         pendingApproval: approvalMatches(next, event) ? undefined : next.pendingApproval,
       };
+    case "decision_answered": {
+      const decisionId = stringValue(event.decision_id);
+      const answer = stringValue(event.answer, "Answer recorded");
+      const question = stringValue(event.question);
+      next = appendBlock(next, {
+        kind: "notice",
+        level: "success",
+        text: `Decision recorded: ${answer}${question ? `\n${question}` : ""}`,
+      });
+      return {
+        ...next,
+        activity: "Decision recorded · waiting for Amplifier to apply it",
+        pendingDecision: next.pendingDecision?.decisionId === decisionId ? undefined : next.pendingDecision,
+      };
+    }
+    case "decision_applied": {
+      const answer = stringValue(event.answer, "Answer applied");
+      return appendBlock({ ...next, activity: "Decision applied · continuing" }, {
+        kind: "notice",
+        level: "info",
+        text: `Decision applied to Amplifier's next reasoning step: ${answer}`,
+      });
+    }
     case "cancel_requested":
       return appendBlock(next, { kind: "notice", level: "info", text: "Interrupt requested…" });
     case "cancel_completed":
@@ -2204,12 +2273,34 @@ function finalizeAnswer(state: SessionViewState, response: string): SessionViewS
     state.blocks,
     (block) => block.kind === "answer" && block.text.trim() === response,
   );
-  if (index < 0) return appendBlock(state, { kind: "answer", text: response, final: true });
-  const block = state.blocks[index];
+  const reconciledIndex = index >= 0
+    ? index
+    : findLastIndex(
+      state.blocks,
+      (block) => block.kind === "answer" && !block.final && redactedTextMatches(block.text.trim(), response),
+    );
+  if (reconciledIndex < 0) return appendBlock(state, { kind: "answer", text: response, final: true });
+  const block = state.blocks[reconciledIndex];
   if (block.kind !== "answer" || block.final) return state;
   const blocks = [...state.blocks];
-  blocks[index] = { ...block, final: true };
+  blocks[reconciledIndex] = { ...block, text: response, final: true };
   return { ...state, blocks };
+}
+
+function redactedTextMatches(redacted: string, clear: string): boolean {
+  const placeholder = /\[REDACTED(?::[A-Z_]+)?\]/g;
+  if (!placeholder.test(redacted)) return false;
+  const fragments = redacted.split(placeholder);
+  let cursor = 0;
+  for (let index = 0; index < fragments.length; index += 1) {
+    const fragment = fragments[index] || "";
+    if (!fragment) continue;
+    const found = clear.indexOf(fragment, cursor);
+    if (found < 0 || (index === 0 && found !== 0)) return false;
+    cursor = found + fragment.length;
+  }
+  const tail = fragments.at(-1) || "";
+  return !tail || clear.endsWith(tail);
 }
 
 function appendBlock(state: SessionViewState, block: NewTranscriptBlock): SessionViewState {

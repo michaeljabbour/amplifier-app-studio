@@ -44,6 +44,7 @@ export function decisionChoiceRows(
 
 export function AttentionBar(props: Props) {
   const [submitting, setSubmitting] = createSignal<string>();
+  const [waiting, setWaiting] = createSignal(false);
   const [customAnswer, setCustomAnswer] = createSignal("");
   const [selectedChoices, setSelectedChoices] = createSignal<string[]>([]);
   const [now, setNow] = createSignal(Date.now());
@@ -57,6 +58,7 @@ export function AttentionBar(props: Props) {
   const decision = () => approval() ? undefined : props.state.pendingDecision;
   const choices = () => approval()?.options || decision()?.choices || [];
   const prompt = () => approval()?.prompt || decision()?.question || "Amplifier needs your input";
+  const submissionError = () => approval()?.submissionError || decision()?.submissionError;
   const goalActive = () => props.state.autopilot
     || props.state.goal?.state === "armed"
     || props.state.goal?.state === "continuing";
@@ -83,6 +85,12 @@ export function AttentionBar(props: Props) {
     setAutoDeadline(id && choice ? Date.now() + GOAL_DECISION_SECONDS * 1_000 : undefined);
   });
 
+  createEffect(() => {
+    if (!submissionError()) return;
+    setSubmitting(undefined);
+    setWaiting(false);
+  });
+
   const timer = window.setInterval(() => setNow(Date.now()), 250);
   onCleanup(() => window.clearInterval(timer));
 
@@ -91,10 +99,13 @@ export function AttentionBar(props: Props) {
     const response = attentionResponseFor(props.state, choice);
     if (!response) return;
     setSubmitting(choice);
+    setWaiting(false);
     try {
       await props.onChoose(response);
-    } finally {
+      setWaiting(true);
+    } catch {
       setSubmitting(undefined);
+      setWaiting(false);
     }
   };
 
@@ -133,6 +144,7 @@ export function AttentionBar(props: Props) {
         <div class="eyebrow">{approval() ? "APPROVAL REQUIRED" : "DECISION REQUIRED"}</div>
         <strong>{prompt()}</strong>
         <Show when={decision()?.reason}><p>{decision()?.reason}</p></Show>
+        <Show when={submissionError()}>{(error) => <p class="attention-error">Amplifier did not accept that response: {error()}</p>}</Show>
         <Show when={countdownLabel()}>{(label) => <p class="attention-countdown">{label()}</p>}</Show>
       </div>
       <div class="attention-actions">
@@ -149,7 +161,7 @@ export function AttentionBar(props: Props) {
                 aria-pressed={decision()?.multiple ? selectedChoices().includes(row.choice) : undefined}
                 onClick={() => toggleChoice(row.choice)}
               >
-                {submitting() === row.choice ? "Sending…" : row.choice}
+                {submitting() === row.choice ? (waiting() ? "Waiting for Amplifier…" : "Sending…") : row.choice}
               </button>
               <Show when={row.description}>
                 {(description) => <small>{description()}</small>}

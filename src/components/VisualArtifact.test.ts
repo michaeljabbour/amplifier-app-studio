@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  ARTIFACT_RESIZE_MESSAGE,
   buildSandboxedHtmlDocument,
+  clampArtifactHeight,
+  isArtifactResizeMessage,
   sanitizeVisualSvg,
   visualArtifactSourceError,
   visualArtifactTitle,
@@ -11,12 +14,24 @@ import {
 
 describe("visual artifacts", () => {
   it("runs interactive HTML only inside a unique-origin, network-disabled sandbox", () => {
-    const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>");
+    const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>", "frame-7");
     expect(VISUAL_ARTIFACT_SANDBOX).toBe("allow-scripts");
     expect(VISUAL_ARTIFACT_SANDBOX).not.toContain("allow-same-origin");
     expect(document).toContain("connect-src 'none'");
     expect(document).toContain("form-action 'none'");
     expect(document).toContain("<script>document.body.dataset.ready='yes'</script>");
+    expect(document).toContain(ARTIFACT_RESIZE_MESSAGE);
+    expect(document).toContain('const frameId = "frame-7"');
+    expect(document).toContain("ResizeObserver");
+    expect(document).toContain("overflow: hidden");
+  });
+
+  it("accepts correlated resize messages and bounds pathological document heights", () => {
+    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, frameId: "frame-1", height: 940 }, "frame-1")).toBe(true);
+    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, frameId: "other", height: 940 }, "frame-1")).toBe(false);
+    expect(clampArtifactHeight(940.2)).toBe(941);
+    expect(clampArtifactHeight(-1)).toBe(300);
+    expect(clampArtifactHeight(99_000)).toBe(12_000);
   });
 
   it("removes active SVG content, remote links, and fixed sizing", () => {

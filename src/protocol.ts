@@ -28,6 +28,7 @@ export interface ApprovalState {
   toolCallId?: string;
   expiresAtMs?: number;
   defaultChoice?: string;
+  submissionError?: string;
 }
 
 export interface DecisionState {
@@ -40,6 +41,7 @@ export interface DecisionState {
   multiple: boolean;
   custom: boolean;
   createdAtMs?: number;
+  submissionError?: string;
 }
 
 export interface ContextState {
