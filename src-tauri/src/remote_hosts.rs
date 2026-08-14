@@ -28,12 +28,12 @@ pub fn list() -> Result<Vec<RuntimeHost>, String> {
     }
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    // TUI writes deterministic JSON, which is valid YAML and keeps this
-    // Rust-side reader small. Fail explicitly if a hand-edited YAML-only file
-    // needs normalization through `amplifier-tui host add`.
+    // Amplifier clients write deterministic JSON, which is valid YAML and
+    // keeps this Rust-side reader small. Fail explicitly if a hand-edited
+    // YAML-only file needs normalization.
     let registry: HostRegistry = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "Could not parse {}: {error}. Normalize it with `amplifier-tui host add`.",
+            "Could not parse {}: {error}. Fix or remove that registry, then configure the host again in Studio Settings.",
             path.display()
         )
     })?;
