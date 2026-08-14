@@ -237,6 +237,8 @@
 :root[data-theme="made"] .attachment-chip { border-color: var(--line); border-radius: 0; background: #eae9e9; }
 :root[data-theme="made"] .attachment-chip strong { color: #454242; }
 :root[data-theme="made"] .attachment-file-kind { border-color: #b68235; border-radius: 0; background: #f3f2f2; color: #7d5411; }
+:root[data-theme="made"] .inline-output-card { border-color: var(--line); border-radius: 0; background: #eae9e9; box-shadow: 0 18px 44px rgba(72,61,46,.12); }
+:root[data-theme="made"] .inline-output-card img { background: #e4e2df; }
 
 :root[data-theme="made"] .workbench-sidebar,
 :root[data-theme="made"] .machine-inspector { border-color: var(--line); }

@@ -808,8 +808,17 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       }
       const status = toolResultFailed(event) ? "failed" : "completed";
       next = forgetPendingDelegateBrief(next, stringValue(event.tool_call_id));
+      next = settleTool(next, event, status);
+      const turnArtifacts = outputArtifacts(event);
+      next = captureOutputs(next, event);
+      for (const artifact of turnArtifacts) {
+        const output = next.outputs.find((candidate) => candidate.id === artifact.path);
+        if (output?.kind === "image") {
+          next = appendBlock(next, { kind: "output", output });
+        }
+      }
       return {
-        ...captureOutputs(settleTool(next, event, status), event),
+        ...next,
         activity: "Reviewing tool result",
       };
     }
@@ -1545,14 +1554,14 @@ function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewSta
   if (event.kind !== "tool_post") return state;
   const toolName = stringValue(event.tool_name);
   if (!isOutputProducingTool(toolName)) return state;
-  const paths = collectOutputPaths(event.result);
-  if (!paths.length) return state;
+  const artifacts = outputArtifacts(event);
+  if (!artifacts.length) return state;
   const source = toolName ? displayToolName(toolName) : undefined;
-  const additions = paths.map((path) => ({
-    id: path,
-    kind: outputKind(path),
-    title: path.split(/[\\/]/).at(-1) || path,
-    path,
+  const additions = artifacts.map((artifact) => ({
+    id: artifact.path,
+    kind: artifact.kind,
+    title: artifact.path.split(/[\\/]/).at(-1) || artifact.path,
+    path: artifact.path,
     source,
     laneId: stringValue(event.parent_id) ? stringValue(event.session_id) || undefined : undefined,
     toolCallId: stringValue(event.tool_call_id) || undefined,
@@ -1561,6 +1570,31 @@ function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewSta
   }));
   const ids = new Set(additions.map((item) => item.id));
   return { ...state, outputs: [...state.outputs.filter((item) => !ids.has(item.id)), ...additions].slice(-80) };
+}
+
+function outputArtifacts(event: UIEvent): Array<{
+  path: string;
+  kind: SessionViewState["outputs"][number]["kind"];
+}> {
+  const toolName = stringValue(event.tool_name);
+  if (!isOutputProducingTool(toolName)) return [];
+  const typedArtifacts = Array.isArray(event.artifacts)
+    ? event.artifacts.filter(isRecord).flatMap((artifact) => {
+        const path = stringValue(artifact.path).trim();
+        if (!path) return [];
+        const kind = stringValue(artifact.kind);
+        return [{
+          path,
+          kind: ["file", "image", "diagram", "data"].includes(kind)
+            ? kind as SessionViewState["outputs"][number]["kind"]
+            : outputKind(path),
+        }];
+      })
+    : [];
+  const artifacts = typedArtifacts.length
+    ? typedArtifacts
+    : collectOutputPaths(event.result).map((path) => ({ path, kind: outputKind(path) }));
+  return artifacts;
 }
 
 function isOutputProducingTool(toolName: string): boolean {

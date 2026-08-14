@@ -16,7 +16,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -228,6 +231,7 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
         .route("/runtime", get(runtime_status))
+        .route("/output-preview", get(output_preview))
         .route(
             "/transcription",
             get(transcription_status)
@@ -426,6 +430,44 @@ async fn runtime_status() -> Result<Json<Value>, ServerError> {
     serde_json::to_value(runtime_setup::status())
         .map(Json)
         .map_err(|error| ServerError::internal(format!("Could not encode runtime status: {error}")))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OutputPreviewQuery {
+    project_dir: String,
+    path: String,
+}
+
+async fn output_preview(
+    State(state): State<ServerState>,
+    Query(query): Query<OutputPreviewQuery>,
+) -> Result<Json<Value>, ServerError> {
+    const MAX_PREVIEW_BYTES: u64 = 24 * 1024 * 1024;
+    let project = authorize_project_dir(&query.project_dir, &state.security.allowed_project_roots)
+        .map_err(ServerError::forbidden)?;
+    let output = crate::resolve_output_path(&project.to_string_lossy(), &query.path)
+        .map_err(ServerError::forbidden)?;
+    let media_type = crate::output_media_type(&output)
+        .ok_or_else(|| ServerError::forbidden("This output type cannot be previewed inline"))?;
+    let (length, data) = tokio::task::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&output)
+            .map_err(|error| format!("Could not inspect output: {error}"))?;
+        if metadata.len() > MAX_PREVIEW_BYTES {
+            return Err("Inline image previews can be up to 24 MB".to_owned());
+        }
+        let bytes = std::fs::read(&output)
+            .map_err(|error| format!("Could not read output preview: {error}"))?;
+        Ok((metadata.len(), STANDARD.encode(bytes)))
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Output preview task failed: {error}")))?
+    .map_err(ServerError::internal)?;
+    Ok(Json(json!({
+        "mediaType": media_type,
+        "data": data,
+        "size": length,
+    })))
 }
 
 async fn transcription_status() -> Result<Json<Value>, ServerError> {

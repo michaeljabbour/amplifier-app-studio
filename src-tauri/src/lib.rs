@@ -10,6 +10,8 @@ mod store;
 mod transcription;
 pub mod web_server;
 
+#[cfg(desktop)]
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use catalog::CapabilityCatalog;
 use protocol::{SessionEvent, StartSessionOptions, StartSessionResult};
 use serde_json::Value;
@@ -327,8 +329,10 @@ fn open_output(app: AppHandle, project_dir: String, path: String) -> Result<(), 
         .map_err(|error| format!("Could not open output: {error}"))
 }
 
-#[cfg(desktop)]
-fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn resolve_output_path(
+    project_dir: &str,
+    path: &str,
+) -> Result<std::path::PathBuf, String> {
     let project = std::path::PathBuf::from(project_dir)
         .canonicalize()
         .map_err(|error| format!("Could not open project directory: {error}"))?;
@@ -348,6 +352,43 @@ fn resolve_output_path(project_dir: &str, path: &str) -> Result<std::path::PathB
         return Err("The selected output is not a file".to_owned());
     }
     Ok(output)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn read_output_preview(project_dir: String, path: String) -> Result<Value, String> {
+    const MAX_PREVIEW_BYTES: u64 = 24 * 1024 * 1024;
+    let output = resolve_output_path(&project_dir, &path)?;
+    let metadata =
+        std::fs::metadata(&output).map_err(|error| format!("Could not inspect output: {error}"))?;
+    if metadata.len() > MAX_PREVIEW_BYTES {
+        return Err("Inline image previews can be up to 24 MB".to_owned());
+    }
+    let media_type = output_media_type(&output)
+        .ok_or_else(|| "This output type cannot be previewed inline".to_owned())?;
+    let data = std::fs::read(&output)
+        .map_err(|error| format!("Could not read output preview: {error}"))?;
+    Ok(serde_json::json!({
+        "mediaType": media_type,
+        "data": STANDARD.encode(data),
+    }))
+}
+
+pub(crate) fn output_media_type(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()?
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "avif" => Some("image/avif"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -389,6 +430,8 @@ pub fn run() {
             apply_runtime_settings,
             #[cfg(desktop)]
             open_output,
+            #[cfg(desktop)]
+            read_output_preview,
             #[cfg(desktop)]
             app_updates::fetch_update,
             #[cfg(desktop)]
@@ -457,7 +500,7 @@ pub fn run() {
 
 #[cfg(all(test, desktop))]
 mod output_tests {
-    use super::resolve_output_path;
+    use super::{output_media_type, resolve_output_path};
 
     #[test]
     fn opens_only_existing_files_inside_the_project() {
@@ -476,5 +519,18 @@ mod output_tests {
         )
         .unwrap_err();
         assert!(error.contains("inside this session's project"));
+    }
+
+    #[test]
+    fn recognizes_only_supported_inline_image_outputs() {
+        assert_eq!(
+            output_media_type(std::path::Path::new("result.PNG")),
+            Some("image/png")
+        );
+        assert_eq!(
+            output_media_type(std::path::Path::new("diagram.svg")),
+            Some("image/svg+xml")
+        );
+        assert_eq!(output_media_type(std::path::Path::new("notes.md")), None);
     }
 }
