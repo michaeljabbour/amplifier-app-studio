@@ -10,6 +10,7 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 const RUNTIME_INSTALL_REF: &str = "4388bf981b416a53e6baff771e6b3e6c1b76f068";
 const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref 4388bf981b416a53e6baff771e6b3e6c1b76f068 --no-update-shell";
+const REQUIRED_RUNTIME_VERSION: &str = "0.1.4";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 #[cfg(target_os = "windows")]
@@ -19,6 +20,7 @@ const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=In
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatus {
     pub installed: bool,
+    pub current: bool,
     pub executable: Option<String>,
     pub version: Option<String>,
     pub adapter: String,
@@ -41,6 +43,9 @@ pub fn status() -> RuntimeStatus {
     let executable = resolved.as_ref().map(|runtime| runtime.executable.clone());
     let version = executable.as_ref().and_then(read_version);
     let installed = executable.is_some() && version.is_some();
+    let current = version
+        .as_deref()
+        .is_some_and(|value| runtime_version_at_least(value, REQUIRED_RUNTIME_VERSION));
     let install_supported = cfg!(any(
         target_os = "macos",
         target_os = "linux",
@@ -70,8 +75,10 @@ pub fn status() -> RuntimeStatus {
         .map_or(RuntimeAdapter::Missing, |runtime| runtime.adapter)
         .as_str()
         .to_owned();
-    let message = if installed {
+    let message = if installed && current {
         "Amplifier runtime is ready".to_owned()
+    } else if installed {
+        format!("Amplifier runtime {REQUIRED_RUNTIME_VERSION} update required")
     } else if executable.is_some() {
         "The Amplifier runtime was found but did not pass its version check".to_owned()
     } else if install_supported {
@@ -82,6 +89,7 @@ pub fn status() -> RuntimeStatus {
     };
     RuntimeStatus {
         installed,
+        current,
         executable: executable.map(|path| path.to_string_lossy().into_owned()),
         version,
         adapter,
@@ -95,7 +103,7 @@ pub fn status() -> RuntimeStatus {
 
 pub async fn install() -> Result<RuntimeStatus, String> {
     let current = status();
-    if current.installed && current.provider_status_available {
+    if current.installed && current.current && current.provider_status_available {
         return Ok(current);
     }
     if !current.install_supported {
@@ -135,7 +143,7 @@ pub async fn install() -> Result<RuntimeStatus, String> {
     }
 
     let installed = status();
-    if installed.installed {
+    if installed.installed && installed.current {
         Ok(installed)
     } else {
         Err("The installer finished, but the Amplifier runtime could not be verified. Restart Studio or run its doctor command in a terminal.".to_owned())
@@ -384,6 +392,34 @@ fn read_version(executable: &PathBuf) -> Option<String> {
     (!version.is_empty()).then_some(version)
 }
 
+fn runtime_version_at_least(raw: &str, required: &str) -> bool {
+    fn parts(value: &str) -> Option<Vec<u64>> {
+        let version = value
+            .split_whitespace()
+            .last()?
+            .trim_start_matches('v')
+            .split(['+', '-'])
+            .next()?;
+        let parsed = version
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        (!parsed.is_empty()).then_some(parsed)
+    }
+
+    let Some(mut actual) = parts(raw) else {
+        return false;
+    };
+    let Some(mut minimum) = parts(required) else {
+        return false;
+    };
+    let width = actual.len().max(minimum.len());
+    actual.resize(width, 0);
+    minimum.resize(width, 0);
+    actual >= minimum
+}
+
 fn read_provider_status(executable: &PathBuf) -> Option<ProviderStatus> {
     let mut command = Command::new(executable);
     command.args(["provider", "status", "--format", "json"]);
@@ -411,6 +447,33 @@ mod tests {
         if !runtime.installed {
             assert!(!runtime.provider_configured);
         }
+        assert_eq!(
+            runtime.current,
+            runtime
+                .version
+                .as_deref()
+                .is_some_and(|value| runtime_version_at_least(value, REQUIRED_RUNTIME_VERSION))
+        );
+    }
+
+    #[test]
+    fn runtime_version_gate_accepts_required_and_newer_versions() {
+        assert!(runtime_version_at_least(
+            "amplifier-runtime, version 0.1.4",
+            REQUIRED_RUNTIME_VERSION
+        ));
+        assert!(runtime_version_at_least(
+            "amplifier-runtime, version 0.2.0",
+            REQUIRED_RUNTIME_VERSION
+        ));
+        assert!(!runtime_version_at_least(
+            "amplifier-runtime, version 0.1.3",
+            REQUIRED_RUNTIME_VERSION
+        ));
+        assert!(!runtime_version_at_least(
+            "unknown",
+            REQUIRED_RUNTIME_VERSION
+        ));
     }
 
     #[test]

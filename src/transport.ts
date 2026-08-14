@@ -32,6 +32,7 @@ export interface StartSessionOptions extends NewSessionInput {
 
 export interface RuntimeStatus {
   installed: boolean;
+  current: boolean;
   executable?: string;
   version?: string;
   adapter: "neutral" | "configured" | "missing";
