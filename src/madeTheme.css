@@ -189,6 +189,9 @@
 :root[data-theme="made"] .visual-artifact > header button:hover { border-color: #b68235; color: #7d5411; }
 :root[data-theme="made"] .visual-artifact-stage { background: #f5f2ee; }
 :root[data-theme="made"] .visual-artifact-source { background: #eae9e9 !important; color: #454242 !important; }
+:root[data-theme="made"] .visual-artifact-pending { background: #f5f2ee; border-color: #c9c4bf; }
+:root[data-theme="made"] .visual-artifact-pending strong { color: #201f1d; font-family: var(--font-display); }
+:root[data-theme="made"] .visual-artifact-building-mark { border-color: #c9c4bf; }
 :root[data-theme="made"] .tool-row,
 :root[data-theme="made"] .recipe-row,
 :root[data-theme="made"] .live-reasoning { border-color: var(--line); }

@@ -86,7 +86,8 @@ cross this boundary.
   sessions and safe resume/reattach
 - Friendly errors for resume exit codes 2, 3, and 4
 - Named runtime-host registry shared with the TUI, per-tab host selection,
-  remote project browsing, HTTPS connections, and visible host badges
+  remote project browsing, HTTPS connections, visible host badges, and a
+  selectable **Session home** for default compute and durable history
 - Versioned `/v1/` REST/WebSocket envelopes plus Runtime capability negotiation
 - Authenticated remote output download and redacted durable settings parity
 - Generated Windows `.ico`, macOS `.icns`, Android, and iOS icon sets
@@ -168,6 +169,14 @@ the host. Client-side known endpoints live in `~/.amplifier/hosts.yaml`, while
 tokens use environment or macOS Keychain references and are never written
 into that registry.
 
+Studio promotes a remote endpoint into the compute pool only after it has
+successfully started a session. In **Settings → Connection**, choose any saved
+host as **Session home**. New sessions then start on that host by default and
+the history drawer reads that host's durable session library. Existing
+sessions remain where they were created; Studio does not claim to migrate or
+replicate them between hosts. On ephemeral compute, point `AMPLIFIER_HOME` at
+persistent storage before relying on that host as a session home.
+
 Each remote Studio tab is pinned to a `(host, session-id)` pair. Closing or
 reopening the Studio client only detaches its authenticated socket: the host
 and Python owner keep running, and the client reattaches with replay. The Rust
@@ -248,7 +257,9 @@ connect to `/api/session/<gui-id>`, send a `start` message, wait for
 Coordinator Markdown can include explicit `amplifier-dot`, `amplifier-svg`,
 and `amplifier-html` fences. Studio renders DOT locally, sanitizes static SVG,
 and gives interactive HTML a unique-origin sandbox with no network or Tauri
-access. Ordinary code fences stay code. The complete authoring and security
+access. Incomplete visual fences collapse into a small composing state while
+the model streams, so raw HTML never floods the conversation. Ordinary code
+fences stay code. The complete authoring and security
 contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATION-PROTOCOL.md).
 
 ## Publishing desktop updates

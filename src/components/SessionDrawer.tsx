@@ -6,6 +6,7 @@ interface Props {
   sessions: StoredSession[];
   loading: boolean;
   error?: string;
+  sourceName: string;
   onClose: () => void;
   onRefresh: () => void;
   onResume: (session: StoredSession) => void | Promise<void>;
@@ -29,7 +30,7 @@ export function SessionDrawer(props: Props) {
     <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
       <aside class="session-drawer" aria-label="Stored sessions">
         <div class="drawer-heading">
-          <div><div class="eyebrow">DURABLE HISTORY</div><h2>Stored sessions</h2></div>
+          <div><div class="eyebrow">DURABLE HISTORY · {props.sourceName}</div><h2>Stored sessions</h2></div>
           <button class="icon-button" onClick={props.onClose} aria-label="Close stored sessions">×</button>
         </div>
         <div class="drawer-search">
@@ -73,7 +74,7 @@ export function SessionDrawer(props: Props) {
             }}
           </For>
         </div>
-        <div class="drawer-footer">Showing {visible().length} of {props.sessions.length} top-level sessions</div>
+        <div class="drawer-footer">{props.sourceName} · showing {visible().length} of {props.sessions.length} top-level sessions</div>
       </aside>
     </div>
   );
@@ -83,7 +84,8 @@ function healthLabel(state: StoredSession["state"]): string {
   switch (state) {
     case "transcript_lost": return "history damaged";
     case "recovered": return "metadata recovered";
-    case "indexing": return "indexing";
+    case "indexing": return "metadata missing";
+    case "empty": return "empty run";
     case "corrupt": return "corrupt";
     default: return "ready";
   }

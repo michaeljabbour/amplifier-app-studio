@@ -8,7 +8,9 @@ export function storedSessionResumeBlocker(session: StoredSession, requireProjec
     case "recovered":
       return "Only recovered metadata is available, so automatic resume is disabled.";
     case "indexing":
-      return "This session is still being indexed. Refresh history when indexing finishes.";
+      return "This session has transcript data but no metadata record, so it cannot be resumed safely.";
+    case "empty":
+      return "This runtime attempt ended before it wrote a resumable conversation.";
     case "corrupt":
       return "The stored session is corrupt and cannot be resumed safely.";
     default:

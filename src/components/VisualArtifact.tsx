@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { renderGraphvizSvg } from "../dotRenderer";
 
 export type VisualArtifactFormat = "html" | "svg" | "dot";
 
@@ -13,7 +14,6 @@ const MIN_ARTIFACT_HEIGHT = 300;
 const MAX_ARTIFACT_HEIGHT = 12_000;
 export const ARTIFACT_RESIZE_MESSAGE = "amplifier-studio:artifact-resize";
 export const VISUAL_ARTIFACT_SANDBOX = "allow-scripts";
-let vizPromise: ReturnType<typeof loadViz> | undefined;
 let artifactSequence = 0;
 
 export function VisualArtifact(props: Props) {
@@ -162,7 +162,9 @@ export function isArtifactResizeMessage(value: unknown, frameId: string): value 
 }
 
 export function sanitizeVisualSvg(source: string): string {
-  const clean = DOMPurify.sanitize(source, {
+  const svgSource = extractSvgDocument(source);
+  if (!svgSource) return "";
+  const clean = DOMPurify.sanitize(svgSource, {
     USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ["script", "style", "foreignObject", "a", "image", "use"],
     FORBID_ATTR: ["href", "xlink:href", "style", "onload", "onclick"],
@@ -179,9 +181,7 @@ export function sanitizeVisualSvg(source: string): string {
 
 export async function renderDotArtifact(source: string): Promise<string> {
   try {
-    vizPromise ||= loadViz();
-    const viz = await vizPromise;
-    return sanitizeVisualSvg(viz.renderString(source, { engine: "dot", format: "svg" }));
+    return sanitizeVisualSvg(await renderGraphvizSvg(source));
   } catch {
     return "";
   }
@@ -204,11 +204,6 @@ function artifactFormatLabel(format: VisualArtifactFormat): string {
   return format === "html" ? "INTERACTIVE HTML" : format === "svg" ? "INLINE SVG" : "GRAPHVIZ DOT";
 }
 
-async function loadViz() {
-  const { instance } = await import("@viz-js/viz");
-  return instance();
-}
-
 function stripMarkup(value: string): string {
   const template = document.createElement("template");
   template.innerHTML = DOMPurify.sanitize(value, { ALLOWED_TAGS: [] });
@@ -217,4 +212,10 @@ function stripMarkup(value: string): string {
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+}
+
+function extractSvgDocument(source: string): string {
+  const start = source.search(/<svg(?:\s|>)/i);
+  const end = source.toLowerCase().lastIndexOf("</svg>");
+  return start >= 0 && end >= start ? source.slice(start, end + 6) : "";
 }

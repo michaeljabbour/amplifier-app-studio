@@ -12,6 +12,7 @@ import {
   readRuntimeSettings,
   type RuntimeSettingChange,
   type RuntimeSettingsSnapshot,
+  type RuntimeHost,
 } from "../transport";
 
 type SettingsSectionId = "appearance" | "connection" | "maintenance" | string;
@@ -21,13 +22,16 @@ interface Props {
   initialTheme: StudioTheme;
   initialUrl: string;
   initialToken: string;
+  runtimeHosts: RuntimeHost[];
+  initialSessionHomeHostId: string;
   bridgeLocked: boolean;
   runtimeSettingsAvailable: boolean;
   nativeProjectPicker: boolean;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
   onThemePreview: (theme: StudioTheme) => void;
   onCancel: () => void;
-  onSaveStudio: (theme: StudioTheme, url: string, token: string) => void;
+  onRemoveRuntimeHost: (id: string) => Promise<void>;
+  onSaveStudio: (theme: StudioTheme, url: string, token: string, sessionHomeHostId: string) => void;
 }
 
 const STATIC_SECTIONS = [
@@ -42,17 +46,22 @@ export function StudioSettingsDialog(props: Props) {
   const [theme, setTheme] = createSignal<StudioTheme>(props.initialTheme);
   const [url, setUrl] = createSignal(props.initialUrl);
   const [token, setToken] = createSignal(props.initialToken);
+  const [sessionHomeHostId, setSessionHomeHostId] = createSignal(props.initialSessionHomeHostId);
   const [snapshot, setSnapshot] = createSignal<RuntimeSettingsSnapshot>();
   const [changes, setChanges] = createSignal<Record<string, RuntimeSettingChange>>({});
   const [loading, setLoading] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [picking, setPicking] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
+  const [removingHost, setRemovingHost] = createSignal("");
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
 
   const staged = createMemo(() => Object.values(changes()));
-  const studioChanged = createMemo(() => theme() !== props.initialTheme || url() !== props.initialUrl || token() !== props.initialToken);
+  const studioChanged = createMemo(() => theme() !== props.initialTheme
+    || url() !== props.initialUrl
+    || token() !== props.initialToken
+    || sessionHomeHostId() !== props.initialSessionHomeHostId);
   const currentRuntimeSection = createMemo(() => RUNTIME_SETTINGS_SECTIONS.find((item) => item.id === section()));
   const visibleFields = createMemo(() => {
     const needle = query().trim().toLocaleLowerCase();
@@ -142,13 +151,26 @@ export function StudioSettingsDialog(props: Props) {
         setSnapshot(await applyRuntimeSettings(projectDir(), staged()));
         setChanges({});
       }
-      props.onSaveStudio(theme(), url(), token());
+      props.onSaveStudio(theme(), url(), token(), sessionHomeHostId());
       props.onCancel();
     } catch (caught) {
       setReviewing(false);
       setError(cleanError(caught));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const removeHost = async (id: string) => {
+    if (removingHost()) return;
+    setRemovingHost(id);
+    setError("");
+    try {
+      await props.onRemoveRuntimeHost(id);
+    } catch (caught) {
+      setError(cleanError(caught));
+    } finally {
+      setRemovingHost("");
     }
   };
 
@@ -193,7 +215,18 @@ export function StudioSettingsDialog(props: Props) {
             <Show when={error()}><div class="settings-error" role="alert">{error()}</div></Show>
             <Show when={section() === "appearance"}><AppearanceSection theme={theme()} onTheme={previewTheme} /></Show>
             <Show when={section() === "connection"}>
-              <ConnectionSection url={url()} token={token()} locked={props.bridgeLocked} onUrl={setUrl} onToken={setToken} />
+              <ConnectionSection
+                url={url()}
+                token={token()}
+                hosts={props.runtimeHosts}
+                sessionHomeHostId={sessionHomeHostId()}
+                locked={props.bridgeLocked}
+                removingHost={removingHost()}
+                onUrl={setUrl}
+                onToken={setToken}
+                onSessionHomeHost={setSessionHomeHostId}
+                onRemoveHost={(id) => void removeHost(id)}
+              />
             </Show>
             <Show when={currentRuntimeSection()} keyed>{(activeSection) => (
               <RuntimeSection
@@ -234,6 +267,8 @@ export function StudioSettingsDialog(props: Props) {
             theme={theme()}
             urlChanged={url() !== props.initialUrl}
             tokenChanged={token() !== props.initialToken}
+            sessionHomeChanged={sessionHomeHostId() !== props.initialSessionHomeHostId}
+            sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This Mac"}
             saving={saving()}
             onBack={() => setReviewing(false)}
             onApply={() => void apply()}
@@ -282,13 +317,47 @@ function AppearanceSection(props: { theme: StudioTheme; onTheme: (theme: StudioT
   );
 }
 
-function ConnectionSection(props: { url: string; token: string; locked: boolean; onUrl: (value: string) => void; onToken: (value: string) => void }) {
+function ConnectionSection(props: {
+  url: string;
+  token: string;
+  hosts: RuntimeHost[];
+  sessionHomeHostId: string;
+  locked: boolean;
+  removingHost: string;
+  onUrl: (value: string) => void;
+  onToken: (value: string) => void;
+  onSessionHomeHost: (id: string) => void;
+  onRemoveHost: (id: string) => void;
+}) {
+  const savedHosts = () => props.hosts.filter((host) => host.tokenRef.startsWith("keychain:") || host.tokenRef.startsWith("env:"));
   return (
     <div class="settings-section">
-      <SectionHeading kicker="CONNECTION" title="Rust bridge" description="Desktop sessions use the local Tauri process bridge by default. Mobile and remote clients connect to an HTTPS bridge host." />
+      <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description="Desktop sessions use the local Rust bridge by default. A remote host is added to this pool after its first successful session, with its token protected by macOS Keychain." />
       <div class="settings-field-stack">
         <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} disabled={props.locked} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Leave empty on desktop for the local process bridge. Remote hosts must use HTTPS outside loopback development.</small></label>
-        <label class="settings-form-field"><span>Bearer token <em>session-only</em></span><input type="password" value={props.token} disabled={props.locked} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token is kept only for this app session and is never persisted in shared URLs.</small></label>
+        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} disabled={props.locked} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL.</small></label>
+      </div>
+      <div class="compute-pool">
+        <div class="compute-pool-heading"><div><span>AVAILABLE COMPUTE</span><strong>{savedHosts().length} saved host{savedHosts().length === 1 ? "" : "s"}</strong></div><small>Each new session remains pinned to the host you choose.</small></div>
+        <Show when={savedHosts().length} fallback={<div class="settings-empty compact">No remote compute saved yet. Connect once and Studio will add the proven host here.</div>}>
+          <div class="compute-host-list">
+            <For each={savedHosts()}>{(host) => (
+              <article>
+                <div><strong>{host.name}</strong><code>{host.url}</code><small>{host.defaultProjectRoot || "Choose a project root when starting"}</small></div>
+                <span>{host.tokenRef.startsWith("keychain:") ? "KEYCHAIN" : "ENV"}</span>
+                <button type="button" disabled={props.removingHost === host.id} onClick={() => props.onRemoveHost(host.id)}>{props.removingHost === host.id ? "Removing…" : "Remove"}</button>
+              </article>
+            )}</For>
+          </div>
+        </Show>
+        <label class="settings-form-field session-home-field">
+          <span>Session home <em>default compute + durable history</em></span>
+          <select value={props.sessionHomeHostId} onChange={(event) => props.onSessionHomeHost(event.currentTarget.value)}>
+            <option value="local">This Mac</option>
+            <For each={savedHosts()}>{(host) => <option value={host.id}>{host.name}</option>}</For>
+          </select>
+          <small>New sessions start here by default, and Stored sessions reads this host’s history. Existing sessions remain on the machine where they were created; Studio does not silently migrate them.</small>
+        </label>
       </div>
       <Show when={props.locked}><div class="settings-callout warning"><strong>Connection held steady.</strong><p>Close live sessions before changing the bridge. Durable runtime settings can still be edited for the next session.</p></div></Show>
     </div>
@@ -425,6 +494,8 @@ function ReviewChanges(props: {
   theme: StudioTheme;
   urlChanged: boolean;
   tokenChanged: boolean;
+  sessionHomeChanged: boolean;
+  sessionHomeName: string;
   saving: boolean;
   onBack: () => void;
   onApply: () => void;
@@ -434,7 +505,7 @@ function ReviewChanges(props: {
       <section class="settings-review" role="alertdialog" aria-modal="true" aria-labelledby="settings-review-title">
         <div class="eyebrow">REDACTED REVIEW</div><h3 id="settings-review-title">Save these changes?</h3><p>Runtime changes apply only to sessions started after this save.</p>
         <div class="settings-review-list">
-          <Show when={props.studioChanged}><div><span>Studio</span><strong>{props.theme === "made" ? "MADE Paper" : "Studio Night"}</strong><small>{props.urlChanged ? "bridge URL changed · " : ""}{props.tokenChanged ? "bridge token replaced" : "appearance / connection"}</small></div></Show>
+          <Show when={props.studioChanged}><div><span>Studio</span><strong>{props.theme === "made" ? "MADE Paper" : "Studio Night"}</strong><small>{props.urlChanged ? "bridge URL changed · " : ""}{props.tokenChanged ? "bridge token replaced · " : ""}{props.sessionHomeChanged ? `session home → ${props.sessionHomeName}` : "appearance / connection"}</small></div></Show>
           <For each={props.changes}>{(change) => {
             const field = runtimeSettingByPath(change.path);
             const rendered = change.action === "unset" ? "unset" : field?.kind === "secret" ? "configured" : change.value;

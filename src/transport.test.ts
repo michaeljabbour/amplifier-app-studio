@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   configuredBridgeToken,
   configuredBridgeUrl,
+  durableRuntimeHostForSession,
   launchSession,
+  runtimeHostId,
   saveBridgeToken,
   saveBridgeUrl,
   stopSession,
@@ -42,6 +44,38 @@ describe("bridge trust storage", () => {
 
     window.history.replaceState({}, "", "/?bridge=http://127.0.0.1:9666");
     expect(configuredBridgeToken()).toBe("");
+  });
+
+  it("turns a proven remote session into a stable durable compute host", () => {
+    const host = durableRuntimeHostForSession({
+      projectDir: "/home/mjabbour/amplifier",
+      hostId: "configured",
+      hostName: "Configured host",
+      hostUrl: "http://127.0.0.1:4318",
+    }, []);
+    expect(host).toEqual({
+      id: runtimeHostId("http://127.0.0.1:4318/"),
+      name: "Compute · 127.0.0.1:4318",
+      url: "http://127.0.0.1:4318/",
+      tokenRef: `keychain:${runtimeHostId("http://127.0.0.1:4318/")}`,
+      defaultProjectRoot: "/home/mjabbour/amplifier",
+    });
+  });
+
+  it("keeps a named host and updates its last successful project root", () => {
+    const saved = {
+      id: "spark-288f",
+      name: "Spark 288f",
+      url: "https://spark.example.test/",
+      tokenRef: "env:SPARK_TOKEN",
+      defaultProjectRoot: "/old",
+    };
+    expect(durableRuntimeHostForSession({
+      projectDir: "/home/mjabbour/amplifier",
+      hostId: saved.id,
+      hostName: saved.name,
+      hostUrl: saved.url,
+    }, [saved])).toEqual({ ...saved, defaultProjectRoot: "/home/mjabbour/amplifier" });
   });
 
   it("reconnects from a durable cursor and deduplicates replay by event id", async () => {

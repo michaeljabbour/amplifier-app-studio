@@ -21,7 +21,8 @@ function stored(overrides: Partial<StoredSession> = {}): StoredSession {
 describe("stored session availability", () => {
   it("explains each disabled health state", () => {
     expect(storedSessionResumeBlocker(stored({ state: "recovered" }), true)).toContain("recovered metadata");
-    expect(storedSessionResumeBlocker(stored({ state: "indexing" }), true)).toContain("still being indexed");
+    expect(storedSessionResumeBlocker(stored({ state: "indexing" }), true)).toContain("no metadata record");
+    expect(storedSessionResumeBlocker(stored({ state: "empty" }), true)).toContain("before it wrote");
     expect(storedSessionResumeBlocker(stored({ state: "corrupt" }), true)).toContain("corrupt");
   });
 

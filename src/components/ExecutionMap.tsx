@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { createMemo, createResource, For, Show } from "solid-js";
 import type { PipelineState, SessionViewState, TurnLoopPhase, TurnLoopState } from "../protocol";
+import { renderGraphvizSvg } from "../dotRenderer";
 import turnLoopSvgSource from "../assets/amplifier-turn-loop.svg?raw";
 
 export type TurnLoopNodeStatus = "pending" | "active" | "completed" | "skipped" | "accepted";
@@ -8,8 +9,6 @@ export type TurnLoopNodeStatus = "pending" | "active" | "completed" | "skipped" 
 interface Props {
   state: SessionViewState;
 }
-
-let vizPromise: ReturnType<typeof loadViz> | undefined;
 
 export function ExecutionMap(props: Props) {
   const pipeline = () => props.state.pipeline;
@@ -208,18 +207,11 @@ function PipelineLedger(props: { pipeline: PipelineState }) {
 
 export async function renderPipelineSvg(dot: string, pipeline: PipelineState): Promise<string> {
   try {
-    vizPromise ||= loadViz();
-    const viz = await vizPromise;
-    const raw = viz.renderString(dot, { engine: "dot", format: "svg" });
+    const raw = await renderGraphvizSvg(dot);
     return sanitizeAndAnnotateSvg(raw, pipeline);
   } catch {
     return "";
   }
-}
-
-async function loadViz() {
-  const { instance } = await import("@viz-js/viz");
-  return instance();
 }
 
 export function sanitizeAndAnnotateSvg(raw: string, pipeline: PipelineState): string {

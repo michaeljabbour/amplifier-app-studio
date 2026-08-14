@@ -418,7 +418,7 @@ export interface StoredSession {
   mtimeMs: number;
   projectSlug: string;
   projectDir?: string;
-  state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing";
+  state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing" | "empty";
   summary: string;
 }
 
