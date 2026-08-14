@@ -8,13 +8,13 @@ use std::{
 use tokio::io::AsyncWriteExt;
 
 #[cfg(test)]
-const RUNTIME_INSTALL_REF: &str = "ce601fb8ed0a96699d243414dc906438a5773d17";
-const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref ce601fb8ed0a96699d243414dc906438a5773d17 --no-update-shell";
-const REQUIRED_RUNTIME_VERSION: &str = "0.1.5";
+const RUNTIME_INSTALL_REF: &str = "75243f74cd1785c492f7197c05b2e5aff2ea6c6c";
+const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref 75243f74cd1785c492f7197c05b2e5aff2ea6c6c --no-update-shell";
+const REQUIRED_RUNTIME_VERSION: &str = "0.1.6";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 #[cfg(target_os = "windows")]
-const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'ce601fb8ed0a96699d243414dc906438a5773d17' -NoUpdateShell";
+const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref '75243f74cd1785c492f7197c05b2e5aff2ea6c6c' -NoUpdateShell";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn runtime_version_gate_accepts_required_and_newer_versions() {
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.5",
+            "amplifier-runtime, version 0.1.6",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(runtime_version_at_least(

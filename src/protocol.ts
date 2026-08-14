@@ -321,9 +321,17 @@ export interface SessionOutput {
 
 export interface SessionViewState {
   guiId: string;
+  hostId?: string;
+  hostName?: string;
+  hostUrl?: string;
   capabilityId?: string;
   capabilityName?: string;
   runtimeSessionId?: string;
+  runtimeCapabilities?: {
+    protocolVersion: number;
+    features: string[];
+    operations: Record<string, string>;
+  };
   projectDir: string;
   requestedBundle?: string;
   requestedModel?: string;
@@ -386,6 +394,9 @@ export interface SessionViewState {
 
 export interface NewSessionInput {
   projectDir: string;
+  hostId?: string;
+  hostName?: string;
+  hostUrl?: string;
   bundle?: string;
   model?: string;
   provider?: string;

@@ -2,7 +2,7 @@ use crate::{
     catalog,
     protocol::{SessionEvent, StartSessionOptions},
     runtime_setup,
-    session::{AttachmentId, EventSink, SessionManager},
+    session::{AttachmentId, EventSink, NetworkPrincipal, SessionManager},
     store,
 };
 use axum::{
@@ -44,12 +44,18 @@ use tower_http::{
 };
 
 const DEFAULT_BIND: &str = "127.0.0.1:4317";
-const TOKEN_ENV: &str = "AMPLIFIER_STUDIO_BRIDGE_TOKEN";
-const ORIGINS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_ORIGINS";
-const ROOTS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS";
+const API_VERSION: u16 = 1;
+const TOKEN_ENV: &str = "AMPLIFIER_HOST_TOKEN";
+const ORIGINS_ENV: &str = "AMPLIFIER_HOST_ALLOWED_ORIGINS";
+const ROOTS_ENV: &str = "AMPLIFIER_HOST_ALLOWED_PROJECT_ROOTS";
+const LEGACY_TOKEN_ENV: &str = "AMPLIFIER_STUDIO_BRIDGE_TOKEN";
+const LEGACY_ORIGINS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_ORIGINS";
+const LEGACY_ROOTS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS";
 const OUTBOUND_CAPACITY: usize = 256;
-const WS_PROTOCOL: &str = "amplifier-studio";
-const WS_BEARER_PREFIX: &str = "amplifier-studio.bearer.";
+const WS_PROTOCOL: &str = "amplifier-host.v1";
+const LEGACY_WS_PROTOCOL: &str = "amplifier-studio";
+const WS_BEARER_PREFIX: &str = "amplifier-host.bearer.";
+const LEGACY_WS_BEARER_PREFIX: &str = "amplifier-studio.bearer.";
 
 #[derive(Clone)]
 struct ServerState {
@@ -131,7 +137,7 @@ impl ServerOptions {
         }
 
         if origins.is_empty() {
-            if let Ok(configured) = env::var(ORIGINS_ENV) {
+            if let Some(configured) = env_with_legacy(ORIGINS_ENV, LEGACY_ORIGINS_ENV) {
                 for origin in configured
                     .split(',')
                     .map(str::trim)
@@ -148,7 +154,7 @@ impl ServerOptions {
         origins.dedup();
 
         if roots.is_empty() {
-            if let Some(configured) = env::var_os(ROOTS_ENV) {
+            if let Some(configured) = env_os_with_legacy(ROOTS_ENV, LEGACY_ROOTS_ENV) {
                 roots.extend(env::split_paths(&configured));
             }
         }
@@ -165,9 +171,9 @@ impl ServerOptions {
                     path.display()
                 )
             })?,
-            None => env::var(TOKEN_ENV).map_err(|_| {
+            None => env_with_legacy(TOKEN_ENV, LEGACY_TOKEN_ENV).ok_or_else(|| {
                 format!(
-                    "The web bridge requires a bearer token. Set {TOKEN_ENV} or pass --token-file."
+                    "Amplifier Host requires a bearer token. Set {TOKEN_ENV} or pass --token-file."
                 )
             })?,
         };
@@ -227,10 +233,16 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
     let api = Router::new()
         .route("/health", get(health))
         .route("/config", get(config))
+        .route("/directories", get(directories))
         .route("/stored-sessions", get(stored_sessions))
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
         .route("/runtime", get(runtime_status))
+        .route(
+            "/runtime-settings",
+            get(runtime_settings_read).post(runtime_settings_apply),
+        )
+        .route("/output", get(output_download))
         .route("/output-preview", get(output_preview))
         .route(
             "/transcription",
@@ -249,6 +261,9 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
     let shutdown_manager = state.manager.clone();
     let cleanup_manager = state.manager.clone();
     let app = Router::new()
+        .nest("/v1/api", api.clone())
+        // Compatibility alias for Studio builds from before the host surface
+        // was versioned. New clients use /v1/api exclusively.
         .nest("/api", api)
         .fallback_service(assets)
         .with_state(state);
@@ -256,12 +271,12 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
     let listener = TcpListener::bind(options.bind)
         .await
         .map_err(|error| format!("Could not bind {}: {error}", options.bind))?;
-    println!("Amplifier Studio web bridge: http://{}", options.bind);
+    println!("Amplifier Host v{API_VERSION}: http://{}", options.bind);
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown_manager, shutdown))
         .await
         .map_err(|error| format!("Web bridge failed: {error}"));
-    let cleanup = cleanup_manager.stop_all().await;
+    let cleanup = cleanup_manager.release_all().await;
     match (result, cleanup) {
         (Err(server), Err(cleanup)) => Err(format!("{server}; {cleanup}")),
         (Err(server), Ok(())) => Err(server),
@@ -300,7 +315,7 @@ async fn shutdown_signal(manager: SessionManager, shutdown: broadcast::Sender<()
     // Close even idle/authenticated sockets that never started a runtime;
     // otherwise Axum's graceful shutdown would wait for them indefinitely.
     let _ = shutdown.send(());
-    let _ = manager.stop_all().await;
+    let _ = manager.release_all().await;
     let _ = shutdown.send(());
 }
 
@@ -314,18 +329,19 @@ async fn require_bearer(
     }
     let mut response = (
         StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "A valid Amplifier Studio bearer token is required" })),
+        Json(json!({ "error": "A valid Amplifier Host bearer token is required" })),
     )
         .into_response();
     response.headers_mut().insert(
         header::WWW_AUTHENTICATE,
-        HeaderValue::from_static("Bearer realm=\"amplifier-studio\""),
+        HeaderValue::from_static("Bearer realm=\"amplifier-host\""),
     );
     response
 }
 
 async fn health() -> Json<Value> {
     Json(json!({
+        "version": API_VERSION,
         "status": "ok",
         "transport": "websocket",
         "localProcess": true,
@@ -334,10 +350,69 @@ async fn health() -> Json<Value> {
 
 async fn config(State(state): State<ServerState>) -> Json<Value> {
     Json(json!({
+        "version": API_VERSION,
         "defaultProjectDir": state.default_project_dir,
         "transport": "websocket",
         "projectRootCount": state.security.allowed_project_roots.len(),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct DirectoryQuery {
+    path: Option<String>,
+}
+
+async fn directories(
+    State(state): State<ServerState>,
+    Query(query): Query<DirectoryQuery>,
+) -> Result<Json<Value>, ServerError> {
+    let roots = state.security.allowed_project_roots.to_vec();
+    let current = match query.path.filter(|value| !value.trim().is_empty()) {
+        Some(path) => authorize_project_dir(&path, &roots).map_err(ServerError::forbidden)?,
+        None => roots
+            .first()
+            .cloned()
+            .ok_or_else(|| ServerError::forbidden("The host has no allowed project roots"))?,
+    };
+    let current_for_scan = current.clone();
+    let entries = tokio::task::spawn_blocking(move || {
+        let mut entries = std::fs::read_dir(&current_for_scan)
+            .map_err(|error| format!("Could not browse the runtime host: {error}"))?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_dir() {
+                    return None;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') {
+                    return None;
+                }
+                Some(json!({
+                    "name": name,
+                    "path": entry.path().to_string_lossy(),
+                }))
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+        Ok::<_, String>(entries)
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Directory scan task failed: {error}")))?
+    .map_err(ServerError::internal)?;
+    let parent = current.parent().and_then(|parent| {
+        roots
+            .iter()
+            .any(|root| parent.starts_with(root))
+            .then(|| parent.to_string_lossy().into_owned())
+    });
+    Ok(Json(json!({
+        "version": API_VERSION,
+        "path": current.to_string_lossy(),
+        "parent": parent,
+        "roots": roots.iter().map(|root| root.to_string_lossy()).collect::<Vec<_>>(),
+        "directories": entries,
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,9 +509,102 @@ async fn runtime_status() -> Result<Json<Value>, ServerError> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RuntimeSettingsQuery {
+    project_dir: String,
+}
+
+async fn runtime_settings_read(
+    State(state): State<ServerState>,
+    Query(query): Query<RuntimeSettingsQuery>,
+) -> Result<Json<Value>, ServerError> {
+    let project = authorize_project_dir(&query.project_dir, &state.security.allowed_project_roots)
+        .map_err(ServerError::forbidden)?;
+    let snapshot = crate::runtime_settings::read(project.to_string_lossy().into_owned())
+        .await
+        .map_err(ServerError::internal)?;
+    serde_json::to_value(snapshot).map(Json).map_err(|error| {
+        ServerError::internal(format!("Could not encode runtime settings: {error}"))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeSettingsApplyRequest {
+    project_dir: String,
+    changes: Vec<crate::runtime_settings::RuntimeSettingChange>,
+}
+
+async fn runtime_settings_apply(
+    State(state): State<ServerState>,
+    Json(request): Json<RuntimeSettingsApplyRequest>,
+) -> Result<Json<Value>, ServerError> {
+    let project =
+        authorize_project_dir(&request.project_dir, &state.security.allowed_project_roots)
+            .map_err(ServerError::forbidden)?;
+    if request.changes.iter().any(|change| {
+        change.path.starts_with("providers.") || change.path == "notifications.push.topic"
+    }) {
+        return Err(ServerError::forbidden(
+            "Provider credentials and push topics must be configured on the runtime host",
+        ));
+    }
+    let snapshot =
+        crate::runtime_settings::apply(project.to_string_lossy().into_owned(), request.changes)
+            .await
+            .map_err(ServerError::internal)?;
+    serde_json::to_value(snapshot).map(Json).map_err(|error| {
+        ServerError::internal(format!("Could not encode runtime settings: {error}"))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct OutputPreviewQuery {
     project_dir: String,
     path: String,
+}
+
+async fn output_download(
+    State(state): State<ServerState>,
+    Query(query): Query<OutputPreviewQuery>,
+) -> Result<Response, ServerError> {
+    const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+    let project = authorize_project_dir(&query.project_dir, &state.security.allowed_project_roots)
+        .map_err(ServerError::forbidden)?;
+    let output = crate::resolve_output_path(&project.to_string_lossy(), &query.path)
+        .map_err(ServerError::forbidden)?;
+    let name = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("amplifier-output")
+        .replace(['\r', '\n', '"'], "_");
+    let media_type = crate::output_media_type(&output).unwrap_or("application/octet-stream");
+    let bytes = tokio::task::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&output)
+            .map_err(|error| format!("Could not inspect output: {error}"))?;
+        if metadata.len() > MAX_DOWNLOAD_BYTES {
+            return Err(
+                "Direct downloads can be up to 64 MB; use artifact.read chunks for larger files"
+                    .to_owned(),
+            );
+        }
+        std::fs::read(&output).map_err(|error| format!("Could not read output: {error}"))
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Output download task failed: {error}")))?
+    .map_err(ServerError::internal)?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&media_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
+            .map_err(|error| ServerError::internal(format!("Invalid output filename: {error}")))?,
+    );
+    Ok((headers, bytes).into_response())
 }
 
 async fn output_preview(
@@ -500,17 +668,39 @@ async fn session_upgrade(
         )
             .into_response();
     }
-    ws.protocols([WS_PROTOCOL])
+    ws.protocols([WS_PROTOCOL, LEGACY_WS_PROTOCOL])
         .on_upgrade(move |socket| session_socket(socket, state, gui_id))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ClientMessage {
-    Start { options: StartSessionOptions },
-    Attach { since: Option<u64> },
-    Op { op: Value },
-    Stop,
+    Start {
+        version: u16,
+        options: StartSessionOptions,
+    },
+    Attach {
+        version: u16,
+        since: Option<u64>,
+    },
+    Op {
+        version: u16,
+        op: Value,
+    },
+    Stop {
+        version: u16,
+    },
+}
+
+impl ClientMessage {
+    fn version(&self) -> u16 {
+        match self {
+            Self::Start { version, .. }
+            | Self::Attach { version, .. }
+            | Self::Op { version, .. }
+            | Self::Stop { version } => *version,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -520,7 +710,10 @@ struct Outbound {
 }
 
 impl Outbound {
-    fn send(&self, value: Value) {
+    fn send(&self, mut value: Value) {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("version".to_owned(), Value::from(API_VERSION));
+        }
         match self.sender.try_send(value) {
             Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -599,9 +792,16 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 continue;
             }
         };
+        if request.version() != API_VERSION {
+            outbound.error(format!(
+                "Unsupported Amplifier Host protocol version {}; this host requires version {API_VERSION}",
+                request.version()
+            ));
+            continue;
+        }
 
         match request {
-            ClientMessage::Start { mut options } if attachment.is_none() => {
+            ClientMessage::Start { mut options, .. } if attachment.is_none() => {
                 if options.gui_id != gui_id {
                     outbound.error("WebSocket path and options.guiId do not match");
                     continue;
@@ -618,7 +818,16 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 };
                 options.project_dir = project.to_string_lossy().into_owned();
                 let sink = socket_sink(outbound.clone());
-                match state.manager.start_attached(options, sink).await {
+                let principal = NetworkPrincipal {
+                    id: format!("studio-web:{gui_id}"),
+                    kind: "human",
+                    permissions: "read,write,control",
+                };
+                match state
+                    .manager
+                    .start_network_attached(options, sink, principal)
+                    .await
+                {
                     Ok((result, id)) => {
                         attachment = Some(id);
                         outbound.send(json!({
@@ -631,7 +840,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                     Err(error) => outbound.error(error),
                 }
             }
-            ClientMessage::Attach { since } if attachment.is_none() => {
+            ClientMessage::Attach { since, .. } if attachment.is_none() => {
                 let sink = socket_sink(outbound.clone());
                 match state.manager.attach(&gui_id, sink).await {
                     Ok(id) => {
@@ -665,7 +874,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
             ClientMessage::Start { .. } | ClientMessage::Attach { .. } => {
                 outbound.error("This WebSocket is already attached to a session");
             }
-            ClientMessage::Op { op } if attachment.is_some() => {
+            ClientMessage::Op { op, .. } if attachment.is_some() => {
                 let current = state
                     .manager
                     .attachment_is_current(&gui_id, attachment.expect("checked above"))
@@ -677,7 +886,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                     outbound.error(error);
                 }
             }
-            ClientMessage::Stop if attachment.is_some() => {
+            ClientMessage::Stop { .. } if attachment.is_some() => {
                 let current = state
                     .manager
                     .attachment_is_current(&gui_id, attachment.expect("checked above"))
@@ -734,7 +943,11 @@ fn bearer_from_websocket_protocol(headers: &HeaderMap) -> Option<Vec<u8>> {
     value
         .split(',')
         .map(str::trim)
-        .find_map(|protocol| protocol.strip_prefix(WS_BEARER_PREFIX))
+        .find_map(|protocol| {
+            protocol
+                .strip_prefix(WS_BEARER_PREFIX)
+                .or_else(|| protocol.strip_prefix(LEGACY_WS_BEARER_PREFIX))
+        })
         .filter(|encoded| encoded.len() <= 8192)
         .and_then(|encoded| URL_SAFE_NO_PAD.decode(encoded).ok())
 }
@@ -834,6 +1047,21 @@ where
     values.next().ok_or_else(|| message.to_owned())
 }
 
+fn env_with_legacy(primary: &str, legacy: &str) -> Option<String> {
+    env::var(primary)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env::var(legacy)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn env_os_with_legacy(primary: &str, legacy: &str) -> Option<std::ffi::OsString> {
+    env::var_os(primary).or_else(|| env::var_os(legacy))
+}
+
 #[derive(Debug)]
 struct ServerError {
     status: StatusCode,
@@ -864,7 +1092,7 @@ impl IntoResponse for ServerError {
 
 fn usage() -> String {
     format!(
-        "Usage: amplifier-studio-server [--bind 127.0.0.1:4317] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]...\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
+        "Usage: amplifier-host [--bind 127.0.0.1:4317] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]...\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
     )
 }
 

@@ -1,61 +1,27 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-const SECTIONS: [&str; 6] = [
-    "providers",
-    "models-routing",
-    "bundles",
-    "directory-access",
-    "notifications",
-    "behavior",
-];
-
-const FIELD_PATHS: [&str; 29] = [
-    "providers.anthropic.api_key",
-    "providers.openai.api_key",
-    "providers.azure-openai.api_key",
-    "providers.azure-openai.endpoint",
-    "providers.gemini.api_key",
-    "providers.google.api_key",
-    "providers.github-copilot.token",
-    "routing.matrix",
-    "routing.enabled",
-    "tui.bundle.active",
-    "bundle.app",
-    "tui.bundle.deferred",
-    "tui.permissions.write_boundary",
-    "tui.permissions.governance",
-    "notifications.suppress",
-    "notifications.desktop.enabled",
-    "notifications.push.enabled",
-    "notifications.push.server",
-    "notifications.push.priority",
-    "notifications.push.tags",
-    "notifications.push.topic",
-    "context.max_tokens",
-    "context.compact_threshold",
-    "context.auto_compact",
-    "tui.hooks.suppress",
-    "tui.pricing.live",
-    "tui.resume.use_active_bundle",
-    "tui.preflight.verify_provider",
-    "tui.preflight.verify_live",
-];
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettingValue {
     pub path: String,
     pub display: String,
     pub source: String,
     pub source_label: String,
+    pub source_file: Option<String>,
+    pub applies: String,
+    pub remote_writable: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettingsSnapshot {
+    pub schema_version: u16,
+    #[serde(rename = "type")]
+    pub record_type: String,
     pub project_dir: String,
     pub values: Vec<RuntimeSettingValue>,
     pub version: String,
@@ -74,31 +40,16 @@ pub struct RuntimeSettingChange {
 
 pub async fn read(project_dir: String) -> Result<RuntimeSettingsSnapshot, String> {
     let project = project_directory(&project_dir)?;
-    let mut values = Vec::with_capacity(FIELD_PATHS.len());
-    for section in SECTIONS {
-        let output = run(&project, ["settings", "get", section]).await?;
-        values.extend(parse_settings_output(&output)?);
+    let output = run(&project, ["settings", "get", "--json"]).await?;
+    let snapshot: RuntimeSettingsSnapshot = serde_json::from_str(&output)
+        .map_err(|error| format!("Could not read Runtime's settings snapshot: {error}"))?;
+    if snapshot.schema_version != 1 || snapshot.record_type != "settings.values" {
+        return Err("The installed Amplifier runtime settings protocol is incompatible with this Studio release. Update both components and try again.".to_owned());
     }
-    if values.len() != FIELD_PATHS.len()
-        || FIELD_PATHS
-            .iter()
-            .any(|path| !values.iter().any(|value| value.path == *path))
-    {
-        return Err("The installed Amplifier runtime settings registry is incompatible with this Studio release. Update both apps and try again.".to_owned());
+    if Path::new(&snapshot.project_dir) != project {
+        return Err("Runtime returned settings for a different project directory".to_owned());
     }
-
-    let version = run(&project, ["--version"]).await?;
-    let paths_output = run(&project, ["config", "paths", "--json"]).await?;
-    let paths = serde_json::from_str(&paths_output)
-        .map_err(|error| format!("Could not read Amplifier settings paths: {error}"))?;
-
-    Ok(RuntimeSettingsSnapshot {
-        project_dir: project.to_string_lossy().into_owned(),
-        values,
-        version,
-        paths,
-        recent_changes: recent_changes(),
-    })
+    Ok(snapshot)
 }
 
 pub async fn apply(
@@ -108,13 +59,26 @@ pub async fn apply(
     if changes.is_empty() {
         return read(project_dir).await;
     }
-    if changes.len() > FIELD_PATHS.len() {
+    let project = project_directory(&project_dir)?;
+    let snapshot = read(project.to_string_lossy().into_owned()).await?;
+    if changes.len() > snapshot.values.len() {
         return Err("Too many settings changes were submitted".to_owned());
     }
-    let project = project_directory(&project_dir)?;
+    let fields = snapshot
+        .values
+        .iter()
+        .map(|value| (value.path.as_str(), value.remote_writable))
+        .collect::<HashMap<_, _>>();
     for change in changes {
-        if !FIELD_PATHS.contains(&change.path.as_str()) {
-            return Err(format!("Unknown Amplifier setting: {}", change.path));
+        match fields.get(change.path.as_str()) {
+            None => return Err(format!("Unknown Amplifier setting: {}", change.path)),
+            Some(false) => {
+                return Err(format!(
+                    "{} is host-only and cannot be changed through a remote client",
+                    change.path
+                ))
+            }
+            Some(true) => {}
         }
         let scope = match change.scope.as_str() {
             "global" => "--global",
@@ -204,70 +168,20 @@ async fn run_owned(project: &Path, args: Vec<String>) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn parse_settings_output(output: &str) -> Result<Vec<RuntimeSettingValue>, String> {
-    let mut values = Vec::new();
-    let mut lines = output.lines();
-    while let Some(line) = lines.next() {
-        let Some((path, display)) = line.split_once(" = ") else {
-            continue;
-        };
-        if path.starts_with(char::is_whitespace) {
-            continue;
-        }
-        let source_line = lines
-            .next()
-            .ok_or_else(|| format!("Missing settings source for {path}"))?;
-        let source_label = source_line
-            .strip_prefix("  source: ")
-            .ok_or_else(|| format!("Invalid settings source for {path}"))?
-            .trim()
-            .to_owned();
-        let source = source_label
-            .split_once(' ')
-            .map_or(source_label.as_str(), |(name, _)| name)
-            .to_owned();
-        values.push(RuntimeSettingValue {
-            path: path.to_owned(),
-            display: display.to_owned(),
-            source,
-            source_label,
-        });
-    }
-    Ok(values)
-}
-
-fn recent_changes() -> Vec<Value> {
-    let Some(home) = dirs::home_dir() else {
-        return Vec::new();
-    };
-    let Ok(contents) = std::fs::read_to_string(home.join(".amplifier/settings-changes.jsonl"))
-    else {
-        return Vec::new();
-    };
-    let mut changes = contents
-        .lines()
-        .rev()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .take(5)
-        .collect::<Vec<_>>();
-    changes.reverse();
-    changes
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_redacted_values_and_provenance() {
-        let values = parse_settings_output(
-            "providers.anthropic.api_key = configured\n  source: env (ANTHROPIC_API_KEY)\nrouting.matrix = balanced\n  source: default",
+    fn parses_runtime_owned_redacted_snapshot() {
+        let snapshot: RuntimeSettingsSnapshot = serde_json::from_str(
+            r#"{"schemaVersion":1,"type":"settings.values","projectDir":"/tmp/project","values":[{"path":"providers.anthropic.api_key","display":"configured","source":"env","sourceLabel":"env (ANTHROPIC_API_KEY)","sourceFile":null,"applies":"next-session","remoteWritable":false}],"version":"0.1.6","paths":{},"recentChanges":[]}"#,
         )
-        .expect("settings output should parse");
-        assert_eq!(values.len(), 2);
-        assert_eq!(values[0].display, "configured");
-        assert_eq!(values[0].source, "env");
-        assert_eq!(values[1].source_label, "default");
+        .expect("Runtime snapshot should parse");
+        assert_eq!(snapshot.schema_version, 1);
+        assert_eq!(snapshot.values[0].display, "configured");
+        assert_eq!(snapshot.values[0].source, "env");
+        assert!(!snapshot.values[0].remote_writable);
     }
 
     #[test]

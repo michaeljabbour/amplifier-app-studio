@@ -5,7 +5,7 @@ use crate::runtime_setup;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
@@ -28,6 +28,13 @@ const EXIT_POLL: Duration = Duration::from_millis(120);
 pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync + 'static>;
 pub type AttachmentId = u64;
 
+#[derive(Debug, Clone)]
+pub struct NetworkPrincipal {
+    pub id: String,
+    pub kind: &'static str,
+    pub permissions: &'static str,
+}
+
 type AttachedSink = Arc<RwLock<Option<(AttachmentId, EventSink)>>>;
 
 #[derive(Clone)]
@@ -36,6 +43,7 @@ struct SessionHandle {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     sink: AttachedSink,
     resume_identity: Option<(String, String)>,
+    detached_owner: bool,
 }
 
 #[derive(Clone)]
@@ -73,6 +81,27 @@ impl SessionManager {
         &self,
         options: StartSessionOptions,
         sink: EventSink,
+    ) -> Result<(StartSessionResult, AttachmentId), String> {
+        self.start_attached_as(options, sink, None).await
+    }
+
+    /// Start a runtime for an authenticated network peer. The host adapter
+    /// authenticates transport; amplifier-runtime's StaticPolicy remains the
+    /// authority for read/write/control and lease semantics.
+    pub async fn start_network_attached(
+        &self,
+        options: StartSessionOptions,
+        sink: EventSink,
+        principal: NetworkPrincipal,
+    ) -> Result<(StartSessionResult, AttachmentId), String> {
+        self.start_attached_as(options, sink, Some(principal)).await
+    }
+
+    async fn start_attached_as(
+        &self,
+        options: StartSessionOptions,
+        sink: EventSink,
+        network_principal: Option<NetworkPrincipal>,
     ) -> Result<(StartSessionResult, AttachmentId), String> {
         if !self.accepting.load(Ordering::SeqCst) {
             return Err(
@@ -117,28 +146,8 @@ impl SessionManager {
             }
         }
 
-        if let Some(resume_id) = options.resume_id.as_deref() {
-            let resume_id = resume_id.to_owned();
-            let relocation_project = project_dir.clone();
-            let relocated = tauri::async_runtime::spawn_blocking(move || {
-                prepare_relocated_resume(&relocation_project, &resume_id)
-            })
-            .await
-            .map_err(|error| format!("Session relocation check failed: {error}"))??;
-            if let Some(source) = relocated {
-                emit_log(
-                    &sink,
-                    &options.gui_id,
-                    "bridge",
-                    format!(
-                        "Recovered the complete stored session after the project moved (source: {})",
-                        source.display()
-                    ),
-                );
-            }
-        }
-
         let binary = runtime_setup::binary_or_command();
+        let detached_owner = network_principal.is_some();
         let mut command = Command::new(&binary);
         if let Some(path) = runtime_setup::runtime_path(&binary) {
             command.env("PATH", path);
@@ -155,12 +164,41 @@ impl SessionManager {
             command.arg("--attach").arg(resume_id);
         }
         command.arg("--attachable");
+        if detached_owner {
+            command.arg("--detached");
+        }
+        if let Some(principal) = network_principal {
+            command
+                .arg("--peer-principal")
+                .arg(principal.id)
+                .arg("--peer-kind")
+                .arg(principal.kind)
+                .arg("--peer-permissions")
+                .arg(principal.permissions);
+        }
         command
             .current_dir(&project_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(!detached_owner);
+        let durable_stderr = if detached_owner {
+            let path = detached_runtime_log_path(&options.gui_id)?;
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|error| {
+                    format!(
+                        "Could not open durable runtime log {}: {error}",
+                        path.display()
+                    )
+                })?;
+            command.stderr(Stdio::from(file));
+            Some(path)
+        } else {
+            command.stderr(Stdio::piped());
+            None
+        };
 
         let mut child = command.spawn().map_err(|error| {
             format!(
@@ -205,10 +243,7 @@ impl SessionManager {
             .stdout
             .take()
             .ok_or_else(|| "The Amplifier runtime did not expose stdout".to_owned())?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| "The Amplifier runtime did not expose stderr".to_owned())?;
+        let stderr = child.stderr.take();
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
         let attached_sink = Arc::new(RwLock::new(Some((attachment_id, sink))));
         let handle = SessionHandle {
@@ -219,13 +254,23 @@ impl SessionManager {
                 .resume_id
                 .clone()
                 .map(|resume_id| (project_dir_string.clone(), resume_id)),
+            detached_owner,
         };
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
 
         let routed_sink = routed_sink(attached_sink);
         spawn_stdout_reader(routed_sink.clone(), options.gui_id.clone(), stdout);
-        spawn_stderr_reader(routed_sink.clone(), options.gui_id.clone(), stderr);
+        if let Some(stderr) = stderr {
+            spawn_stderr_reader(routed_sink.clone(), options.gui_id.clone(), stderr);
+        } else if let Some(path) = durable_stderr {
+            emit_log(
+                &routed_sink,
+                &options.gui_id,
+                "host",
+                format!("Detached runtime diagnostics: {}", path.display()),
+            );
+        }
         self.spawn_exit_monitor(routed_sink, options.gui_id.clone(), handle.child.clone());
 
         Ok((
@@ -331,11 +376,16 @@ impl SessionManager {
             None => return Ok(false),
         };
 
-        // Interrupt first, then close stdin. serve treats EOF as a graceful
-        // cleanup request and lets the interrupted turn settle its durable
-        // state before exiting.
+        // A network owner deliberately survives EOF, so an explicit stop must
+        // send quit. Local desktop owners retain the older interrupt + EOF
+        // drain used by app updates and ordinary window shutdown.
         if let Some(mut stdin) = handle.stdin.lock().await.take() {
-            let _ = stdin.write_all(b"{\"op\":\"interrupt\"}\n").await;
+            let operation = if handle.detached_owner {
+                b"{\"op\":\"quit\"}\n".as_slice()
+            } else {
+                b"{\"op\":\"interrupt\"}\n".as_slice()
+            };
+            let _ = stdin.write_all(operation).await;
             let _ = stdin.flush().await;
             drop(stdin);
         }
@@ -410,6 +460,28 @@ impl SessionManager {
         }
     }
 
+    /// Release every network-owned runtime without stopping it.
+    ///
+    /// The runtime's detached owner keeps the durable session and attach
+    /// socket alive after this host adapter exits. A replacement host can
+    /// re-adopt it through `serve --attach <session-id>` instead of turning a
+    /// daemon restart into lost work.
+    pub async fn release_all(&self) -> Result<(), String> {
+        self.accepting.store(false, Ordering::SeqCst);
+        let handles = {
+            let mut sessions = self.sessions.lock().await;
+            sessions
+                .drain()
+                .map(|(_, handle)| handle)
+                .collect::<Vec<_>>()
+        };
+        for handle in handles {
+            handle.stdin.lock().await.take();
+            replace_sink(&handle.sink, None)?;
+        }
+        Ok(())
+    }
+
     /// Re-open the manager after an updater failure that happened *after* the
     /// current runtimes were drained.
     ///
@@ -456,6 +528,21 @@ impl SessionManager {
             emit_serialized(&sink, &gui_id, "exit", payload);
         });
     }
+}
+
+fn detached_runtime_log_path(gui_id: &str) -> Result<PathBuf, String> {
+    let root = std::env::var_os("AMPLIFIER_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".amplifier")))
+        .unwrap_or_else(|| PathBuf::from(".amplifier"));
+    let directory = root.join("host-logs");
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "Could not create detached runtime log directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    Ok(directory.join(format!("{gui_id}.stderr.log")))
 }
 
 fn reject_known_incompatible_tool_route(
@@ -604,220 +691,6 @@ fn canonical_project_dir(value: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-const RELOCATABLE_SESSION_FILES: &[&str] = &[
-    "ui-events.jsonl",
-    "transcript.jsonl.backup",
-    "transcript.jsonl",
-    "metadata.json.backup",
-];
-
-fn prepare_relocated_resume(
-    project_dir: &Path,
-    resume_id: &str,
-) -> Result<Option<PathBuf>, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "Could not resolve the Amplifier home directory".to_owned())?;
-    prepare_relocated_resume_in(&home.join(".amplifier/projects"), project_dir, resume_id)
-}
-
-fn prepare_relocated_resume_in(
-    projects_dir: &Path,
-    project_dir: &Path,
-    resume_id: &str,
-) -> Result<Option<PathBuf>, String> {
-    validate_resume_storage_id(resume_id)?;
-    if !projects_dir.is_dir() {
-        return Ok(None);
-    }
-    let destination = projects_dir
-        .join(project_storage_slug(project_dir))
-        .join("sessions")
-        .join(resume_id);
-    if readable_session_metadata(&destination).is_some() {
-        return Ok(None);
-    }
-
-    let mut candidates = fs::read_dir(projects_dir)
-        .map_err(|error| format!("Could not inspect Amplifier session stores: {error}"))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("sessions").join(resume_id))
-        .filter(|candidate| candidate != &destination)
-        .filter_map(|candidate| {
-            let metadata = readable_session_metadata(&candidate)?;
-            let transcript = readable_transcript(&candidate);
-            let modified = session_artifact_modified(&candidate);
-            Some((candidate, metadata, transcript, modified))
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|(_, _, transcript, modified)| {
-        std::cmp::Reverse((transcript.is_some(), *modified))
-    });
-    let Some((source, mut metadata, _, _)) = candidates.into_iter().next() else {
-        return Ok(None);
-    };
-    if session_has_live_owner(&source) {
-        return Err(
-            "The complete copy of this session still advertises a live owner; close it before relocating the project"
-                .to_owned(),
-        );
-    }
-
-    fs::create_dir_all(&destination).map_err(|error| {
-        format!(
-            "Could not prepare relocated session directory '{}': {error}",
-            destination.display()
-        )
-    })?;
-    for name in RELOCATABLE_SESSION_FILES {
-        let from = source.join(name);
-        if from.is_file() {
-            copy_session_file(&from, &destination.join(name))?;
-        }
-    }
-    metadata.insert(
-        "working_dir".to_owned(),
-        Value::String(project_dir.to_string_lossy().into_owned()),
-    );
-    write_session_json(&destination.join("metadata.json"), &Value::Object(metadata))?;
-    Ok(Some(source))
-}
-
-fn readable_session_metadata(session_dir: &Path) -> Option<serde_json::Map<String, Value>> {
-    for name in ["metadata.json", "metadata.json.backup"] {
-        let Ok(text) = fs::read_to_string(session_dir.join(name)) else {
-            continue;
-        };
-        if let Ok(Value::Object(metadata)) = serde_json::from_str::<Value>(&text) {
-            if metadata.get("recovered").and_then(Value::as_bool) != Some(true) {
-                return Some(metadata);
-            }
-        }
-    }
-    None
-}
-
-fn session_has_live_owner(session_dir: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(session_dir.join("attach.json")) else {
-        return false;
-    };
-    let Ok(Value::Object(advert)) = serde_json::from_str::<Value>(&text) else {
-        return false;
-    };
-    let Some(socket_path) = advert.get("socket_path").and_then(Value::as_str) else {
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        std::os::unix::net::UnixStream::connect(socket_path).is_ok()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = socket_path;
-        false
-    }
-}
-
-fn readable_transcript(session_dir: &Path) -> Option<PathBuf> {
-    for name in ["transcript.jsonl", "transcript.jsonl.backup"] {
-        let path = session_dir.join(name);
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if text
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .all(|line| serde_json::from_str::<Value>(line).is_ok())
-        {
-            return Some(path);
-        }
-    }
-    None
-}
-
-fn session_artifact_modified(session_dir: &Path) -> std::time::SystemTime {
-    ["metadata.json", "transcript.jsonl", "ui-events.jsonl"]
-        .into_iter()
-        .filter_map(|name| fs::metadata(session_dir.join(name)).ok()?.modified().ok())
-        .max()
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-}
-
-fn copy_session_file(source: &Path, destination: &Path) -> Result<(), String> {
-    let temporary = destination.with_file_name(format!(
-        ".{}.studio-relocate-{}.tmp",
-        destination
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("session"),
-        std::process::id(),
-    ));
-    fs::copy(source, &temporary).map_err(|error| {
-        format!(
-            "Could not copy relocated session artifact '{}': {error}",
-            source.display()
-        )
-    })?;
-    replace_file(&temporary, destination)
-}
-
-fn write_session_json(destination: &Path, value: &Value) -> Result<(), String> {
-    let contents = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("Could not serialize relocated session metadata: {error}"))?;
-    let temporary = destination.with_file_name(format!(
-        ".metadata.json.studio-relocate-{}.tmp",
-        std::process::id(),
-    ));
-    fs::write(&temporary, contents).map_err(|error| {
-        format!(
-            "Could not stage relocated session metadata '{}': {error}",
-            temporary.display()
-        )
-    })?;
-    replace_file(&temporary, destination)
-}
-
-fn replace_file(temporary: &Path, destination: &Path) -> Result<(), String> {
-    #[cfg(windows)]
-    if destination.exists() {
-        fs::remove_file(destination).map_err(|error| {
-            format!(
-                "Could not replace relocated session artifact '{}': {error}",
-                destination.display()
-            )
-        })?;
-    }
-    fs::rename(temporary, destination).map_err(|error| {
-        format!(
-            "Could not finalize relocated session artifact '{}': {error}",
-            destination.display()
-        )
-    })
-}
-
-fn project_storage_slug(project_dir: &Path) -> String {
-    let mut slug = project_dir
-        .to_string_lossy()
-        .replace(['/', '\\'], "-")
-        .replace(':', "");
-    if !slug.starts_with('-') {
-        slug.insert(0, '-');
-    }
-    slug
-}
-
-fn validate_resume_storage_id(value: &str) -> Result<(), String> {
-    let valid = !value.is_empty()
-        && value.len() <= 160
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-    if valid {
-        Ok(())
-    } else {
-        Err("Stored session id contains unsupported path characters".to_owned())
-    }
-}
-
 fn push_option(command: &mut Command, flag: &str, value: Option<&str>) {
     if let Some(value) = value {
         command.arg(flag).arg(value);
@@ -854,92 +727,6 @@ mod tests {
         assert!(exit_message(Some(2)).contains("not found"));
         assert!(exit_message(Some(3)).contains("more than one"));
         assert!(exit_message(Some(4)).contains("damaged"));
-    }
-
-    #[test]
-    fn rehomes_a_complete_session_after_its_project_directory_moves() {
-        let temp = tempfile::tempdir().unwrap();
-        let projects = temp.path().join("projects");
-        let project = temp.path().join("renamed-project");
-        fs::create_dir_all(&project).unwrap();
-        let session_id = "74197986-0d82-4038-9414-67b3c53efd7e";
-        let source = projects
-            .join("-old-project")
-            .join("sessions")
-            .join(session_id);
-        fs::create_dir_all(&source).unwrap();
-        fs::write(
-            source.join("metadata.json"),
-            serde_json::json!({ "session_id": session_id, "bundle": "tui", "turn_count": 23 })
-                .to_string(),
-        )
-        .unwrap();
-        fs::write(
-            source.join("metadata.json.backup"),
-            serde_json::json!({ "session_id": session_id, "bundle": "tui", "turn_count": 22 })
-                .to_string(),
-        )
-        .unwrap();
-        fs::write(
-            source.join("transcript.jsonl"),
-            "{\"role\":\"user\",\"content\":\"rename it\"}\n",
-        )
-        .unwrap();
-        fs::write(
-            source.join("ui-events.jsonl"),
-            "{\"kind\":\"prompt_submit\"}\n",
-        )
-        .unwrap();
-
-        let destination = projects
-            .join(project_storage_slug(&project))
-            .join("sessions")
-            .join(session_id);
-        fs::create_dir_all(&destination).unwrap();
-        fs::write(destination.join("events.jsonl"), "relocated tail\n").unwrap();
-
-        let relocated = prepare_relocated_resume_in(&projects, &project, session_id).unwrap();
-        assert_eq!(relocated.as_deref(), Some(source.as_path()));
-        assert_eq!(
-            fs::read_to_string(destination.join("transcript.jsonl")).unwrap(),
-            "{\"role\":\"user\",\"content\":\"rename it\"}\n"
-        );
-        assert_eq!(
-            fs::read_to_string(destination.join("events.jsonl")).unwrap(),
-            "relocated tail\n"
-        );
-        let metadata: Value =
-            serde_json::from_str(&fs::read_to_string(destination.join("metadata.json")).unwrap())
-                .unwrap();
-        assert_eq!(metadata["working_dir"], project.to_string_lossy().as_ref());
-        assert!(
-            source.join("metadata.json").is_file(),
-            "the original recovery copy is preserved"
-        );
-    }
-
-    #[test]
-    fn does_not_relocate_over_a_healthy_current_session() {
-        let temp = tempfile::tempdir().unwrap();
-        let projects = temp.path().join("projects");
-        let project = temp.path().join("current-project");
-        fs::create_dir_all(&project).unwrap();
-        let session_id = "session-123";
-        let destination = projects
-            .join(project_storage_slug(&project))
-            .join("sessions")
-            .join(session_id);
-        fs::create_dir_all(&destination).unwrap();
-        fs::write(
-            destination.join("metadata.json"),
-            serde_json::json!({ "session_id": session_id, "bundle": "tui" }).to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            prepare_relocated_resume_in(&projects, &project, session_id).unwrap(),
-            None
-        );
     }
 
     #[test]
