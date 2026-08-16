@@ -4,6 +4,12 @@ import { renderGraphvizSvg } from "../dotRenderer";
 
 export type VisualArtifactFormat = "html" | "svg" | "dot";
 
+/** A failed DOT render carries why it failed: silent empty output made this bug undiagnosable. */
+export interface DotArtifactResult {
+  svg: string;
+  error?: string;
+}
+
 interface Props {
   format: VisualArtifactFormat;
   source: string;
@@ -73,8 +79,8 @@ export function VisualArtifact(props: Props) {
             </Show>
             <Show when={props.format === "dot"}>
               <Show when={!dotSvg.loading} fallback={<p class="visual-artifact-loading">Laying out diagram…</p>}>
-                <Show when={dotSvg()} fallback={<p class="visual-artifact-error">This DOT graph could not be rendered.</p>}>
-                  <div class="visual-artifact-svg" innerHTML={dotSvg() || ""} />
+                <Show when={dotSvg()?.svg} fallback={<p class="visual-artifact-error">This DOT graph could not be rendered{dotSvg()?.error ? `: ${dotSvg()?.error}` : "."}</p>}>
+                  <div class="visual-artifact-svg" innerHTML={dotSvg()?.svg || ""} />
                 </Show>
               </Show>
             </Show>
@@ -179,12 +185,23 @@ export function sanitizeVisualSvg(source: string): string {
   return new XMLSerializer().serializeToString(svg);
 }
 
-export async function renderDotArtifact(source: string): Promise<string> {
+export async function renderDotArtifact(source: string): Promise<DotArtifactResult> {
+  let raw: string;
   try {
-    return sanitizeVisualSvg(await renderGraphvizSvg(source));
-  } catch {
-    return "";
+    raw = await renderGraphvizSvg(source);
+  } catch (error) {
+    console.error("DOT artifact: Graphviz failed", error);
+    const detail = error instanceof Error ? error.message : String(error);
+    return { svg: "", error: isEngineFailure(detail) ? `the diagram engine could not start (${detail})` : `Graphviz rejected it (${detail})` };
   }
+  const svg = sanitizeVisualSvg(raw);
+  if (svg) return { svg };
+  console.error("DOT artifact: sanitizer produced no SVG", raw.slice(0, 500));
+  return { svg: "", error: raw.includes("<svg") ? "its SVG output was rejected by the sanitizer." : "Graphviz returned no SVG for this graph." };
+}
+
+function isEngineFailure(detail: string): boolean {
+  return /wasm|webassembly|dynamically imported module|failed to fetch|importing a module script/i.test(detail);
 }
 
 export function visualArtifactTitle(format: VisualArtifactFormat, source: string): string {
