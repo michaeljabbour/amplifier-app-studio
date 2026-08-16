@@ -10,6 +10,11 @@ mod runtime_setup;
 mod session;
 mod store;
 mod transcription;
+// Host-mode only: the bridge is served by the amplifier-host / amplifier-studio-server
+// binaries, never by the app itself. A mobile client consumes the bridge over
+// HTTPS/WSS, so compiling it into the iOS build would only drag in the
+// desktop-gated runtime_settings module.
+#[cfg(desktop)]
 pub mod web_server;
 
 #[cfg(desktop)]
