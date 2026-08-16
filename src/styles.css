@@ -940,3 +940,72 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-size: 11px;
   line-height: 1.45;
 }
+
+/* ---------------------------------------------------------------------------
+   Phone overrides. Additive only -- nothing above is modified.
+
+   Type scale is scoped to 560px because iPhone logical widths are 390-430px
+   while iPad starts at 768px: a narrowed desktop window keeps its density.
+   Touch targets are scoped to (pointer: coarse) because 44px is a property of
+   the input device, not the viewport.
+
+   The desktop ramp (6-10px) is legible at arm's length on a large display and
+   illegible in the hand. Mapping: 6-7 -> 11, 8 -> 12, 9-10 -> 13.
+   --------------------------------------------------------------------------- */
+@media (max-width: 560px) {
+  /* 6-7px -> 11px (49 rules) */
+  .user-avatar, .attachment-chip small, .composer-autopilot, .machine-presence small, .effort-request, .effort-
+  confirmed, .effort-popover > div:first-child, .effort-ticks, .home-history-row small, .capability-selection
+  span, .capability-card-top span, .capability-card-top small, .capability-requirements, .plan-presence >
+  span, .plan-presence > small, .execution-presence > span, .execution-presence > small, .sidebar-section-
+  hint, .sidebar-session-actions, .agent-history-label, .agent-status-word, .agent-workspace-copy em, .agent-
+  open-label, .session-identity small, .runtime-proof, .inspector-section-title > span, .progress-row > span,
+  .mini-state, .inspector-agent-list small, .plan-inspector-summary span, .plan-owner-card > header span,
+  .execution-map-heading > div > span, .execution-map-state, .pipeline-ledger strong, .execution-evidence-
+  gaps, .plan-owner-card > code, .agent-inspector-hero > span, .agent-inspector-hero code, .agent-run-facts,
+  .agent-timeline summary span, .composition-grid dt, .bundle-list span, .bundle-add-form, .output-item-copy,
+  .context-facts dt, .live-reasoning summary small, .markdown-compact pre, .agent-live-preview > span, .agent-
+  list-summary { font-size: 11px; }
+  /* 8px -> 12px (66 rules) */
+  .app-update-button, .app-update-error small, .tab-host, .transcript-jump-latest, .recipe-messages p,
+  .attachment-chip strong, .composer-attachment-error, .inline-output-caption span, .composer-mode, .composer-
+  mode span.steer, .machine-presence strong, .attention-choice, .escape-hint, .home-history-heading span,
+  .home-conversation .eyebrow, .home-history-row span, .home-history-row p, .home-continue span, .home-
+  continue small, .home-composer-label, .home-composer-actions > div > span, .home-location-menu > button
+  small, .home-transport, .dialog-footer, .advanced-composition > summary span, .capability-card footer
+  button, .capability-footnote, .top-workbench-actions button, .section-kicker, .sidebar-heading, .sidebar-
+  heading button, .sidebar-heading b, .agent-empty p, .agent-workspace-copy small, .session-identity span,
+  .session-recovery span, .session-recovery button, .inspector-heading span, .inspector-tabs button,
+  .progress-row small, .inspector-alert p, .inspector-alert button, .inspector-agent-list strong, .inspector-
+  empty, .inspector-guidance, .execution-map-goal, .execution-map-guidance, .turn-loop-ledger, .execution-map-
+  loading, .execution-map-error, .plan-degraded-message, .plan-step-list li:last-child, .plan-step-list
+  strong, .plan-step-list small, .observed-work-summary, .agent-timeline summary strong, .inspector-actions
+  .primary-button, .inspector-actions .secondary-button, .inspector-refresh, .bundle-list strong, .bundle-
+  catalog-controls, .bundle-add-result, .process-log summary, .visual-artifact > header button, .agent-
+  summary, .agent-live-preview, .agent-event-markdown, .starter-grid strong, .composer-actions .starter-
+  trigger, .composer-actions .attachment-trigger, .voice-input-control > small, .voice-input-status, .goal-
+  progress-copy, .goal-stall-detail { font-size: 12px; }
+  /* 9-10px -> 13px (51 rules) */
+  .brand-mark, .block-label, .eyebrow, .working-card button, .working-agents, .working-tree, .fatal-card > p,
+  .recovery-actions, .inline-output-loading, .inline-output-caption strong, .composer-actions, .composer-
+  actions button, .attention-copy .eyebrow, .attention-actions, .attention-custom, .footer-bar, .home-history-
+  heading button, .home-all-history, .home-composer-tools button, .home-history-row strong, .home-history-
+  state, .home-continue strong, .stored-summary, .home-composer-actions > button:last-child, .home-location-
+  menu > button strong, .home-composer-error, .field, .form-error, .capability-selection p, .advanced-
+  composition > summary, .capability-heading p, .capability-card > strong, .capability-card > p, .agent-empty
+  strong, .agent-workspace-copy strong, .session-identity strong, .session-recovery strong, .inspector-
+  section-title h3, .progress-row strong, .catalog-discovery-warning, .capability-included-status, .inspector-
+  alert strong, .plan-owner-card > header strong, .generic-execution-flow div, .plan-empty, .agent-inspector-
+  hero p, .agent-instruction, .outputs-empty strong, .live-reasoning summary, .thinking-text.markdown,
+  .thinking-text-live.markdown, .agent-live-copy.thinking, .agent-hero-summary, .starter-menu > div:first-
+  child strong, .goal-progress-head strong, .provider-setup-dialog label { font-size: 13px; }
+}
+
+@media (pointer: coarse) {
+  button, [role="button"], select, summary { min-height: 44px; }
+  .tab-close, .attachment-chip > button { min-width: 44px; min-height: 44px; }
+  .composer-actions button, .attention-actions button, .footer-bar > button,
+  .sidebar-session-actions button, .inspector-tabs button { min-height: 44px; }
+  .composer-autopilot { min-height: 44px; padding: 0 12px; }
+  .drawer-search input, .field input, .field select { min-height: 44px; }
+}
