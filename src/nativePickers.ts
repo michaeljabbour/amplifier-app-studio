@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { appendAttachmentFiles } from "./attachments";
 import type { ComposerAttachment } from "./protocol";
-import { isTauriRuntime, type NativeAttachment } from "./transport";
+import { isDesktopRuntime, isTauriRuntime, type NativeAttachment } from "./transport";
 
 const ATTACHMENT_FILTER = {
   name: "Images and documents",
@@ -30,7 +30,8 @@ export async function pickProjectDirectory(defaultPath?: string): Promise<string
 }
 
 export async function pickAttachments(): Promise<ComposerAttachment[]> {
-  if (!isTauriRuntime()) return pickBrowserAttachments();
+  // Mobile has no host filesystem to read: fall back to the WebView picker.
+  if (!isDesktopRuntime()) return pickBrowserAttachments();
   const selected = await open({
     title: "Add files to Amplifier",
     directory: false,
@@ -47,7 +48,7 @@ export async function pickAttachments(): Promise<ComposerAttachment[]> {
 }
 
 export async function saveDiagnosticsFile(defaultName: string, contents: string): Promise<string | undefined> {
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     const selected = await saveDialog({
       title: "Export Amplifier Studio diagnostics",
       defaultPath: defaultName,

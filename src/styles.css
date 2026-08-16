@@ -1001,6 +1001,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   child strong, .goal-progress-head strong, .provider-setup-dialog label { font-size: 13px; }
 }
 
+  /* The type bump above widens this row past .composer-shell's overflow:hidden,
+     clipping Send at the right edge. Let it wrap instead of overflow. */
+  .composer-actions { flex-wrap: wrap; gap: 8px; padding: 8px 12px 10px; }
+  .composer-actions button { flex: 0 0 auto; }
+}
+
 @media (pointer: coarse) {
   button, [role="button"], select, summary { min-height: 44px; }
   .tab-close, .attachment-chip > button { min-width: 44px; min-height: 44px; }

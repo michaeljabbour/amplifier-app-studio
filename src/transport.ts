@@ -160,6 +160,21 @@ export function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * Tauri injects `__TAURI_INTERNALS__` on mobile too, so `isTauriRuntime()` alone
+ * cannot tell iOS from desktop. Every desktop-only command was guarded on it and
+ * therefore fired on iOS, where those commands are `#[cfg(desktop)]`-gated and
+ * unregistered -- surfacing as "Command <name> not found".
+ */
+export function isMobileRuntime(): boolean {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+/** A Tauri runtime that actually has the desktop-only commands registered. */
+export function isDesktopRuntime(): boolean {
+  return isTauriRuntime() && !isMobileRuntime();
+}
+
 export function usesWebBridge(): boolean {
   return bridgeBaseUrl() !== undefined;
 }
@@ -246,7 +261,12 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
 
 export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
   const local: RuntimeHost = { id: "local", name: "This Mac", url: "", tokenRef: "local" };
-  if (isTauriRuntime()) {
+  if (isMobileRuntime()) {
+    // No local runtime on a phone: the only host is whatever bridge is configured.
+    const url = bridgeBaseUrl();
+    return url ? [{ id: "connected", name: "Connected host", url, tokenRef: "session" }] : [];
+  }
+  if (isDesktopRuntime()) {
     const remote = await invoke<RuntimeHost[]>("list_runtime_hosts");
     const configured = bridgeBaseUrl();
     if (configured) {
@@ -267,17 +287,17 @@ export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
 }
 
 export async function saveRuntimeHost(host: RuntimeHost): Promise<RuntimeHost[]> {
-  requireTauri();
+  requireDesktop();
   return invoke<RuntimeHost[]>("save_runtime_host", { host });
 }
 
 export async function removeRuntimeHost(id: string): Promise<RuntimeHost[]> {
-  requireTauri();
+  requireDesktop();
   return invoke<RuntimeHost[]>("remove_runtime_host", { id });
 }
 
 export async function storeRuntimeHostToken(id: string, token: string): Promise<void> {
-  requireTauri();
+  requireDesktop();
   await invoke("store_runtime_host_token", { id, token });
 }
 
@@ -328,12 +348,14 @@ export async function listHostDirectories(hostUrl: string, path?: string, hostId
 }
 
 export function transportLabel(): string {
+  if (isMobileRuntime()) return usesWebBridge() ? "Mobile · remote Rust bridge" : "Mobile · no bridge configured";
   if (usesWebBridge()) return isTauriRuntime() ? "Native desktop · remote Rust bridge" : "Web · Rust bridge";
   return "Native desktop · local Rust bridge";
 }
 
 export function localRuntimeSettingsAvailable(): boolean {
-  return isTauriRuntime() || usesWebBridge();
+  // Mobile has no local runtime: settings are only readable through a bridge.
+  return isDesktopRuntime() || usesWebBridge();
 }
 
 export async function readRuntimeSettings(
@@ -343,14 +365,14 @@ export async function readRuntimeSettings(
 ): Promise<RuntimeSettingsSnapshot> {
   const bridge = hostUrl
     ? normalizedBridgeUrl(hostUrl)
-    : (!isTauriRuntime() ? bridgeBaseUrl() : undefined);
+    : (!isDesktopRuntime() ? bridgeBaseUrl() : undefined);
   if (bridge) {
     await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/runtime-settings");
     url.searchParams.set("projectDir", projectDir);
     return fetchJson<RuntimeSettingsSnapshot>(url, undefined, bridge);
   }
-  requireTauri();
+  requireDesktop();
   return invoke<RuntimeSettingsSnapshot>("read_runtime_settings", { projectDir });
 }
 
@@ -362,7 +384,7 @@ export async function applyRuntimeSettings(
 ): Promise<RuntimeSettingsSnapshot> {
   const bridge = hostUrl
     ? normalizedBridgeUrl(hostUrl)
-    : (!isTauriRuntime() ? bridgeBaseUrl() : undefined);
+    : (!isDesktopRuntime() ? bridgeBaseUrl() : undefined);
   if (bridge) {
     await ensureBridgeToken(bridge, hostId);
     return fetchJson<RuntimeSettingsSnapshot>(hostApiUrl(bridge, "/runtime-settings"), {
@@ -371,14 +393,14 @@ export async function applyRuntimeSettings(
       body: JSON.stringify({ projectDir, changes }),
     }, bridge);
   }
-  requireTauri();
+  requireDesktop();
   return invoke<RuntimeSettingsSnapshot>("apply_runtime_settings", { projectDir, changes });
 }
 
 export async function listenNativeAttachmentDrops(
   handler: (event: NativeAttachmentDropEvent) => void,
 ): Promise<UnlistenFn> {
-  if (!isTauriRuntime()) return () => undefined;
+  if (!isDesktopRuntime()) return () => undefined;
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "enter") {
       handler({ type: "enter" });
@@ -419,7 +441,7 @@ export async function openLocalOutput(projectDir: string, path: string): Promise
     window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
     return;
   }
-  requireTauri();
+  requireDesktop();
   await invoke("open_output", { projectDir, path });
 }
 
@@ -432,7 +454,7 @@ export async function loadOutputPreview(projectDir: string, path: string): Promi
     url.searchParams.set("path", path);
     return fetchJson<OutputPreview>(url);
   }
-  requireTauri();
+  requireDesktop();
   return invoke<OutputPreview>("read_output_preview", { projectDir, path });
 }
 
@@ -442,7 +464,7 @@ export async function launchSession(
 ): Promise<SessionConnection> {
   const bridge = options.hostId === "local" ? undefined : bridgeBaseUrl(options.hostUrl);
   if (bridge) {
-    if (!configuredBridgeToken(bridge) && isTauriRuntime() && options.hostId) {
+    if (!configuredBridgeToken(bridge) && isDesktopRuntime() && options.hostId) {
       const token = await invoke<string>("resolve_runtime_host_token", { id: options.hostId });
       saveBridgeToken(token, bridge);
     }
@@ -959,7 +981,7 @@ function requireBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
 
 async function ensureBridgeToken(bridgeUrl: string, hostId?: string): Promise<void> {
   if (configuredBridgeToken(bridgeUrl)) return;
-  if (!isTauriRuntime() || !hostId) return;
+  if (!isDesktopRuntime() || !hostId) return;
   const token = await invoke<string>("resolve_runtime_host_token", { id: hostId });
   saveBridgeToken(token, bridgeUrl);
 }
@@ -1004,6 +1026,13 @@ function requireTauri(): void {
   if (!isTauriRuntime()) {
     throw new Error("No local Rust bridge is available. Run `npm run web:serve` or launch the Tauri app.");
   }
+}
+
+function requireDesktop(): void {
+  if (isMobileRuntime()) {
+    throw new Error("This action runs on the host machine. Connect a bridge in Settings to use it from mobile.");
+  }
+  requireTauri();
 }
 
 export type { UnlistenFn };
