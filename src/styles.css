@@ -339,6 +339,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .remote-directory-browser { margin: -4px 22px 18px; border: 1px solid var(--line); border-radius: 9px; padding: 10px; background: rgba(4, 10, 17, .4); }
 .remote-directory-browser > div:first-child { overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 11px var(--font-mono); }
 .remote-directory-actions { display: flex; gap: 8px; margin: 9px 0; }
+.remote-directory-create { display: flex; gap: 8px; margin: 0 0 9px; }
+.remote-directory-create input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: rgba(255,255,255,.02); color: var(--text); font: 11px var(--font-mono); }
+.remote-directory-create input:focus { outline: 0; border-color: var(--blue); }
+.remote-directory-create input:disabled { opacity: .5; }
 .remote-directory-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 150px; overflow: auto; }
 .remote-directory-list button { overflow: hidden; text-overflow: ellipsis; text-align: left; border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; background: transparent; color: var(--text); }
 .remote-directory-list button:hover { border-color: var(--blue); background: rgba(79, 183, 255, .07); }

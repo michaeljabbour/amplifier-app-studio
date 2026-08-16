@@ -242,7 +242,7 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
     let api = Router::new()
         .route("/health", get(health))
         .route("/config", get(config))
-        .route("/directories", get(directories))
+        .route("/directories", get(directories).post(create_directory))
         .route("/stored-sessions", get(stored_sessions))
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
@@ -369,6 +369,70 @@ async fn config(State(state): State<ServerState>) -> Json<Value> {
 #[derive(Debug, Deserialize)]
 struct DirectoryQuery {
     path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateDirectoryRequest {
+    parent: String,
+    name: String,
+}
+
+/// Creates one directory inside an already-authorized parent.
+///
+/// `authorize_project_dir` canonicalizes its argument, so it cannot vet a path
+/// that does not exist yet. The parent is authorized instead -- it exists, so it
+/// canonicalizes, and resolving it first collapses any symlink before the child
+/// name is joined on. The name itself is required to be a single plain segment,
+/// which is what keeps `..` and absolute paths from escaping that parent.
+async fn create_directory(
+    State(state): State<ServerState>,
+    Json(request): Json<CreateDirectoryRequest>,
+) -> Result<Json<Value>, ServerError> {
+    let roots = state.security.allowed_project_roots.to_vec();
+    let parent =
+        authorize_project_dir(&request.parent, &roots).map_err(ServerError::forbidden)?;
+    let name = request.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(ServerError::forbidden("Enter a folder name"));
+    }
+    if name.len() > 128 {
+        return Err(ServerError::forbidden(
+            "Folder names are limited to 128 characters",
+        ));
+    }
+    if Path::new(&name).components().count() != 1
+        || name.contains('/')
+        || name.contains('\\')
+        || name.starts_with('.')
+    {
+        return Err(ServerError::forbidden(
+            "Folder names must be a single segment and cannot start with a dot",
+        ));
+    }
+    let target = parent.join(&name);
+    // The parent is canonical and the name is a single plain segment, so this is
+    // belt-and-braces -- but containment is the whole security boundary here.
+    if !roots.iter().any(|root| target.starts_with(root)) {
+        return Err(ServerError::forbidden(
+            "That folder would fall outside the bridge's allowed project roots",
+        ));
+    }
+    let created = target.clone();
+    tokio::task::spawn_blocking(move || {
+        if created.exists() {
+            return Err(format!("'{name}' already exists"));
+        }
+        std::fs::create_dir(&created)
+            .map_err(|error| format!("Could not create '{name}': {error}"))
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Directory create task failed: {error}")))?
+    .map_err(ServerError::forbidden)?;
+    Ok(Json(json!({
+        "version": API_VERSION,
+        "path": target.to_string_lossy(),
+    })))
 }
 
 async fn directories(

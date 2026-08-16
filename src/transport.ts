@@ -365,6 +365,23 @@ export async function listHostDirectories(hostUrl: string, path?: string, hostId
   return fetchJson<HostDirectoryListing>(url, undefined, bridge);
 }
 
+/** Creates one folder inside `parentPath`. The host validates containment. */
+export async function createHostDirectory(
+  hostUrl: string,
+  parentPath: string,
+  name: string,
+  hostId?: string,
+): Promise<{ path: string }> {
+  const bridge = normalizedBridgeUrl(hostUrl);
+  if (!bridge) throw new Error("The runtime host URL is invalid");
+  await ensureBridgeToken(bridge, hostId);
+  return fetchJson<{ path: string }>(hostApiUrl(bridge, "/directories"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ parent: parentPath, name }),
+  }, bridge);
+}
+
 export function transportLabel(): string {
   if (isMobileRuntime()) return usesWebBridge() ? "Mobile · remote Rust bridge" : "Mobile · no bridge configured";
   if (usesWebBridge()) return isTauriRuntime() ? "Native desktop · remote Rust bridge" : "Web · Rust bridge";

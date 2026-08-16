@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
 import { toolContractFailure } from "../providerSafety";
-import { listHostDirectories, type HostDirectoryListing, type RuntimeHost } from "../transport";
+import { createHostDirectory, listHostDirectories, type HostDirectoryListing, type RuntimeHost } from "../transport";
 
 interface Props {
   initial: NewSessionInput;
@@ -26,6 +26,8 @@ export function NewSessionDialog(props: Props) {
   const [starting, setStarting] = createSignal(false);
   const [pickingProject, setPickingProject] = createSignal(false);
   const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
+  const [newFolder, setNewFolder] = createSignal("");
+  const [creatingFolder, setCreatingFolder] = createSignal(false);
   const overrideMismatch = createMemo(() => Boolean(model().trim()) !== Boolean(provider().trim()));
   const selectedProvider = createMemo(() => props.catalog.providers.find((item) => item.name === provider().trim()));
   const unsafeProvider = createMemo(() => selectedProvider()?.toolCompatible === false ? selectedProvider() : undefined);
@@ -97,6 +99,27 @@ export function NewSessionDialog(props: Props) {
       setError(String(caught));
     } finally {
       setPickingProject(false);
+    }
+  };
+
+  // A remote host only exposes folders that already exist, so without this the
+  // only way to start a session in a fresh directory was to go make one by hand
+  // over SSH first.
+  const createRemoteFolder = async (parentPath: string) => {
+    const host = selectedHost();
+    const name = newFolder().trim();
+    if (!host?.url || !name || creatingFolder()) return;
+    setCreatingFolder(true);
+    setError("");
+    try {
+      const created = await createHostDirectory(host.url, parentPath, name, host.id);
+      setNewFolder("");
+      await browseRemote(created.path);
+      setProjectDir(created.path);
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setCreatingFolder(false);
     }
   };
 
@@ -184,6 +207,27 @@ export function NewSessionDialog(props: Props) {
               <Show when={listing.parent} keyed>{(parent) => (
                 <button type="button" class="secondary-button" onClick={() => void browseRemote(parent)}>Up</button>
               )}</Show>
+            </div>
+            <div class="remote-directory-create">
+              <input
+                type="text"
+                value={newFolder()}
+                placeholder="New folder name"
+                aria-label={`Create a folder inside ${listing.path}`}
+                disabled={creatingFolder()}
+                onInput={(event) => setNewFolder(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  void createRemoteFolder(listing.path);
+                }}
+              />
+              <button
+                type="button"
+                class="secondary-button"
+                disabled={!newFolder().trim() || creatingFolder()}
+                onClick={() => void createRemoteFolder(listing.path)}
+              >{creatingFolder() ? "Creating…" : "Create folder"}</button>
             </div>
             <div class="remote-directory-list">
               <For each={listing.directories}>{(directory) => (
