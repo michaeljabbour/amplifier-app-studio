@@ -209,7 +209,8 @@ export async function renderPipelineSvg(dot: string, pipeline: PipelineState): P
   try {
     const raw = await renderGraphvizSvg(dot);
     return sanitizeAndAnnotateSvg(raw, pipeline);
-  } catch {
+  } catch (error) {
+    console.error("Pipeline graph: Graphviz failed", error);
     return "";
   }
 }

@@ -67,10 +67,21 @@ describe("visual artifacts", () => {
       D -> M [label=" ~2-3 GiB", color="#c04040"];
       M -> S [label=" page-out = GPU stall", color="#c04040"];
     }`;
-    const svg = await renderDotArtifact(dot);
-    expect(svg).toContain("<svg");
-    expect(svg).toContain("GB10 Superchip");
-    expect(svg).toContain('aria-label="spark"');
+    const result = await renderDotArtifact(dot);
+    expect(result.error).toBeUndefined();
+    expect(result.svg).toContain("<svg");
+    expect(result.svg).toContain("GB10 Superchip");
+    expect(result.svg).toContain('aria-label="spark"');
+  });
+
+  it("reports why a DOT graph failed instead of silently rendering nothing", async () => {
+    // `->` inside an undirected `graph` is a Graphviz syntax error, and the most
+    // common way a generated diagram fails. The reason must reach the user.
+    const result = await renderDotArtifact("graph broken { a -> b }");
+    expect(result.svg).toBe("");
+    expect(result.error).toBeTruthy();
+    expect(result.error).toContain("Graphviz rejected it");
+    expect(result.error).toMatch(/syntax/i);
   });
 
   it("derives inert titles and rejects empty or oversized payloads", () => {
