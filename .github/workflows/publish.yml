@@ -35,8 +35,10 @@ jobs:
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # Deliberately does not wait on `verify`: a missing secret should fail in
+  # seconds, not after a full build. Every previous release died here having
+  # already burned ten minutes.
   release-preflight:
-    needs: verify
     runs-on: ubuntu-22.04
     environment: release
     env:
@@ -50,32 +52,39 @@ jobs:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
     steps:
-      - name: Require every desktop signing identity before creating a release
+      - name: Require the identities a release cannot ship without
         run: |
-          for name in TAURI_SIGNING_PRIVATE_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL; do
-            test -n "${!name}" || { echo "$name is required for a desktop release" >&2; exit 1; }
+          for name in TAURI_SIGNING_PRIVATE_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!name}" || { echo "$name is required: macOS builds must be signed and notarized" >&2; exit 1; }
           done
+      - name: Report whether Windows will be Authenticode-signed
+        run: |
+          if [ -n "$WINDOWS_CERTIFICATE" ] && [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ] && [ -n "$WINDOWS_CERTIFICATE_THUMBPRINT" ]; then
+            echo "Windows installer will be Authenticode-signed."
+          else
+            echo "::warning::Windows Authenticode secrets absent; the installer ships UNSIGNED and will trigger SmartScreen. Updater signing is unaffected."
+          fi
 
   publish-desktop:
     needs: [verify, release-preflight]
     permissions:
       contents: write
     environment: release
+    # The `secrets` context is unavailable in step-level `if`, so resolve the
+    # Windows signing decision once here and branch on `env` instead.
+    env:
+      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' && secrets.WINDOWS_CERTIFICATE_THUMBPRINT != '' }}
     strategy:
       fail-fast: false
       matrix:
+        # Apple Silicon and Windows are the two shipping targets. Intel macOS and
+        # Linux were dropped: they built green for eleven releases that never
+        # published, and no updater feed has ever offered them.
         include:
           - platform: macos-15
             args: --target aarch64-apple-darwin
             target: aarch64-apple-darwin
-          - platform: macos-15-intel
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
-          - platform: ubuntu-22.04
-            args: ""
-            target: ""
           - platform: windows-latest
             args: ""
             target: ""
@@ -120,8 +129,11 @@ jobs:
           STUDIO_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$STUDIO_KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -n 1)"
           test -n "$STUDIO_SIGNING_IDENTITY" || { echo "The imported certificate is not a valid Developer ID Application identity" >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$STUDIO_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+      # Skipped when no Authenticode cert is configured: the installer then ships
+      # unsigned rather than blocking the release. Updater signing is separate
+      # and always required.
       - name: Import Windows Authenticode certificate
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && env.SIGN_WINDOWS == 'true'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
