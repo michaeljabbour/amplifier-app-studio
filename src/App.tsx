@@ -75,6 +75,7 @@ import {
   transcribeAudio,
   usesWebBridge,
   isTauriRuntime,
+  isMobileRuntime,
   type RuntimeStatus,
   type RuntimeHost,
   type TranscriptionStatus,
@@ -113,10 +114,14 @@ export default function App() {
   const [homeAttachments, setHomeAttachments] = createSignal<ComposerAttachment[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
   const [runtime, setRuntime] = createSignal<RuntimeStatus>();
-  const [runtimeHosts, setRuntimeHosts] = createSignal<RuntimeHost[]>([
-    { id: "local", name: "This Mac", url: "", tokenRef: "local" },
-  ]);
-  const [sessionHomeHostId, setSessionHomeHostId] = createSignal(localStorage.getItem(SESSION_HOME_HOST_KEY) || "local");
+  // "local" means run on this machine, which mobile cannot do. Selecting it on a
+  // phone routes runtime_status to a local invoke that reports nothing installed,
+  // so the app claims "Runtime setup required" even with a healthy bridge.
+  const defaultHostId = isMobileRuntime() ? "connected" : "local";
+  const [runtimeHosts, setRuntimeHosts] = createSignal<RuntimeHost[]>(
+    isMobileRuntime() ? [] : [{ id: "local", name: "This Mac", url: "", tokenRef: "local" }],
+  );
+  const [sessionHomeHostId, setSessionHomeHostId] = createSignal(localStorage.getItem(SESSION_HOME_HOST_KEY) || defaultHostId);
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
   const [runtimeInstalling, setRuntimeInstalling] = createSignal(false);
   const [runtimeError, setRuntimeError] = createSignal<string>();

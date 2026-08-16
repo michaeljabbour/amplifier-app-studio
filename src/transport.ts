@@ -189,7 +189,7 @@ export function configuredBridgeUrl(): string {
 
 export function configuredBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
   const stored = sessionStorage.getItem(BRIDGE_TOKEN_STORAGE_KEY);
-  if (!stored) return "";
+  if (!stored) return injectedBridgeToken(bridgeUrl);
   try {
     const parsed = JSON.parse(stored) as {
       bridge?: unknown;
@@ -199,10 +199,28 @@ export function configuredBridgeToken(bridgeUrl = configuredBridgeUrl()): string
     const bridge = normalizedBridgeUrl(bridgeUrl);
     if (!bridge) return "";
     if (parsed.tokens && typeof parsed.tokens[bridge] === "string") return parsed.tokens[bridge] as string;
-    return typeof parsed.token === "string" && parsed.bridge === bridge ? parsed.token : "";
+    if (typeof parsed.token === "string" && parsed.bridge === bridge) return parsed.token;
+    return injectedBridgeToken(bridgeUrl);
   } catch {
-    return "";
+    return injectedBridgeToken(bridgeUrl);
   }
+}
+
+/**
+ * Build-time bridge token, the counterpart to VITE_STUDIO_BRIDGE_URL. Simulator
+ * and device builds have no way to reach Settings before a session exists, so a
+ * test build can carry its own credential.
+ *
+ * It only applies to the bridge that VITE_STUDIO_BRIDGE_URL names, so a baked
+ * token can never be sent to a host chosen at runtime. NEVER set this for a
+ * published build: the value is compiled into the bundle in plain text.
+ */
+function injectedBridgeToken(bridgeUrl: string): string {
+  const token = import.meta.env.VITE_STUDIO_BRIDGE_TOKEN;
+  if (!token) return "";
+  const injectedFor = normalizedBridgeUrl(import.meta.env.VITE_STUDIO_BRIDGE_URL || "");
+  const target = normalizedBridgeUrl(bridgeUrl);
+  return injectedFor && target && injectedFor === target ? token : "";
 }
 
 export function saveBridgeUrl(value: string): void {
