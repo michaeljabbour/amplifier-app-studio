@@ -18,7 +18,9 @@ interface Props {
 
 export function Transcript(props: Props) {
   let scroller: HTMLDivElement | undefined;
+  let latestAnchor: HTMLDivElement | undefined;
   let scrollFrame = 0;
+  let focusedPointerPan: { clientY: number; scrollTop: number; pointerId: number } | undefined;
   const [now, setNow] = createSignal(Date.now());
   const [following, setFollowing] = createSignal(true);
   // Keep status polling and unrelated session updates from snapping a reader
@@ -28,9 +30,16 @@ export function Transcript(props: Props) {
 
   onMount(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    const preserveFocusedComposer = (event: TouchEvent) => {
+      // Solid's delegated touch listener is passive in WKWebView. This native
+      // non-passive listener is required to cancel the focus-transfer default.
+      if (focusedPointerPan) event.preventDefault();
+    };
+    scroller?.addEventListener("touchstart", preserveFocusedComposer, { passive: false });
     onCleanup(() => {
       window.clearInterval(timer);
       window.cancelAnimationFrame(scrollFrame);
+      scroller?.removeEventListener("touchstart", preserveFocusedComposer);
     });
   });
 
@@ -42,12 +51,19 @@ export function Transcript(props: Props) {
   const activeOperations = () => activeLanes().flatMap((lane) =>
     lane.tools.filter((tool) => tool.status === "running").map((tool) => ({ agent: lane.agent, ...tool })),
   );
+  const visibleBlocks = createMemo(() => {
+    const fatalMessage = props.state.phase === "error" ? props.state.error?.trim() : undefined;
+    if (!fatalMessage) return props.state.blocks;
+    return props.state.blocks.filter((block) =>
+      !(block.kind === "notice" && block.level === "error" && block.text.trim() === fatalMessage),
+    );
+  });
 
   createEffect(() => {
     void contentMarker();
     if (!following()) return;
     window.cancelAnimationFrame(scrollFrame);
-    scrollFrame = window.requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "auto" }));
+    scrollFrame = window.requestAnimationFrame(() => scrollTranscriptToLatest(scroller, latestAnchor));
   });
 
   const detachFromLatest = () => {
@@ -66,25 +82,75 @@ export function Transcript(props: Props) {
 
   const jumpToLatest = () => {
     window.cancelAnimationFrame(scrollFrame);
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    releaseFocusedEditorForTranscriptJump(document.activeElement);
+    scrollTranscriptToLatest(scroller, latestAnchor);
     setFollowing(true);
+    // WKWebView can finish expanding the visual viewport after the editor
+    // releases focus. Re-assert the bottom once that resize has settled.
+    scrollFrame = window.requestAnimationFrame(() => scrollTranscriptToLatest(scroller, latestAnchor));
+  };
+
+  const beginPointerPan = (event: PointerEvent) => {
+    const target = event.target as Element | null;
+    if (
+      window.innerWidth > 760
+      || !isFocusedEditorTarget(document.activeElement)
+      || target?.closest("a, button, input, textarea, select, summary, [role='button']")
+      || !scroller
+    ) return;
+    focusedPointerPan = {
+      clientY: event.clientY,
+      scrollTop: scroller.scrollTop,
+      pointerId: event.pointerId,
+    };
+    // The transcript is keyboard-focusable on desktop. Capture this mobile
+    // drag before its default focus transfer can steal the composer focus.
+    event.preventDefault();
+    (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
+  };
+
+  const continuePointerPan = (event: PointerEvent) => {
+    if (!focusedPointerPan || focusedPointerPan.pointerId !== event.pointerId || !scroller) return;
+    // WKWebView stops advancing nested overflow scrollers while an editor has
+    // focus. Keep the keyboard stable and drive only that focused pan here;
+    // unfocused gestures stay on the native momentum scroller.
+    event.preventDefault();
+    scroller.scrollTop = transcriptPointerScrollTop(
+      focusedPointerPan.scrollTop,
+      focusedPointerPan.clientY,
+      event.clientY,
+      scroller.scrollHeight,
+      scroller.clientHeight,
+    );
+    updateFollowing();
+  };
+
+  const endPointerPan = (event: PointerEvent) => {
+    if (focusedPointerPan?.pointerId !== event.pointerId) return;
+    (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+    focusedPointerPan = undefined;
   };
 
   return (
-    <main
-      class="transcript"
-      ref={scroller}
-      tabIndex={0}
-      aria-label="Amplifier coordinator transcript"
-      onWheel={(event) => {
-        if (event.deltaY < 0) detachFromLatest();
-      }}
-      onKeyDown={(event) => {
-        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) detachFromLatest();
-      }}
-      onScroll={updateFollowing}
-    >
-      <div class="transcript-inner">
+    <section class="transcript-frame" aria-label="Conversation history">
+      <main
+        class="transcript"
+        ref={scroller}
+        tabIndex={0}
+        aria-label="Amplifier Agent transcript"
+        onWheel={(event) => {
+          if (event.deltaY < 0) detachFromLatest();
+        }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key)) detachFromLatest();
+        }}
+        onPointerDown={beginPointerPan}
+        onPointerMove={continuePointerPan}
+        onPointerUp={endPointerPan}
+        onPointerCancel={endPointerPan}
+        onScroll={updateFollowing}
+      >
+        <div class="transcript-inner">
         <Show when={props.state.phase === "starting"}>
           <div class="boot-card" role="status" aria-live="polite">
             <div class="boot-orbit"><span /></div>
@@ -118,7 +184,7 @@ export function Transcript(props: Props) {
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={props.state.blocks}>{(block) => <BlockView block={block} projectDir={props.state.projectDir} onThinkingExpanded={props.onThinkingExpanded} />}</For>
+        <For each={visibleBlocks()}>{(block) => <BlockView block={block} projectDir={props.state.projectDir} onThinkingExpanded={props.onThinkingExpanded} />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
           {(tail) => (
@@ -158,7 +224,7 @@ export function Transcript(props: Props) {
               </div>
             </Show>
             <Show when={activeLanes().length === 0}>
-              <div class="working-agents">Coordinator active · delegate workspaces will appear in the left panel if this turn creates them</div>
+              <div class="working-agents">Amplifier Agent active · delegate workspaces will appear in the left panel if this turn creates them</div>
             </Show>
             <Show when={activeOperations().length > 0}>
               <div class="working-tree">
@@ -188,12 +254,81 @@ export function Transcript(props: Props) {
             </div>
           </div>
         </Show>
-      </div>
+          <div class="transcript-latest-anchor" ref={latestAnchor} aria-hidden="true" />
+        </div>
+      </main>
       <Show when={!following()}>
-        <button class="transcript-jump-latest" onClick={jumpToLatest}>Jump to latest</button>
+        <button
+          type="button"
+          class="transcript-jump-latest"
+          onPointerDown={(event) => {
+            if (event.pointerType === "touch") {
+              event.preventDefault();
+              jumpToLatest();
+            }
+          }}
+          onClick={jumpToLatest}
+        >
+          Jump to latest
+        </button>
       </Show>
-    </main>
+    </section>
   );
+}
+
+export interface TranscriptScrollTarget {
+  scrollHeight: number;
+  clientHeight: number;
+  scrollTop: number;
+  scrollTo?: (options: ScrollToOptions) => void;
+}
+
+export interface TranscriptLatestAnchor {
+  scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+}
+
+export interface FocusedEditorTarget {
+  matches?: (selector: string) => boolean;
+  blur?: () => void;
+}
+
+export function isFocusedEditorTarget(
+  activeElement: FocusedEditorTarget | null | undefined,
+): boolean {
+  return Boolean(activeElement?.matches?.("input, textarea, select, [contenteditable='true']"));
+}
+
+export function releaseFocusedEditorForTranscriptJump(
+  activeElement: FocusedEditorTarget | null | undefined,
+): boolean {
+  if (!isFocusedEditorTarget(activeElement)) return false;
+  activeElement?.blur?.();
+  return true;
+}
+
+export function transcriptPointerScrollTop(
+  startScrollTop: number,
+  startClientY: number,
+  currentClientY: number,
+  scrollHeight: number,
+  clientHeight: number,
+): number {
+  const bottom = Math.max(0, scrollHeight - clientHeight);
+  return Math.min(bottom, Math.max(0, startScrollTop + startClientY - currentClientY));
+}
+
+export function scrollTranscriptToLatest(
+  scroller: TranscriptScrollTarget | undefined,
+  anchor?: TranscriptLatestAnchor,
+): void {
+  if (!scroller) return;
+  const bottom = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  scroller.scrollTop = bottom;
+  scroller.scrollTo?.({ top: bottom, behavior: "auto" });
+  anchor?.scrollIntoView?.({ block: "end", inline: "nearest", behavior: "auto" });
+  // scrollIntoView may choose an ancestor when the WebView is transformed;
+  // make the transcript's own scroll position authoritative.
+  scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
 }
 
 export function runtimeFailureCopy(state: SessionViewState): { kicker: string; title: string; detail: string } {
@@ -282,7 +417,7 @@ function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinki
             </Show>
           </Show>
           <Show when={block().kind === "answer"}>
-            <div class="block-label">AMPLIFIER · COORDINATOR{(block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
+            <div class="block-label">AMPLIFIER AGENT{(block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
             <Markdown class="answer-text" text={(block() as Extract<TranscriptBlock, { kind: "answer" }>).text} />
           </Show>
           <Show when={block().kind === "notice"}>

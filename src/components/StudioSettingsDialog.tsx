@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   RUNTIME_SETTINGS_SECTIONS,
   runtimeSettingByPath,
@@ -7,6 +7,7 @@ import {
   type RuntimeSettingScope,
 } from "../settingsSchema";
 import type { StudioTheme } from "../theme";
+import { isPathInsideRoot } from "../projectFolders";
 import {
   applyRuntimeSettings,
   listHostDirectories,
@@ -53,8 +54,8 @@ export function StudioSettingsDialog(props: Props) {
   const [projectDir, setProjectDir] = createSignal(
     preferredSettingsContext(
       initialSettingsHost,
-      settingsContexts()[initialSettingsHostId],
-      initialSettingsHostId === "local" ? props.initialProjectDir : "",
+      settingsContexts()[settingsContextKey(initialSettingsHost)],
+      props.initialProjectDir,
     ),
   );
   const [theme, setTheme] = createSignal<StudioTheme>(props.initialTheme);
@@ -72,6 +73,8 @@ export function StudioSettingsDialog(props: Props) {
   const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
+  const [scrollState, setScrollState] = createSignal({ up: false, down: false });
+  let settingsContent: HTMLElement | undefined;
 
   const staged = createMemo(() => Object.values(changes()));
   const studioChanged = createMemo(() => theme() !== props.initialTheme
@@ -90,7 +93,39 @@ export function StudioSettingsDialog(props: Props) {
 
   onMount(() => {
     if (props.runtimeSettingsAvailable) void loadSettings(projectDir(), settingsHost());
+    const updateScrollState = () => {
+      if (!settingsContent) return;
+      const top = settingsContent.scrollTop;
+      const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
+      setScrollState({ up: top > 2, down: remaining > 2 });
+    };
+    const resizeObserver = new ResizeObserver(updateScrollState);
+    const mutationObserver = new MutationObserver(() => requestAnimationFrame(updateScrollState));
+    if (settingsContent) {
+      resizeObserver.observe(settingsContent);
+      mutationObserver.observe(settingsContent, { childList: true, subtree: true });
+    }
+    requestAnimationFrame(updateScrollState);
+    onCleanup(() => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    });
   });
+
+  const scrollSettings = (direction: -1 | 1) => {
+    if (!settingsContent) return;
+    settingsContent.scrollBy({
+      top: direction * Math.max(240, settingsContent.clientHeight * 0.72),
+      behavior: "smooth",
+    });
+  };
+
+  const trackSettingsScroll = () => {
+    if (!settingsContent) return;
+    const top = settingsContent.scrollTop;
+    const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
+    setScrollState({ up: top > 2, down: remaining > 2 });
+  };
 
   const close = () => {
     props.onThemePreview(props.initialTheme);
@@ -102,10 +137,10 @@ export function StudioSettingsDialog(props: Props) {
     props.onThemePreview(value);
   };
 
-  const rememberSettingsContext = (hostId: string, directory: string) => {
+  const rememberSettingsContext = (host: RuntimeHost | undefined, directory: string) => {
     if (!directory.trim()) return;
     setSettingsContexts((current) => {
-      const next = { ...current, [hostId]: directory.trim() };
+      const next = { ...current, [settingsContextKey(host)]: directory.trim() };
       localStorage.setItem(SETTINGS_CONTEXTS_KEY, JSON.stringify(next));
       return next;
     });
@@ -118,7 +153,7 @@ export function StudioSettingsDialog(props: Props) {
     try {
       setSnapshot(await readRuntimeSettings(directory, host?.url || undefined, host?.id));
       setChanges({});
-      rememberSettingsContext(host?.id || "local", directory);
+      rememberSettingsContext(host, directory);
     } catch (caught) {
       setSnapshot(undefined);
       setError(cleanError(caught));
@@ -153,8 +188,8 @@ export function StudioSettingsDialog(props: Props) {
     if (!host) return;
     const directory = preferredSettingsContext(
       host,
-      settingsContexts()[host.id],
-      host.id === "local" ? props.initialProjectDir : "",
+      settingsContexts()[settingsContextKey(host)],
+      host.id === props.initialSessionHomeHostId ? props.initialProjectDir : "",
     );
     setSettingsHostId(host.id);
     setProjectDir(directory);
@@ -289,6 +324,20 @@ export function StudioSettingsDialog(props: Props) {
               <span aria-hidden="true">⌕</span>
               <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Find a setting" aria-label="Find a setting" />
             </div>
+            <label class="settings-mobile-section-picker">
+              <span>Settings section</span>
+              <select value={section()} onChange={(event) => setSection(event.currentTarget.value)}>
+                <optgroup label="Studio">
+                  <For each={STATIC_SECTIONS}>{(item) => <option value={item.id}>{item.title}</option>}</For>
+                </optgroup>
+                <optgroup label="Amplifier runtime">
+                  <For each={RUNTIME_SETTINGS_SECTIONS}>{(item) => <option value={item.id} disabled={!props.runtimeSettingsAvailable}>{item.title}</option>}</For>
+                </optgroup>
+                <optgroup label="System">
+                  <option value="maintenance" disabled={!props.runtimeSettingsAvailable}>Maintenance</option>
+                </optgroup>
+              </select>
+            </label>
             <nav>
               <For each={STATIC_SECTIONS}>{(item) => <SettingsNavButton item={item} active={section() === item.id} onSelect={() => setSection(item.id)} />}</For>
               <div class="settings-nav-label">Amplifier runtime</div>
@@ -307,7 +356,7 @@ export function StudioSettingsDialog(props: Props) {
             <div class="settings-nav-footnote">29 durable runtime fields · 3 scopes · secrets redacted</div>
           </aside>
 
-          <main class="settings-content">
+          <main class="settings-content" ref={settingsContent} onScroll={trackSettingsScroll}>
             <Show when={error()}><div class="settings-error" role="alert">{error()}</div></Show>
             <Show when={section() === "appearance"}><AppearanceSection theme={theme()} onTheme={previewTheme} /></Show>
             <Show when={section() === "connection"}>
@@ -352,6 +401,10 @@ export function StudioSettingsDialog(props: Props) {
             )}</Show>
             <Show when={section() === "maintenance"}><MaintenanceSection snapshot={snapshot()} loading={loading()} onReload={() => void loadSettings(projectDir(), settingsHost())} /></Show>
           </main>
+          <div class="settings-scroll-controls" role="group" aria-label="Scroll settings">
+            <button type="button" disabled={!scrollState().up} onClick={() => scrollSettings(-1)} aria-label="Previous settings">↑</button>
+            <button type="button" disabled={!scrollState().down} onClick={() => scrollSettings(1)} aria-label="More settings">More&nbsp;↓</button>
+          </div>
         </div>
 
         <footer class="settings-footer">
@@ -388,7 +441,7 @@ function SettingsNavButton(props: {
   onSelect: () => void;
 }) {
   return (
-    <button type="button" class="settings-nav-item" classList={{ active: props.active }} disabled={props.disabled} onClick={props.onSelect}>
+    <button type="button" class="settings-nav-item" classList={{ active: props.active }} aria-current={props.active ? "page" : undefined} disabled={props.disabled} onClick={props.onSelect}>
       <span><strong>{props.item.title}</strong><small>{props.item.summary}</small></span>
       <Show when={props.count !== undefined}><i>{props.count}</i></Show>
     </button>
@@ -672,17 +725,18 @@ function cleanError(error: unknown): string {
   return String(error).replace(/^Error:\s*/, "");
 }
 
-function preferredSettingsContext(host: RuntimeHost | undefined, remembered: string | undefined, fallback: string): string {
+export function preferredSettingsContext(host: RuntimeHost | undefined, remembered: string | undefined, fallback: string): string {
   const defaultRoot = host?.defaultProjectRoot?.trim() || "";
+  const discoveredRoot = defaultRoot || fallback.trim();
   const saved = remembered?.trim() || "";
-  if (host?.url && saved && defaultRoot) {
-    const savedLooksMac = saved === "/Users" || saved.startsWith("/Users/");
-    const defaultLooksMac = defaultRoot === "/Users" || defaultRoot.startsWith("/Users/");
-    const savedLooksLinuxHome = saved === "/home" || saved.startsWith("/home/");
-    const defaultLooksLinuxHome = defaultRoot === "/home" || defaultRoot.startsWith("/home/");
-    if ((savedLooksMac && defaultLooksLinuxHome) || (savedLooksLinuxHome && defaultLooksMac)) return defaultRoot;
-  }
-  return saved || defaultRoot || fallback;
+  if (host?.url && saved && discoveredRoot && !isPathInsideRoot(saved, discoveredRoot)) return discoveredRoot;
+  return saved || discoveredRoot;
+}
+
+export function settingsContextKey(host: RuntimeHost | undefined): string {
+  if (!host) return "local";
+  const url = host.url.trim().replace(/\/+$/, "");
+  return url ? `${host.id}@${url}` : host.id;
 }
 
 function loadSettingsContexts(): Record<string, string> {

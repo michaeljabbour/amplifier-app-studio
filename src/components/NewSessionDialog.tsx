@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
+import { directoryBreadcrumbs, isPathInsideRoot } from "../projectFolders";
 import { toolContractFailure } from "../providerSafety";
 import { createHostDirectory, listHostDirectories, type HostDirectoryListing, type RuntimeHost } from "../transport";
 
@@ -11,11 +12,13 @@ interface Props {
   nativeProjectPicker: boolean;
   onCancel: () => void;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
-  onHostChange: (host: RuntimeHost) => Promise<void>;
+  onHostChange: (host: RuntimeHost) => Promise<string | undefined>;
   onStart: (input: NewSessionInput) => Promise<void>;
 }
 
 export function NewSessionDialog(props: Props) {
+  let remoteBrowserTrigger: HTMLButtonElement | undefined;
+  let remoteBrowserBack: HTMLButtonElement | undefined;
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
   const [hostId, setHostId] = createSignal(props.initial.hostId || props.hosts[0]?.id || "local");
   const [bundle, setBundle] = createSignal(props.initial.bundle || "");
@@ -89,17 +92,38 @@ export function NewSessionDialog(props: Props) {
   const browseRemote = async (path?: string) => {
     const host = selectedHost();
     if (!host?.url || pickingProject()) return;
+    const opening = !remoteDirectories();
     setPickingProject(true);
     setError("");
     try {
       const listing = await listHostDirectories(host.url, path, host.id);
       setRemoteDirectories(listing);
       if (!projectDir()) setProjectDir(listing.path);
+      if (opening) queueMicrotask(() => remoteBrowserBack?.focus());
     } catch (caught) {
       setError(String(caught));
     } finally {
       setPickingProject(false);
     }
+  };
+
+  const openRemoteBrowser = () => {
+    void browseRemote(props.initial.resumeId ? projectDir() || undefined : undefined);
+  };
+
+  const chooseRemoteFolder = (path: string) => {
+    setProjectDir(path);
+    setRemoteDirectories(undefined);
+    setNewFolder("");
+    setError("");
+    queueMicrotask(() => remoteBrowserTrigger?.focus());
+  };
+
+  const closeRemoteBrowser = () => {
+    setRemoteDirectories(undefined);
+    setNewFolder("");
+    setError("");
+    queueMicrotask(() => remoteBrowserTrigger?.focus());
   };
 
   // A remote host only exposes folders that already exist, so without this the
@@ -114,8 +138,7 @@ export function NewSessionDialog(props: Props) {
     try {
       const created = await createHostDirectory(host.url, parentPath, name, host.id);
       setNewFolder("");
-      await browseRemote(created.path);
-      setProjectDir(created.path);
+      chooseRemoteFolder(created.path);
     } catch (caught) {
       setError(String(caught));
     } finally {
@@ -125,8 +148,16 @@ export function NewSessionDialog(props: Props) {
 
   return (
     <div class="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onCancel()}>
-      <form class="session-dialog" onSubmit={submit}>
-        <div class="dialog-heading">
+      <form
+        class="session-dialog"
+        onSubmit={submit}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !remoteDirectories()) return;
+          event.preventDefault();
+          closeRemoteBrowser();
+        }}
+      >
+        <div class="dialog-heading" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
           <div>
             <div class="eyebrow">{props.initial.resumeId ? "RESTORE WORK" : "PARALLEL RUNTIME"}</div>
             <h2>{props.initial.resumeId ? "Resume session" : "Start a new session"}</h2>
@@ -155,7 +186,7 @@ export function NewSessionDialog(props: Props) {
           </div>
         )}</Show>
 
-        <label class="field full-field">
+        <label class="field full-field" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
           <span>Runtime host</span>
           <select
             value={hostId()}
@@ -165,7 +196,11 @@ export function NewSessionDialog(props: Props) {
               setHostId(next.id);
               setProjectDir(next.defaultProjectRoot || "");
               setRemoteDirectories(undefined);
-              void props.onHostChange(next).catch((caught) => setError(String(caught)));
+              void props.onHostChange(next)
+                .then((projectRoot) => {
+                  if (hostId() === next.id && projectRoot) setProjectDir(projectRoot);
+                })
+                .catch((caught) => setError(String(caught)));
             }}
           >
             {props.hosts.map((host) => <option value={host.id}>{host.name}{host.url ? ` · ${host.url}` : " · local"}</option>)}
@@ -173,72 +208,151 @@ export function NewSessionDialog(props: Props) {
           <small>Every tab is pinned to one host. Switching tabs does not move or stop its runtime.</small>
         </label>
 
-        <div class="field full-field">
+        <div class="field full-field" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
           <span>{props.initial.resumeId ? "Original project folder" : "Project folder"}</span>
-          <div class="path-picker-control">
-            <input
-              value={projectDir()}
-              readOnly={nativeProjectPicker() || Boolean(selectedHost()?.url)}
-              onInput={(event) => setProjectDir(event.currentTarget.value)}
-              placeholder={nativeProjectPicker() ? "Choose a folder…" : "/runtime-host/project"}
-              aria-label="Selected project folder"
-            />
-            <Show when={nativeProjectPicker()}>
-              <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void pickProject()}>
-                {pickingProject() ? "Choosing…" : "Choose folder…"}
+          <Show when={selectedHost()?.url} fallback={
+            <div class="path-picker-control">
+              <input
+                value={projectDir()}
+                readOnly={nativeProjectPicker()}
+                onInput={(event) => setProjectDir(event.currentTarget.value)}
+                placeholder={nativeProjectPicker() ? "Choose a folder…" : "/project/path"}
+                aria-label="Selected project folder"
+              />
+              <Show when={nativeProjectPicker()}>
+                <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void pickProject()}>
+                  {pickingProject() ? "Choosing…" : "Choose folder…"}
+                </button>
+              </Show>
+            </div>
+          }>
+            <div class="remote-project-control">
+              <div>
+                <small>Selected folder</small>
+                <code title={projectDir()}>{projectDir() || "No project folder selected"}</code>
+              </div>
+              <button ref={remoteBrowserTrigger} type="button" class="secondary-button" disabled={pickingProject()} onClick={openRemoteBrowser}>
+                {pickingProject() ? "Loading…" : "Change…"}
               </button>
-            </Show>
-            <Show when={selectedHost()?.url}>
-              <button type="button" class="secondary-button" disabled={pickingProject()} onClick={() => void browseRemote(projectDir() || undefined)}>
-                {pickingProject() ? "Loading…" : "Browse host…"}
-              </button>
-            </Show>
-          </div>
+            </div>
+          </Show>
           <small>{nativeProjectPicker()
             ? "Studio uses the system folder picker. The Amplifier runtime starts in the selected folder."
-            : "Enter a path exposed by this runtime host. The host validates it against its allowed project roots."}</small>
+            : selectedHost()?.url
+              ? "Choose an existing project, or create a new project folder on this host."
+              : "Enter the project folder this session may use."}</small>
         </div>
 
         <Show when={remoteDirectories()} keyed>{(listing) => (
-          <div class="remote-directory-browser">
-            <div><strong>{listing.path}</strong></div>
-            <div class="remote-directory-actions">
-              <button type="button" class="secondary-button" onClick={() => setProjectDir(listing.path)}>Use this folder</button>
-              <Show when={listing.parent} keyed>{(parent) => (
-                <button type="button" class="secondary-button" onClick={() => void browseRemote(parent)}>Up</button>
-              )}</Show>
+          <section class="remote-directory-picker" role="dialog" aria-modal="true" aria-labelledby="remote-directory-title">
+            <header class="remote-directory-heading">
+              <button ref={remoteBrowserBack} type="button" class="secondary-button" onClick={closeRemoteBrowser}>Back to setup</button>
+              <div>
+                <span class="eyebrow">PROJECT LOCATION</span>
+                <h3 id="remote-directory-title">Choose a project folder</h3>
+              </div>
+            </header>
+
+            <div class="remote-directory-body" aria-busy={pickingProject()}>
+              <Show when={listing.roots.length > 1}>
+                <div class="remote-directory-roots" role="group" aria-label="Available workspace roots">
+                  <span>Workspaces</span>
+                  <div>
+                    <For each={listing.roots}>{(root) => (
+                      <button
+                        type="button"
+                        classList={{ active: isPathInsideRoot(listing.path, root) }}
+                        aria-pressed={isPathInsideRoot(listing.path, root)}
+                        onClick={() => void browseRemote(root)}
+                      >{root}</button>
+                    )}</For>
+                  </div>
+                </div>
+              </Show>
+
+              <nav class="remote-directory-breadcrumbs" aria-label="Current project location">
+                <For each={directoryBreadcrumbs(listing)}>{(crumb, index) => (
+                  <>
+                    <Show when={index() > 0}><span aria-hidden="true">/</span></Show>
+                    <button type="button" disabled={crumb.path === listing.path} onClick={() => void browseRemote(crumb.path)}>{crumb.label}</button>
+                  </>
+                )}</For>
+              </nav>
+
+              <div class="remote-directory-toolbar">
+                <Show when={listing.parent} keyed fallback={<span>At workspace root</span>}>{(parent) => (
+                  <button type="button" class="secondary-button" onClick={() => void browseRemote(parent)}>Up one level</button>
+                )}</Show>
+                <code title={listing.path}>{listing.path}</code>
+              </div>
+              <div class="remote-directory-boundary">
+                This host lets Studio browse inside {listing.roots.join(" or ")}. Higher folders stay private to the host.
+              </div>
+
+              <div class="remote-project-create">
+                <div>
+                  <strong>Start a new project</strong>
+                  <span>Create a folder here and use it immediately.</span>
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={newFolder()}
+                    placeholder="project-name"
+                    aria-label={`New project folder inside ${listing.path}`}
+                    autocomplete="off"
+                    autocapitalize="none"
+                    spellcheck={false}
+                    disabled={creatingFolder()}
+                    onInput={(event) => setNewFolder(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      void createRemoteFolder(listing.path);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    class="primary-button"
+                    disabled={!newFolder().trim() || creatingFolder()}
+                    onClick={() => void createRemoteFolder(listing.path)}
+                  >{creatingFolder() ? "Creating…" : "Create & use"}</button>
+                </div>
+              </div>
+              <Show when={error()} keyed>{(message) => <div class="remote-directory-error" role="alert">{message}</div>}</Show>
+
+              <div class="remote-directory-list-heading">
+                <strong>Folders</strong>
+                <span>{listing.directories.length} available</span>
+              </div>
+              <ul class="remote-directory-list">
+                <For each={listing.directories}>{(directory) => (
+                  <li><button type="button" onClick={() => void browseRemote(directory.path)}>
+                    <span>{directory.name}</span><small>Open</small>
+                  </button></li>
+                )}</For>
+                <Show when={!listing.directories.length}>
+                  <li class="remote-directory-empty">
+                    <strong>No folders here yet</strong>
+                    <span>Create a project above, or use this folder as-is.</span>
+                  </li>
+                </Show>
+              </ul>
             </div>
-            <div class="remote-directory-create">
-              <input
-                type="text"
-                value={newFolder()}
-                placeholder="New folder name"
-                aria-label={`Create a folder inside ${listing.path}`}
-                disabled={creatingFolder()}
-                onInput={(event) => setNewFolder(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  void createRemoteFolder(listing.path);
-                }}
-              />
-              <button
-                type="button"
-                class="secondary-button"
-                disabled={!newFolder().trim() || creatingFolder()}
-                onClick={() => void createRemoteFolder(listing.path)}
-              >{creatingFolder() ? "Creating…" : "Create folder"}</button>
-            </div>
-            <div class="remote-directory-list">
-              <For each={listing.directories}>{(directory) => (
-                <button type="button" onClick={() => void browseRemote(directory.path)}>{directory.name}</button>
-              )}</For>
-              <Show when={!listing.directories.length}><span>No child folders</span></Show>
-            </div>
-          </div>
+
+            <footer class="remote-directory-footer">
+              <div><span>Use current folder</span><code title={listing.path}>{listing.path}</code></div>
+              <button type="button" class="primary-button" onClick={() => chooseRemoteFolder(listing.path)}>Choose this folder</button>
+            </footer>
+          </section>
         )}</Show>
 
-        <details class="advanced-composition" open={!props.initial.capabilityName && !props.initial.resumeId}>
+        <details
+          class="advanced-composition"
+          open={!props.initial.capabilityName && !props.initial.resumeId}
+          inert={Boolean(remoteDirectories())}
+          aria-hidden={Boolean(remoteDirectories())}
+        >
           <summary>Advanced composition <span>bundle · mode · provider · model</span></summary>
           <div class="field-grid">
           <label class="field">
@@ -285,9 +399,9 @@ export function NewSessionDialog(props: Props) {
           <Show when={!unsafeProvider() && unsafeOverride()} keyed>{(warning) => <div class="form-error provider-contract-warning"><strong>This model cannot run Amplifier tools safely.</strong> {warning}</div>}</Show>
         </details>
 
-        <Show when={error()}><div class="form-error">{error()}</div></Show>
+        <Show when={error() && !remoteDirectories()}><div class="form-error">{error()}</div></Show>
 
-        <div class="dialog-footer">
+        <div class="dialog-footer" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
           <div class="process-note"><span>◆</span> One isolated Amplifier runtime will be created for this tab.</div>
           <button type="button" class="secondary-button" onClick={props.onCancel}>Cancel</button>
           <button type="submit" class="primary-button" disabled={starting() || overrideMismatch() || Boolean(unsafeProvider()) || Boolean(unsafeOverride())}>

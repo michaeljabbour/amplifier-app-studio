@@ -319,14 +319,18 @@ export async function storeRuntimeHostToken(id: string, token: string): Promise<
   await invoke("store_runtime_host_token", { id, token });
 }
 
-export function durableRuntimeHostForSession(input: NewSessionInput, hosts: RuntimeHost[]): RuntimeHost | undefined {
+export function durableRuntimeHostForSession(
+  input: NewSessionInput,
+  hosts: RuntimeHost[],
+  configuredProjectRoot = input.projectDir,
+): RuntimeHost | undefined {
   const url = input.hostUrl ? normalizedBridgeUrl(input.hostUrl) : undefined;
   if (!url || input.hostId === "local") return undefined;
   const existing = hosts.find((host) => host.tokenRef !== "local"
     && host.tokenRef !== "session"
     && normalizedBridgeUrl(host.url) === url);
   if (existing) {
-    return { ...existing, url, defaultProjectRoot: input.projectDir || existing.defaultProjectRoot };
+    return { ...existing, url, defaultProjectRoot: configuredProjectRoot || existing.defaultProjectRoot };
   }
   const parsed = new URL(url);
   const suppliedName = input.hostName?.trim();
@@ -337,7 +341,7 @@ export function durableRuntimeHostForSession(input: NewSessionInput, hosts: Runt
     name: genericName ? `Compute · ${parsed.host}` : suppliedName,
     url,
     tokenRef: `keychain:${id}`,
-    defaultProjectRoot: input.projectDir || undefined,
+    defaultProjectRoot: configuredProjectRoot || undefined,
   };
 }
 
@@ -608,10 +612,15 @@ export async function addBundle(input: { projectDir?: string; uri: string; name?
   });
 }
 
-export async function defaultProjectDir(): Promise<string> {
-  const bridge = bridgeBaseUrl();
+export async function defaultProjectDir(hostUrl?: string, hostId?: string): Promise<string> {
+  const bridge = hostId === "local"
+    ? undefined
+    : hostUrl
+      ? normalizedBridgeUrl(hostUrl)
+      : bridgeBaseUrl();
   if (bridge) {
-    const config = await fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"));
+    await ensureBridgeToken(bridge, hostId);
+    const config = await fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"), undefined, bridge);
     return config.defaultProjectDir || "";
   }
   if (!isTauriRuntime()) return "";

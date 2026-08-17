@@ -25,13 +25,13 @@ export function Footer(props: {
   };
   return (
     <footer class="footer-bar">
-      <button onClick={props.onToggleWorkspace}><span class="footer-dot" classList={{ active: props.state.phase === "ready" }} />{props.state.phase}</button>
-      <button onClick={props.onBuild}>{props.state.mode}</button>
-      <div class="footer-grow" title={props.state.projectDir}>{props.state.projectDir}</div>
-      <button onClick={props.onBuild}>{props.state.model}</button>
+      <button class="footer-status" onClick={props.onToggleWorkspace}><span class="footer-dot" classList={{ active: props.state.phase === "ready" }} />{props.state.phase}</button>
+      <button class="footer-mode" onClick={props.onBuild}>{props.state.mode}</button>
+      <div class="footer-grow footer-project" title={props.state.projectDir}>{props.state.projectDir}</div>
+      <button class="footer-model" onClick={props.onBuild}>{props.state.model}</button>
       <EffortControl state={props.state} onCycle={props.onCycleEffort} onSet={props.onSetEffort} />
-      <button onClick={props.onContext}>context <strong>{contextLabel()}</strong></button>
-      <button onClick={props.onOutputs}>outputs <strong>{props.state.outputs.length}</strong></button>
+      <button class="footer-context" onClick={props.onContext}>context <strong>{contextLabel()}</strong></button>
+      <button class="footer-outputs" onClick={props.onOutputs}>outputs <strong>{props.state.outputs.length}</strong></button>
       <div class="footer-cost" title={costDetail()}>{cost()}</div>
     </footer>
   );

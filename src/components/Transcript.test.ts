@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createSessionState } from "../reducer";
-import { runtimeFailureCopy, transcriptAtBottom, transcriptScrollMarker } from "./Transcript";
+import {
+  isFocusedEditorTarget,
+  releaseFocusedEditorForTranscriptJump,
+  runtimeFailureCopy,
+  scrollTranscriptToLatest,
+  transcriptAtBottom,
+  transcriptScrollMarker,
+  transcriptPointerScrollTop,
+} from "./Transcript";
 
 describe("transcript following", () => {
   it("detaches as soon as the reader moves up instead of fighting within a bottom threshold", () => {
@@ -29,6 +37,46 @@ describe("transcript following", () => {
     expect(transcriptScrollMarker(next)).not.toBe(transcriptScrollMarker(state));
     expect(transcriptScrollMarker({ ...next, liveTail: { blockType: "text", text: "streaming" } }))
       .not.toBe(transcriptScrollMarker(next));
+  });
+
+  it("targets the actual maximum scroll position and reasserts it after the anchor moves", () => {
+    const calls: number[] = [];
+    const scroller = {
+      scrollHeight: 1_200,
+      clientHeight: 400,
+      scrollTop: 0,
+      scrollTo: ({ top }: ScrollToOptions) => calls.push(Number(top)),
+    };
+    const anchor = {
+      scrollIntoView: () => {
+        scroller.scrollHeight = 1_240;
+      },
+    };
+
+    scrollTranscriptToLatest(scroller, anchor);
+
+    expect(calls).toEqual([800]);
+    expect(scroller.scrollTop).toBe(840);
+  });
+
+  it("recognizes focused editors and releases one before a jump", () => {
+    let blurred = false;
+    const editor = {
+      matches: (selector: string) => selector.includes("textarea"),
+      blur: () => { blurred = true; },
+    };
+
+    expect(isFocusedEditorTarget(editor)).toBe(true);
+    expect(releaseFocusedEditorForTranscriptJump(editor)).toBe(true);
+    expect(blurred).toBe(true);
+    expect(isFocusedEditorTarget({ matches: () => false })).toBe(false);
+    expect(releaseFocusedEditorForTranscriptJump({ matches: () => false })).toBe(false);
+  });
+
+  it("clamps a focused pointer pan to the transcript scroll range", () => {
+    expect(transcriptPointerScrollTop(500, 600, 250, 1_600, 500)).toBe(850);
+    expect(transcriptPointerScrollTop(50, 250, 600, 1_600, 500)).toBe(0);
+    expect(transcriptPointerScrollTop(1_000, 600, 250, 1_200, 500)).toBe(700);
   });
 
   it("explains approval-routing and moved-project failures in recovery language", () => {

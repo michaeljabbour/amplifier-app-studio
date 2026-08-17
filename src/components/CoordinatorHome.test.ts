@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectDisplayName } from "./CoordinatorHome";
+import { projectDisplayName } from "../projectDisplayName";
 
 describe("coordinator home project control", () => {
   it("shows a concise project name while retaining the full path elsewhere", () => {

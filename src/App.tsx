@@ -23,6 +23,7 @@ import {
   promptWithDocumentAttachments,
 } from "./attachments";
 import { nativeProjectPickerAvailable, pickAttachments, pickProjectDirectory, saveDiagnosticsFile } from "./nativePickers";
+import { remoteProjectDefault, shouldRememberProjectLocally } from "./projectFolders";
 import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
   addLocalNotice,
@@ -86,6 +87,8 @@ import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateS
 import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 import { toolContractFailure } from "./providerSafety";
 import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
+import { openGuiIdForStoredSession } from "./sessionSelection";
+import { projectContextForHost } from "./settingsProjectContext";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
@@ -121,6 +124,7 @@ export default function App() {
   const [runtimeHosts, setRuntimeHosts] = createSignal<RuntimeHost[]>(
     isMobileRuntime() ? [] : [{ id: "local", name: "This Mac", url: "", tokenRef: "local" }],
   );
+  const [hostProjectRoots, setHostProjectRoots] = createSignal<Record<string, string>>({});
   const [sessionHomeHostId, setSessionHomeHostId] = createSignal(localStorage.getItem(SESSION_HOME_HOST_KEY) || defaultHostId);
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
   const [runtimeInstalling, setRuntimeInstalling] = createSignal(false);
@@ -142,6 +146,23 @@ export default function App() {
     || runtimeHosts().find((host) => host.id === "local")
     || runtimeHosts()[0]);
 
+  const knownHostProjectRoot = (host?: RuntimeHost) => host?.url
+    ? remoteProjectDefault(host, hostProjectRoots()[host.id] || "")
+    : localStorage.getItem("amplifier-studio.project-dir")?.trim() || defaultDir();
+
+  const settingsProjectDir = createMemo(() => {
+    const host = sessionHomeHost();
+    return projectContextForHost(active(), host, knownHostProjectRoot(host));
+  });
+
+  const refreshHostProjectRoot = async (host: RuntimeHost): Promise<string> => {
+    if (!host.url) return knownHostProjectRoot(host);
+    const configured = (await defaultProjectDir(host.url, host.id)).trim();
+    const projectRoot = remoteProjectDefault(host, configured);
+    if (projectRoot) setHostProjectRoots((current) => ({ ...current, [host.id]: projectRoot }));
+    return projectRoot;
+  };
+
   const setSessionHomeHost = (id: string) => {
     const selected = runtimeHosts().some((host) => host.id === id) ? id : "local";
     setSessionHomeHostId(selected);
@@ -157,9 +178,11 @@ export default function App() {
   });
 
   onMount(() => {
-    const rememberedProject = localStorage.getItem("amplifier-studio.project-dir")?.trim();
-    if (rememberedProject) setDefaultDir(rememberedProject);
-    else void defaultProjectDir().then(setDefaultDir).catch(() => undefined);
+    if (!isMobileRuntime()) {
+      const rememberedProject = localStorage.getItem("amplifier-studio.project-dir")?.trim();
+      if (rememberedProject) setDefaultDir(rememberedProject);
+      else void defaultProjectDir(undefined, "local").then(setDefaultDir).catch(() => undefined);
+    }
     void refreshRuntime();
     void listRuntimeHosts().then((hosts) => {
       setRuntimeHosts(hosts);
@@ -169,6 +192,8 @@ export default function App() {
         void refreshStored();
         void refreshRuntime();
       }
+      const home = hosts.find((host) => host.id === sessionHomeHostId()) || hosts[0];
+      if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
     void refreshTranscription();
     queueMicrotask(() => void refreshStored());
@@ -283,11 +308,11 @@ export default function App() {
       if (input.hostUrl && input.hostId !== "local" && isTauriRuntime()) {
         void rememberRuntimeHost(guiId, input);
       }
-      if (input.projectDir) {
+      if (input.projectDir && shouldRememberProjectLocally(input)) {
         localStorage.setItem("amplifier-studio.project-dir", input.projectDir);
         setDefaultDir(input.projectDir);
-        void refreshCatalog(input.projectDir, input.hostUrl, input.hostId);
       }
+      if (input.projectDir) void refreshCatalog(input.projectDir, input.hostUrl, input.hostId);
     } catch (error) {
       pendingInitialPrompts.delete(guiId);
       update(guiId, (current) => markExited(current, undefined, cleanError(error)));
@@ -464,9 +489,11 @@ export default function App() {
 
   const openNewDialog = async () => {
     const host = sessionHomeHost();
+    // A saved host record is only a hint. The host's current config is the
+    // security boundary and may have changed since Studio last connected.
     const remembered = host?.url
-      ? host.defaultProjectRoot || ""
-      : localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+      ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
+      : knownHostProjectRoot(host);
     const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     if (host?.url) await refreshCatalog(projectDir, host.url, host.id);
@@ -481,7 +508,9 @@ export default function App() {
   const openSiblingDialog = async (bundle?: string, provider?: ProviderOption) => {
     const session = active();
     const host = session ? runtimeHostForSession(session, runtimeHosts()) || sessionHomeHost() : sessionHomeHost();
-    const remembered = session?.projectDir || host?.defaultProjectRoot || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const remembered = session?.projectDir || (host?.url
+      ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
+      : knownHostProjectRoot(host));
     const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     setDialog({
@@ -502,7 +531,9 @@ export default function App() {
   const openCapabilityDialog = async (capability: StudioCapability) => {
     const session = active();
     const host = session ? runtimeHostForSession(session, runtimeHosts()) || sessionHomeHost() : sessionHomeHost();
-    const remembered = session?.projectDir || host?.defaultProjectRoot || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const remembered = session?.projectDir || (host?.url
+      ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
+      : knownHostProjectRoot(host));
     const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     const provider = catalog().providers.find((item) => item.model === session?.model)
@@ -716,7 +747,7 @@ export default function App() {
             onSend={startFromHome}
             onResume={prepareStoredResume}
             onNew={openNew}
-            projectDir={sessionHomeHost()?.defaultProjectRoot || defaultDir()}
+            projectDir={knownHostProjectRoot(sessionHomeHost())}
             onChooseProject={chooseHomeProject}
             remoteRuntime={Boolean(sessionHomeHost()?.url) || usesWebBridge()}
             onDrawer={openDrawer}
@@ -856,7 +887,11 @@ export default function App() {
           nativeProjectPicker={nativeProjectPickerAvailable()}
           onCancel={() => setDialog(undefined)}
           onPickProjectDir={pickProjectDirectory}
-          onHostChange={(host) => refreshCatalog(undefined, host.url || undefined, host.id)}
+          onHostChange={async (host) => {
+            const projectRoot = host.url ? await refreshHostProjectRoot(host) : knownHostProjectRoot(host);
+            await refreshCatalog(projectRoot, host.url || undefined, host.id);
+            return projectRoot || undefined;
+          }}
           onStart={start}
         />}
       </Show>
@@ -866,17 +901,23 @@ export default function App() {
       <Show when={drawerOpen()}>
         <SessionDrawer
           sessions={stored()}
+          openSessions={sessions()}
+          activeId={activeId()}
           loading={storedLoading()}
           error={storedError()}
           sourceName={sessionHomeHost()?.name || "This Mac"}
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
           onResume={(session) => void prepareStoredResume(session)}
+          onSelectOpen={setActiveId}
+          onNew={openNew}
+          onCapabilities={() => setCapabilitiesOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
         />
       </Show>
       <Show when={settingsOpen()}>
         <StudioSettingsDialog
-          initialProjectDir={active()?.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir()}
+          initialProjectDir={settingsProjectDir()}
           initialTheme={studioTheme()}
           runtimeHosts={runtimeHosts()}
           initialSessionHomeHostId={sessionHomeHostId()}
@@ -925,13 +966,16 @@ export default function App() {
             setSessionHomeHost(homeHostId);
             setStudioTheme(theme);
             setTransport(transportLabel());
-            const projectDir = await defaultProjectDir();
-            setDefaultDir(projectDir);
+            const homeHost = runtimeHosts().find((host) => host.id === homeHostId);
+            const projectDir = homeHost?.url
+              ? await refreshHostProjectRoot(homeHost)
+              : await defaultProjectDir(undefined, "local");
+            if (!homeHost?.url) setDefaultDir(projectDir);
             await Promise.all([
               refreshRuntime(),
               refreshTranscription(),
               refreshStored(),
-              refreshCatalog(projectDir),
+              refreshCatalog(projectDir, homeHost?.url || undefined, homeHost?.id),
             ]);
           }}
         />
@@ -1014,7 +1058,15 @@ export default function App() {
   }
 
   async function rememberRuntimeHost(guiId: string, input: NewSessionInput) {
-    const host = durableRuntimeHostForSession(input, runtimeHosts());
+    // Native mobile shells receive their bridge as part of the app's runtime
+    // configuration. Persisting a desktop compute-pool record is a host-machine
+    // action and would otherwise turn a successful mobile start into a scary,
+    // unactionable error banner.
+    if (isMobileRuntime()) return;
+    const configuredProjectRoot = input.hostUrl
+      ? await defaultProjectDir(input.hostUrl, input.hostId).catch(() => input.projectDir)
+      : input.projectDir;
+    const host = durableRuntimeHostForSession(input, runtimeHosts(), configuredProjectRoot);
     if (!host) return;
     const wasSaved = runtimeHosts().some((candidate) => candidate.id === host.id && candidate.tokenRef !== "session");
     try {
@@ -1042,8 +1094,8 @@ export default function App() {
   async function startFromHome(text: string, attachments: ComposerAttachment[]) {
     const host = sessionHomeHost();
     const remembered = host?.url
-      ? host.defaultProjectRoot || ""
-      : localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+      ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
+      : knownHostProjectRoot(host);
     const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
     await start({ projectDir, ...sessionHostInput(host) }, text, attachments);
@@ -1063,8 +1115,14 @@ export default function App() {
   }
 
   async function prepareStoredResume(session: StoredSession) {
+    const alreadyOpenGuiId = openGuiIdForStoredSession(sessions(), session.sessionId);
+    if (alreadyOpenGuiId) {
+      setActiveId(alreadyOpenGuiId);
+      setDrawerOpen(false);
+      return;
+    }
     const host = sessionHomeHost();
-    const remembered = session.projectDir || localStorage.getItem("amplifier-studio.project-dir") || defaultDir();
+    const remembered = session.projectDir || knownHostProjectRoot(host);
     const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     setDrawerOpen(false);

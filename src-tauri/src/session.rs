@@ -24,6 +24,7 @@ use tokio::{
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
+pub const DUPLICATE_RESUME_ERROR: &str = "That stored session is already open in Amplifier Studio";
 
 pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync + 'static>;
 pub type AttachmentId = u64;
@@ -139,9 +140,7 @@ impl SessionManager {
                         })
                 });
                 if duplicate {
-                    return Err(
-                        "That stored session is already open in Amplifier Studio".to_owned()
-                    );
+                    return Err(DUPLICATE_RESUME_ERROR.to_owned());
                 }
             }
         }
@@ -232,7 +231,7 @@ impl SessionManager {
             if duplicate {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
-                return Err("That stored session is already open in Amplifier Studio".to_owned());
+                return Err(DUPLICATE_RESUME_ERROR.to_owned());
             }
         }
         let stdin = child
@@ -294,6 +293,33 @@ impl SessionManager {
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
         replace_sink(&handle.sink, Some((attachment_id, sink)))?;
         Ok(attachment_id)
+    }
+
+    /// Attach a newly opened Studio client to the live runtime that already
+    /// owns a durable session. Network runtimes intentionally outlive a phone
+    /// WebView, so a fresh app process may only know the durable session id.
+    pub async fn attach_resume(
+        &self,
+        project_dir: &str,
+        resume_id: &str,
+        sink: EventSink,
+    ) -> Result<(String, AttachmentId), String> {
+        let canonical_project = canonical_project_dir(project_dir)?.to_string_lossy().into_owned();
+        let (gui_id, handle) = self
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .find(|(_, handle)| {
+                handle.resume_identity.as_ref().is_some_and(|(project, session)| {
+                    project == &canonical_project && session == resume_id
+                })
+            })
+            .map(|(gui_id, handle)| (gui_id.clone(), handle.clone()))
+            .ok_or_else(|| DUPLICATE_RESUME_ERROR.to_owned())?;
+        let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
+        replace_sink(&handle.sink, Some((attachment_id, sink)))?;
+        Ok((gui_id, attachment_id))
     }
 
     /// Remove a subscriber only if it still owns the current attachment lease.
@@ -834,5 +860,40 @@ mod tests {
         assert_eq!(*first_events.lock().unwrap(), vec!["one"]);
         assert_eq!(*second_events.lock().unwrap(), vec!["two"]);
         assert_eq!(slot.read().unwrap().as_ref().map(|(id, _)| *id), Some(2));
+    }
+
+    #[tokio::test]
+    async fn fresh_mobile_client_can_attach_by_durable_resume_identity() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project.path().canonicalize().unwrap().to_string_lossy().into_owned();
+        let manager = SessionManager::default();
+        let child = Arc::new(Mutex::new(
+            Command::new("sleep").arg("60").spawn().unwrap(),
+        ));
+        let original_sink: EventSink = Arc::new(|_| {});
+        let sink_slot = Arc::new(RwLock::new(Some((1, original_sink))));
+        manager.sessions.lock().await.insert(
+            "live-mobile-session".to_owned(),
+            SessionHandle {
+                child: child.clone(),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot,
+                resume_identity: Some((project_path.clone(), "durable-123".to_owned())),
+                detached_owner: true,
+            },
+        );
+
+        let replacement_sink: EventSink = Arc::new(|_| {});
+        let (gui_id, attachment_id) = manager
+            .attach_resume(&project_path, "durable-123", replacement_sink)
+            .await
+            .unwrap();
+
+        assert_eq!(gui_id, "live-mobile-session");
+        assert!(manager
+            .attachment_is_current(&gui_id, attachment_id)
+            .await
+            .unwrap());
+        child.lock().await.kill().await.unwrap();
     }
 }

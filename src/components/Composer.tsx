@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { ArrowUp, Paperclip, Sparkles } from "lucide-solid";
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import { machinePresence } from "../machinePresence";
 import type { ComposerAttachment, SessionViewState } from "../protocol";
@@ -138,7 +139,7 @@ export function Composer(props: Props) {
           ? "Restoring this conversation…"
           : props.state.busy
             ? "Course-correct the current run…"
-            : "Tell the coordinator what to build, investigate, or organize…"}
+            : "Tell Amplifier Agent what to build, investigate, or organize…"}
         aria-label={props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring Amplifier conversation"
           : props.state.busy
@@ -180,8 +181,8 @@ export function Composer(props: Props) {
       </Show>
       <div class="composer-actions">
         <div class="composer-left-actions">
-          <button type="button" class="starter-trigger" aria-expanded={startersOpen()} onClick={() => setStartersOpen((open) => !open)}>Ways to start</button>
-          <button type="button" class="attachment-trigger" disabled={sending()} onClick={() => void pickFiles()}>Add files</button>
+          <button type="button" class="starter-trigger" aria-expanded={startersOpen()} aria-label="Ways to start" onClick={() => setStartersOpen((open) => !open)}><Sparkles aria-hidden="true" /><span>Ways to start</span></button>
+          <button type="button" class="attachment-trigger" disabled={sending()} aria-label="Add files" onClick={() => void pickFiles()}><Paperclip aria-hidden="true" /><span>Add files</span></button>
           <VoiceInputButton
             draft={props.state.composerDraft}
             disabled={sending() || props.state.phase !== "ready"}
@@ -194,7 +195,7 @@ export function Composer(props: Props) {
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>
         <button disabled={(!props.state.composerDraft.trim() && !props.state.composerAttachments.length) || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
-          {props.state.busy ? "Steer" : "Send"}<span aria-hidden="true">↑</span>
+          <span class="send-label">{props.state.busy ? "Steer" : "Send"}</span><span aria-hidden="true"><ArrowUp /></span>
         </button>
       </div>
     </div>

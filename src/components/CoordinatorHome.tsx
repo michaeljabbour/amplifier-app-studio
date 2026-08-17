@@ -1,10 +1,12 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { ArrowUp, Check, ChevronRight, Cloud, Folder, Monitor, Sparkles } from "lucide-solid";
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
 import type { TranscriptionStatus } from "../transport";
 import type { AudioRecording } from "../transcription";
 import { storedSessionResumeBlocker } from "../sessionAvailability";
+import { projectDisplayName } from "../projectDisplayName";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { VoiceInputButton } from "./VoiceInputButton";
 
@@ -122,16 +124,16 @@ export function CoordinatorHome(props: Props) {
 
       <section class="home-conversation">
         <div class="home-conversation-intro">
-          <div class="home-machine-mark" aria-hidden="true"><span /></div>
-          <div class="eyebrow">COORDINATOR CHAT</div>
+          <div class="home-machine-mark" aria-hidden="true"><Sparkles /></div>
+          <div class="eyebrow">AMPLIFIER AGENT</div>
           <h1>What are we building?</h1>
-          <p>Describe the outcome. Amplifier can organize the run, bring in specialists, and keep the work visible.</p>
+          <p>Describe the outcome. Amplifier Agent can organize the run, bring in specialists, and keep the work visible.</p>
           <Show when={latest()}>{(session) => (
             <button type="button" class="home-continue" disabled={starting()} onClick={() => void run(() => props.onResume(session()))}>
               <span>Continue recent work</span>
               <strong>{session().name}</strong>
               <small>{session().summary}</small>
-              <i aria-hidden="true">→</i>
+              <i aria-hidden="true"><ChevronRight /></i>
             </button>
           )}</Show>
         </div>
@@ -201,7 +203,7 @@ export function CoordinatorHome(props: Props) {
           }}
         >
           <Show when={draggingAttachments()}><div class="composer-drop-target">Drop files to start with</div></Show>
-          <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting coordinator…" : ready() ? "Ready when you are" : props.checking ? "Checking runtime…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : "Runtime setup required"}</div>
+          <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting Amplifier Agent…" : ready() ? "Ready when you are" : props.checking ? "Checking runtime…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : "Runtime setup required"}</div>
           <textarea
             value={text()}
             disabled={!ready() || starting()}
@@ -237,7 +239,7 @@ export function CoordinatorHome(props: Props) {
                 title={props.projectDir || "Choose a project folder"}
                 onClick={() => void props.onChooseProject()}
               >
-                <FolderIcon />
+                <Folder aria-hidden="true" />
                 <span>{projectDisplayName(props.projectDir)}</span>
               </button>
               <button type="button" onClick={() => void pickFiles()}>Add files</button>
@@ -259,27 +261,27 @@ export function CoordinatorHome(props: Props) {
                   title={props.remoteRuntime ? "This run uses the configured remote host" : "This run uses this computer"}
                   onClick={() => setLocationOpen((value) => !value)}
                 >
-                  {props.remoteRuntime ? <CloudIcon /> : <ComputerIcon />}
+                  {props.remoteRuntime ? <Cloud aria-hidden="true" /> : <Monitor aria-hidden="true" />}
                   <span>{props.remoteRuntime ? "Remote host" : "This computer"}</span>
                 </button>
                 <Show when={locationOpen()}>
                   <div class="home-location-menu" role="menu" aria-label="Where this run executes">
                     <button type="button" role="menuitem" classList={{ selected: !props.remoteRuntime }} onClick={() => props.remoteRuntime && props.onSettings()}>
-                      <ComputerIcon />
+                      <Monitor aria-hidden="true" />
                       <span><strong>On this computer</strong><small>Uses local files and the local Amplifier runtime</small></span>
-                      <i aria-hidden="true">{!props.remoteRuntime ? "✓" : ""}</i>
+                      <i aria-hidden="true">{!props.remoteRuntime ? <Check /> : null}</i>
                     </button>
                     <button type="button" role="menuitem" classList={{ selected: props.remoteRuntime }} onClick={() => props.onSettings()}>
-                      <CloudIcon />
+                      <Cloud aria-hidden="true" />
                       <span><strong>{props.remoteRuntime ? "Remote host" : "Cloud or remote"}</strong><small>{props.remoteRuntime ? "Connected through the authenticated bridge" : "Not configured yet · open Settings"}</small></span>
-                      <i aria-hidden="true">{props.remoteRuntime ? "✓" : ""}</i>
+                      <i aria-hidden="true">{props.remoteRuntime ? <Check /> : null}</i>
                     </button>
                   </div>
                 </Show>
               </div>
               <span><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline</span>
             </div>
-            <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true">↑</span></button>
+            <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true"><ArrowUp /></span></button>
           </div>
           <Show when={localError() || props.error}><small class="home-composer-error">{localError() || props.error}</small></Show>
         </div>
@@ -292,24 +294,6 @@ export function CoordinatorHome(props: Props) {
       </section>
     </main>
   );
-}
-
-export function projectDisplayName(projectDir: string): string {
-  const normalized = projectDir.trim().replace(/[\\/]+$/, "");
-  if (!normalized) return "Choose project";
-  return normalized.split(/[\\/]/).at(-1) || normalized;
-}
-
-function FolderIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2h9.3v9h-17zM3.5 7.5v-2h6l1.7 2" /></svg>;
-}
-
-function ComputerIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="12" rx="1.5" /><path d="M8 20h8M10 17v3M14 17v3" /></svg>;
-}
-
-function CloudIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.2a3.8 3.8 0 0 0 .6-7.55A6 6 0 0 0 6.25 9.7 4.4 4.4 0 0 0 7 18.5Z" /></svg>;
 }
 
 function timeAgo(timestamp: number): string {

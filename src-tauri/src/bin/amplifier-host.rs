@@ -14,6 +14,8 @@ struct HostConfig {
     frontend: String,
     origins: Vec<String>,
     allowed_project_roots: Vec<String>,
+    #[serde(default)]
+    default_project_root: Option<String>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -43,6 +45,7 @@ async fn enable(args: &[String]) -> Result<(), String> {
     let mut frontend = default_frontend();
     let mut origins = Vec::new();
     let mut roots = Vec::new();
+    let mut default_project_root = None;
     let mut values = args.iter();
     while let Some(argument) = values.next() {
         match argument.as_str() {
@@ -55,6 +58,11 @@ async fn enable(args: &[String]) -> Result<(), String> {
             }
             "--allow-project-root" => roots
                 .push(next(&mut values, "--allow-project-root requires a directory")?.to_owned()),
+            "--default-project-root" => {
+                default_project_root = Some(
+                    next(&mut values, "--default-project-root requires a directory")?.to_owned(),
+                )
+            }
             "--help" | "-h" => return Err(usage()),
             unknown => {
                 return Err(format!(
@@ -65,7 +73,14 @@ async fn enable(args: &[String]) -> Result<(), String> {
         }
     }
     if roots.is_empty() {
-        return Err("amplifier-host enable requires at least one --allow-project-root".to_owned());
+        let project_home = match default_project_root.as_ref() {
+            Some(path) => path.clone(),
+            None => default_project_home()?,
+        };
+        roots.push(project_home.clone());
+        default_project_root = Some(project_home);
+    } else if default_project_root.is_none() {
+        default_project_root = roots.first().cloned();
     }
     if origins.is_empty() {
         origins.push(format!("http://{bind}"));
@@ -80,6 +95,7 @@ async fn enable(args: &[String]) -> Result<(), String> {
         frontend,
         origins,
         allowed_project_roots: roots,
+        default_project_root,
     };
     write_config(&config)?;
     let token_path = token_path();
@@ -101,6 +117,7 @@ fn status() -> Result<(), String> {
         "bind": config.bind,
         "origins": config.origins,
         "allowedProjectRoots": config.allowed_project_roots,
+        "defaultProjectRoot": config.default_project_root,
         "tokenFile": token_path(),
         "tokenPresent": token_path().is_file(),
         "configFile": config_path(),
@@ -135,6 +152,9 @@ async fn serve_config(config: HostConfig) -> Result<(), String> {
     }
     for root in config.allowed_project_roots {
         args.extend(["--allow-project-root".to_owned(), root]);
+    }
+    if let Some(root) = config.default_project_root {
+        args.extend(["--default-project-root".to_owned(), root]);
     }
     let options = amplifier_studio_lib::web_server::ServerOptions::from_args(args)?;
     amplifier_studio_lib::web_server::serve(options).await
@@ -228,6 +248,20 @@ fn default_frontend() -> String {
         .into_owned()
 }
 
+fn default_project_home() -> Result<String, String> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        "Could not resolve a home directory; pass --allow-project-root explicitly".to_owned()
+    })?;
+    let project_home = home.join("dev");
+    fs::create_dir_all(&project_home).map_err(|error| {
+        format!(
+            "Could not create the default project home {}: {error}",
+            project_home.display()
+        )
+    })?;
+    Ok(project_home.to_string_lossy().into_owned())
+}
+
 fn next<'a>(values: &mut std::slice::Iter<'a, String>, message: &str) -> Result<&'a str, String> {
     values
         .next()
@@ -237,10 +271,11 @@ fn next<'a>(values: &mut std::slice::Iter<'a, String>, message: &str) -> Result<
 
 fn usage() -> String {
     "Amplifier Host\n\n\
-     amplifier-host enable --allow-project-root PATH [--origin ORIGIN] [--bind 127.0.0.1:4317]\n\
+     amplifier-host enable [--allow-project-root PATH] [--default-project-root PATH] [--origin ORIGIN] [--bind 127.0.0.1:4317]\n\
      amplifier-host status\n\
      amplifier-host token rotate\n\
      amplifier-host [serve options]\n\n\
+     Without a project-root option, enable creates and exposes ~/dev as the project home.\n\
      The listener stays loopback-only. Put Tailscale Serve, an SSH tunnel, or an authenticated TLS reverse proxy in front of it."
         .to_owned()
 }
