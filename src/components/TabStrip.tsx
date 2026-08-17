@@ -1,4 +1,6 @@
 import { For, Show } from "solid-js";
+import { Activity, Menu, Settings2 } from "lucide-solid";
+import { appUpdateButtonTitle } from "../appUpdateCopy";
 import type { SessionViewState } from "../protocol";
 import type { AppUpdateState } from "../updater";
 import { startNativeWindowDrag } from "../windowDrag";
@@ -27,11 +29,21 @@ export function TabStrip(props: Props) {
   const active = () => props.sessions.find((session) => session.guiId === props.activeId);
   return (
     <header class="tab-strip" data-tauri-drag-region onMouseDown={startNativeWindowDrag}>
+      <div class="mobile-topbar" onMouseDown={(event) => event.stopPropagation()}>
+        <button class="mobile-topbar-button" aria-label="Open navigation" onClick={props.onDrawer}>
+          <Menu aria-hidden="true" />
+        </button>
+        <div class="mobile-agent-title">Amplifier Agent</div>
+        <button class="mobile-topbar-button mobile-runtime-button" aria-label="Runtime and Studio settings" onClick={props.onSettings}>
+          <Activity aria-hidden="true" />
+          <span class={`mobile-runtime-dot phase-${active()?.phase || "idle"}`} aria-hidden="true" />
+        </button>
+      </div>
       <div class="traffic-light-space" data-tauri-drag-region />
       <button class="icon-button drawer-button" aria-label="Open session drawer" onClick={props.onDrawer}>
-        <span aria-hidden="true">☰</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12" /></svg>
       </button>
-      <div class="tabs" data-tauri-drag-region>
+      <div class="tabs" classList={{ empty: props.sessions.length === 0 }} data-tauri-drag-region>
         <For each={props.sessions}>
           {(session) => (
             <button
@@ -105,7 +117,7 @@ export function TabStrip(props: Props) {
         </div>
       </Show>
       <button class="icon-button settings-button" aria-label="Studio settings" onClick={props.onSettings} title="Studio and Amplifier settings">
-        <span aria-hidden="true">⚙</span>
+        <Settings2 aria-hidden="true" />
       </button>
       <div class="brand-mark" data-tauri-drag-region>
         <span class="brand-diamond" aria-hidden="true" />
@@ -114,12 +126,6 @@ export function TabStrip(props: Props) {
       </div>
     </header>
   );
-}
-
-export function appUpdateButtonTitle(update: AppUpdateState, blocked: boolean): string {
-  if (blocked) return "Update ready. Finish or interrupt active turns before restarting.";
-  if (update.status === "error") return update.message || "The Studio update did not install. Retry to check the release again.";
-  return update.notes || update.message || "Install the latest Amplifier Studio release";
 }
 
 function updateLabel(update: AppUpdateState): string {

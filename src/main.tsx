@@ -7,10 +7,13 @@ import "@fontsource/lora/latin-600.css";
 import "./styles.css";
 import "./madeTheme.css";
 import "./settings.css";
+import "./mobile.css";
+import { captureMobileSafeAreaInsets } from "./mobileViewport";
 import { applyStudioTheme, loadStudioTheme } from "./theme";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root mount point");
 
 applyStudioTheme(loadStudioTheme());
+captureMobileSafeAreaInsets();
 render(() => <App />, root);

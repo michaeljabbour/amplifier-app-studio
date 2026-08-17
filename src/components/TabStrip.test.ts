@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appUpdateButtonTitle } from "./TabStrip";
+import { appUpdateButtonTitle } from "../appUpdateCopy";
 
 describe("Studio updater status copy", () => {
   it("shows the actual install failure before release notes", () => {

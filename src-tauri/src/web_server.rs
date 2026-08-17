@@ -2,7 +2,7 @@ use crate::{
     catalog,
     protocol::{SessionEvent, StartSessionOptions},
     runtime_setup,
-    session::{AttachmentId, EventSink, NetworkPrincipal, SessionManager},
+    session::{AttachmentId, EventSink, NetworkPrincipal, SessionManager, DUPLICATE_RESUME_ERROR},
     store,
 };
 use axum::{
@@ -100,6 +100,7 @@ impl ServerOptions {
         let mut token_file: Option<PathBuf> = None;
         let mut origins = Vec::new();
         let mut roots = Vec::new();
+        let mut default_root = None;
         let mut values = args.into_iter().map(Into::into).skip(1);
         while let Some(argument) = values.next() {
             match argument.as_str() {
@@ -127,6 +128,12 @@ impl ServerOptions {
                     roots.push(PathBuf::from(require_arg(
                         &mut values,
                         "--allow-project-root requires a directory",
+                    )?));
+                }
+                "--default-project-root" => {
+                    default_root = Some(PathBuf::from(require_arg(
+                        &mut values,
+                        "--default-project-root requires a directory",
                     )?));
                 }
                 "--help" | "-h" => return Err(usage()),
@@ -171,7 +178,13 @@ impl ServerOptions {
             .iter()
             .map(|root| canonical_allowed_root(root))
             .collect::<Result<Vec<_>, _>>()?;
-        let default_project_dir = allowed_project_roots.first().cloned().unwrap_or_default();
+        let default_project_dir = match default_root {
+            Some(root) => {
+                authorize_project_dir(root.to_string_lossy().as_ref(), &allowed_project_roots)
+                    .map_err(|error| format!("Invalid default project root: {error}"))?
+            }
+            None => allowed_project_roots.first().cloned().unwrap_or_default(),
+        };
 
         let bearer_token = match token_file {
             Some(path) => std::fs::read_to_string(&path).map_err(|error| {
@@ -242,7 +255,7 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
     let api = Router::new()
         .route("/health", get(health))
         .route("/config", get(config))
-        .route("/directories", get(directories))
+        .route("/directories", get(directories).post(create_directory))
         .route("/stored-sessions", get(stored_sessions))
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
@@ -371,6 +384,68 @@ struct DirectoryQuery {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateDirectoryRequest {
+    parent: String,
+    name: String,
+}
+
+/// Creates one directory inside an already-authorized parent.
+///
+/// `authorize_project_dir` canonicalizes its argument, so it cannot vet a path
+/// that does not exist yet. The parent is authorized instead -- it exists, so it
+/// canonicalizes, and resolving it first collapses any symlink before the child
+/// name is joined on. The name itself is required to be a single plain segment,
+/// which is what keeps `..` and absolute paths from escaping that parent.
+async fn create_directory(
+    State(state): State<ServerState>,
+    Json(request): Json<CreateDirectoryRequest>,
+) -> Result<Json<Value>, ServerError> {
+    let roots = state.security.allowed_project_roots.to_vec();
+    let parent = authorize_project_dir(&request.parent, &roots).map_err(ServerError::forbidden)?;
+    let name = request.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(ServerError::forbidden("Enter a folder name"));
+    }
+    if name.len() > 128 {
+        return Err(ServerError::forbidden(
+            "Folder names are limited to 128 characters",
+        ));
+    }
+    if Path::new(&name).components().count() != 1
+        || name.contains('/')
+        || name.contains('\\')
+        || name.starts_with('.')
+    {
+        return Err(ServerError::forbidden(
+            "Folder names must be a single segment and cannot start with a dot",
+        ));
+    }
+    let target = parent.join(&name);
+    // The parent is canonical and the name is a single plain segment, so this is
+    // belt-and-braces -- but containment is the whole security boundary here.
+    if !roots.iter().any(|root| target.starts_with(root)) {
+        return Err(ServerError::forbidden(
+            "That folder would fall outside the bridge's allowed project roots",
+        ));
+    }
+    let created = target.clone();
+    tokio::task::spawn_blocking(move || {
+        if created.exists() {
+            return Err(format!("'{name}' already exists"));
+        }
+        std::fs::create_dir(&created).map_err(|error| format!("Could not create '{name}': {error}"))
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Directory create task failed: {error}")))?
+    .map_err(ServerError::forbidden)?;
+    Ok(Json(json!({
+        "version": API_VERSION,
+        "path": target.to_string_lossy(),
+    })))
+}
+
 async fn directories(
     State(state): State<ServerState>,
     Query(query): Query<DirectoryQuery>,
@@ -378,10 +453,8 @@ async fn directories(
     let roots = state.security.allowed_project_roots.to_vec();
     let current = match query.path.filter(|value| !value.trim().is_empty()) {
         Some(path) => authorize_project_dir(&path, &roots).map_err(ServerError::forbidden)?,
-        None => roots
-            .first()
-            .cloned()
-            .ok_or_else(|| ServerError::forbidden("The host has no allowed project roots"))?,
+        None => authorize_project_dir(&state.default_project_dir, &roots)
+            .map_err(ServerError::forbidden)?,
     };
     let current_for_scan = current.clone();
     let entries = tokio::task::spawn_blocking(move || {
@@ -776,7 +849,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         }
     });
 
-    let mut attachment: Option<AttachmentId> = None;
+    let mut attachment: Option<(String, AttachmentId)> = None;
     loop {
         let next = tokio::select! {
             message = socket_rx.next() => message,
@@ -827,6 +900,10 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 };
                 options.project_dir = project.to_string_lossy().into_owned();
                 let sink = socket_sink(outbound.clone());
+                let resume_identity = options
+                    .resume_id
+                    .clone()
+                    .map(|resume_id| (options.project_dir.clone(), resume_id));
                 let principal = NetworkPrincipal {
                     id: format!("studio-web:{gui_id}"),
                     kind: "human",
@@ -834,17 +911,46 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 };
                 match state
                     .manager
-                    .start_network_attached(options, sink, principal)
+                    .start_network_attached(options, sink.clone(), principal)
                     .await
                 {
                     Ok((result, id)) => {
-                        attachment = Some(id);
+                        attachment = Some((result.gui_id.clone(), id));
                         outbound.send(json!({
                             "type": "ready",
                             "guiId": result.gui_id,
                             "projectDir": result.project_dir,
                             "attached": false,
                         }));
+                    }
+                    Err(error) if error == DUPLICATE_RESUME_ERROR && resume_identity.is_some() => {
+                        let (project_dir, resume_id) = resume_identity.expect("checked above");
+                        match state.manager.attach_resume(&project_dir, &resume_id, sink).await {
+                            Ok((live_gui_id, id)) => {
+                                attachment = Some((live_gui_id.clone(), id));
+                                outbound.send(json!({
+                                    "type": "ready",
+                                    "guiId": live_gui_id.clone(),
+                                    "projectDir": project_dir,
+                                    "attached": true,
+                                    "since": 0,
+                                }));
+                                if let Err(error) = state
+                                    .manager
+                                    .send(&live_gui_id, json!({ "op": "history.replay", "since": 0 }))
+                                    .await
+                                {
+                                    outbound.error(error);
+                                } else if let Err(error) = state
+                                    .manager
+                                    .send(&live_gui_id, json!({ "op": "session.status" }))
+                                    .await
+                                {
+                                    outbound.error(error);
+                                }
+                            }
+                            Err(attach_error) => outbound.error(attach_error),
+                        }
                     }
                     Err(error) => outbound.error(error),
                 }
@@ -853,7 +959,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 let sink = socket_sink(outbound.clone());
                 match state.manager.attach(&gui_id, sink).await {
                     Ok(id) => {
-                        attachment = Some(id);
+                        attachment = Some((gui_id.clone(), id));
                         outbound.send(json!({
                             "type": "ready",
                             "guiId": gui_id,
@@ -884,27 +990,29 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 outbound.error("This WebSocket is already attached to a session");
             }
             ClientMessage::Op { op, .. } if attachment.is_some() => {
+                let (attached_gui_id, attachment_id) = attachment.as_ref().expect("checked above");
                 let current = state
                     .manager
-                    .attachment_is_current(&gui_id, attachment.expect("checked above"))
+                    .attachment_is_current(attached_gui_id, *attachment_id)
                     .await
                     .unwrap_or(false);
                 if !current {
                     outbound.error("This connection was replaced by a newer session attachment");
-                } else if let Err(error) = state.manager.send(&gui_id, op).await {
+                } else if let Err(error) = state.manager.send(attached_gui_id, op).await {
                     outbound.error(error);
                 }
             }
             ClientMessage::Stop { .. } if attachment.is_some() => {
+                let (attached_gui_id, attachment_id) = attachment.as_ref().expect("checked above");
                 let current = state
                     .manager
-                    .attachment_is_current(&gui_id, attachment.expect("checked above"))
+                    .attachment_is_current(attached_gui_id, *attachment_id)
                     .await
                     .unwrap_or(false);
                 if !current {
                     outbound.error("This connection was replaced by a newer session attachment");
                 } else {
-                    match state.manager.stop(&gui_id).await {
+                    match state.manager.stop(attached_gui_id).await {
                         Ok(stopped) => {
                             outbound.send(json!({ "type": "stopped", "stopped": stopped }));
                         }
@@ -916,8 +1024,8 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         }
     }
 
-    if let Some(id) = attachment {
-        let _ = state.manager.detach(&gui_id, id).await;
+    if let Some((attached_gui_id, id)) = attachment {
+        let _ = state.manager.detach(&attached_gui_id, id).await;
     }
     writer.abort();
 }
@@ -1101,7 +1209,7 @@ impl IntoResponse for ServerError {
 
 fn usage() -> String {
     format!(
-        "Usage: amplifier-host [--bind 127.0.0.1:4317] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]...\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
+        "Usage: amplifier-host [--bind 127.0.0.1:4317] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]... [--default-project-root PATH]\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
     )
 }
 
@@ -1174,6 +1282,48 @@ mod tests {
             options.allowed_project_roots,
             [root.canonicalize().unwrap()]
         );
+        assert_eq!(options.default_project_dir, root.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn bridge_accepts_an_explicit_default_inside_an_allowed_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("dev");
+        let default = root.join("active-projects");
+        fs::create_dir_all(&default).unwrap();
+        let token = token_file(temp.path());
+        let options = ServerOptions::from_args([
+            "server",
+            "--token-file",
+            token.to_str().unwrap(),
+            "--allow-project-root",
+            root.to_str().unwrap(),
+            "--default-project-root",
+            default.to_str().unwrap(),
+        ])
+        .expect("valid default project root");
+        assert_eq!(options.default_project_dir, default.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn bridge_rejects_a_default_outside_allowed_workspaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("dev");
+        let outside = temp.path().join("private");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let token = token_file(temp.path());
+        let error = ServerOptions::from_args([
+            "server",
+            "--token-file",
+            token.to_str().unwrap(),
+            "--allow-project-root",
+            root.to_str().unwrap(),
+            "--default-project-root",
+            outside.to_str().unwrap(),
+        ])
+        .unwrap_err();
+        assert!(error.contains("Invalid default project root"));
     }
 
     #[test]

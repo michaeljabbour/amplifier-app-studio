@@ -9,7 +9,6 @@
     "core:event:allow-listen",
     "core:event:allow-emit",
     "core:window:default",
-    "core:window:allow-start-dragging",
-    "dialog:default"
+    "core:window:allow-start-dragging"
   ]
 }

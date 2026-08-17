@@ -67,7 +67,7 @@ describe("bridge trust storage", () => {
     });
   });
 
-  it("keeps a named host and updates its last successful project root", () => {
+  it("keeps a named host pinned to the host-configured project home", () => {
     const saved = {
       id: "spark-288f",
       name: "Spark 288f",
@@ -80,7 +80,7 @@ describe("bridge trust storage", () => {
       hostId: saved.id,
       hostName: saved.name,
       hostUrl: saved.url,
-    }, [saved])).toEqual({ ...saved, defaultProjectRoot: "/home/mjabbour/amplifier" });
+    }, [saved], "/home/mjabbour/dev")).toEqual({ ...saved, defaultProjectRoot: "/home/mjabbour/dev" });
   });
 
   it("proves a remote runtime and discovers its default project root before saving", async () => {

@@ -47,6 +47,20 @@ app, or provide `VITE_STUDIO_BRIDGE_URL` at build time. Do not expose the
 bridge directly to a network; approvals and filesystem-capable agent requests
 cross this boundary.
 
+The recommended private mobile setup is Tailscale Serve on the runtime host:
+
+```sh
+tailscale serve --bg 4317
+```
+
+Point Studio at the resulting `https://<host>.<tailnet>.ts.net` URL and allow
+that exact origin in `amplifier-host`. Every iPhone using this private endpoint
+must have Tailscale installed, signed into an authorized tailnet identity, and
+connected. If phones must connect without Tailscale, use a hardened public
+HTTPS reverse proxy or Tailscale Funnel instead; Funnel makes the endpoint
+public, so keep Studio's bearer authentication and strict origin allowlist in
+place.
+
 ## Implemented product surface
 
 - Parallel sessions in independent native tabs
@@ -157,9 +171,17 @@ command:
 
 ```bash
 amplifier-host enable \
-  --allow-project-root /srv/amplifier/projects \
+  --allow-project-root /home/amplifier/dev \
+  --default-project-root /home/amplifier/dev \
   --origin https://sam-lab.example.ts.net
 ```
+
+The allowed root is the highest directory Studio may browse; choose the shared
+workspace parent rather than one existing repository. The default root is where
+the project picker opens. If neither project-root option is supplied,
+`amplifier-host enable` creates and uses `~/dev`. The authenticated Studio picker
+can create a new project folder inside that boundary, but it cannot broaden the
+host allowlist.
 
 `amplifier-host status` reports the redacted configuration and
 `amplifier-host token rotate` replaces the bearer token. The listener always

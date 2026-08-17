@@ -1,19 +1,27 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import type { StoredSession } from "../protocol";
+import { Blocks, FolderKanban, History, MessageCircle, Plus, RadioTower, RefreshCw, Search, Settings, X } from "lucide-solid";
+import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
 
 interface Props {
   sessions: StoredSession[];
+  openSessions: SessionViewState[];
+  activeId?: string;
   loading: boolean;
   error?: string;
   sourceName: string;
   onClose: () => void;
   onRefresh: () => void;
   onResume: (session: StoredSession) => void | Promise<void>;
+  onSelectOpen: (id: string) => void;
+  onNew: () => void;
+  onCapabilities: () => void;
+  onSettings: () => void;
 }
 
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
+  const [searchOpen, setSearchOpen] = createSignal(false);
   const visible = createMemo(() => {
     const needle = query().trim().toLocaleLowerCase();
     const sessions = needle
@@ -29,6 +37,63 @@ export function SessionDrawer(props: Props) {
   return (
     <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
       <aside class="session-drawer" aria-label="Stored sessions">
+        <div class="mobile-drawer-shell">
+          <div class="mobile-drawer-header">
+            <h2>Amplifier</h2>
+            <div>
+              <button
+                type="button"
+                aria-label={searchOpen() ? "Hide session search" : "Search sessions"}
+                classList={{ active: searchOpen() }}
+                onClick={() => setSearchOpen((open) => !open)}
+              ><Search aria-hidden="true" /></button>
+              <button type="button" aria-label="Close navigation" onClick={props.onClose}><X aria-hidden="true" /></button>
+            </div>
+          </div>
+
+          <Show when={searchOpen()}>
+            <label class="mobile-drawer-search">
+              <Search aria-hidden="true" />
+              <input
+                value={query()}
+                onInput={(event) => setQuery(event.currentTarget.value)}
+                placeholder="Search sessions"
+                aria-label="Search sessions"
+                autofocus
+              />
+              <button type="button" onClick={props.onRefresh} aria-label="Refresh sessions"><RefreshCw aria-hidden="true" /></button>
+            </label>
+          </Show>
+
+          <nav class="mobile-drawer-nav" aria-label="Amplifier navigation">
+            <button type="button" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
+            <button type="button" onClick={() => { props.onClose(); props.onNew(); }}><FolderKanban aria-hidden="true" /><span>Projects</span></button>
+            <button type="button" onClick={() => { props.onClose(); props.onCapabilities(); }}><Blocks aria-hidden="true" /><span>Capabilities</span></button>
+            <button type="button" onClick={() => { props.onClose(); props.onSettings(); }}><RadioTower aria-hidden="true" /><span>Remote compute</span></button>
+          </nav>
+
+          <Show when={props.openSessions.length > 0}>
+            <section class="mobile-open-sessions" aria-labelledby="mobile-open-heading">
+              <h3 id="mobile-open-heading">Open</h3>
+              <For each={props.openSessions}>{(session) => (
+                <button
+                  type="button"
+                  classList={{ active: session.guiId === props.activeId }}
+                  onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}
+                >
+                  <MessageCircle aria-hidden="true" />
+                  <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
+                  <i class={`phase-${session.phase}`} aria-hidden="true" />
+                </button>
+              )}</For>
+            </section>
+          </Show>
+
+          <section class="mobile-recent-sessions" aria-labelledby="mobile-recent-heading">
+            <h3 id="mobile-recent-heading"><History aria-hidden="true" /> Recent</h3>
+          </section>
+        </div>
+
         <div class="drawer-heading">
           <div><div class="eyebrow">DURABLE HISTORY · {props.sourceName}</div><h2>Stored sessions</h2></div>
           <button class="icon-button" onClick={props.onClose} aria-label="Close stored sessions">×</button>
@@ -75,6 +140,14 @@ export function SessionDrawer(props: Props) {
           </For>
         </div>
         <div class="drawer-footer">{props.sourceName} · showing {visible().length} of {props.sessions.length} top-level sessions</div>
+        <div class="mobile-drawer-footer">
+          <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
+          <button type="button" class="mobile-runtime-settings" onClick={() => { props.onClose(); props.onSettings(); }}>
+            <span class="mobile-runtime-avatar"><RadioTower aria-hidden="true" /></span>
+            <span><strong>{props.sourceName}</strong><small>Runtime and settings</small></span>
+            <Settings aria-hidden="true" />
+          </button>
+        </div>
       </aside>
     </div>
   );

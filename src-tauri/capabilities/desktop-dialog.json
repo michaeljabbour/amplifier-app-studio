@@ -4,5 +4,5 @@
   "description": "Desktop-only file picker access for attachments and project selection.",
   "windows": ["main"],
   "platforms": ["macOS", "windows", "linux"],
-  "permissions": ["dialog:allow-open"]
+  "permissions": ["dialog:default", "dialog:allow-open"]
 }
