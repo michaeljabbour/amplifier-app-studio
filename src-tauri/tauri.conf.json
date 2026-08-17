@@ -37,6 +37,8 @@
       "icons/icon.ico"
     ],
     "iOS": {
+      "developmentTeam": "K74P73BUKF",
+      "bundleVersion": "21",
       "minimumSystemVersion": "14.0"
     }
   },

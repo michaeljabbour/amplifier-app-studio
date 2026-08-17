@@ -144,17 +144,17 @@
   .settings-header p { display: none; }
   .settings-close { width: 44px; height: 44px; }
   .settings-header { flex: 0 0 auto; }
-  .settings-layout { position: relative; min-height: 0; flex: 1 1 0; display: flex; flex-direction: column; overflow: hidden; }
-  .settings-navigation { min-height: 0; flex: 0 0 auto; display: grid; grid-template-columns: minmax(0,.92fr) minmax(0,1.08fr); align-items: end; gap: 8px; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+  .settings-layout { position: relative; min-height: 0; flex: 1 1 0; display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+  .settings-navigation { position: sticky; z-index: 2; top: 0; min-height: 0; display: grid; grid-template-columns: minmax(0,.92fr) minmax(0,1.08fr); align-items: end; gap: 8px; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; background: var(--panel-2); }
   .settings-search { min-width: 0; height: 44px; margin: 0; }
   .settings-search input { height: 42px; }
   .settings-mobile-section-picker { min-width: 0; display: grid; gap: 5px; }
   .settings-mobile-section-picker > span { overflow: hidden; color: var(--dim); font-size: 11px; font-weight: 650; letter-spacing: .07em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
   .settings-mobile-section-picker select { width: 100%; height: 44px; min-width: 0; border: 1px solid var(--line); border-radius: 0; padding: 0 9px; background: var(--panel); color: var(--text); }
   .settings-navigation nav, .settings-nav-footnote { display: none; }
-  .settings-content { height: 0; min-height: 0; flex: 1 1 0; overflow-x: hidden; overflow-y: scroll; overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+  .settings-content { height: auto; min-height: 0; overflow: visible; }
   .settings-error { margin: 12px 16px 0; font-size: 13px; line-height: 1.45; }
-  .settings-section { padding: 20px 16px 76px; }
+  .settings-section { padding: 20px 16px 32px; }
   .settings-section-heading { padding-bottom: 17px; }
   .settings-section-heading h3 { margin-top: 6px; font-size: 30px; }
   .settings-section-heading p { font-size: 13px; line-height: 1.55; }
@@ -178,9 +178,6 @@
   .runtime-setting-copy strong { font-size: 19px; }
   .runtime-setting-actions button { min-height: 36px; font-size: 12px; }
   .maintenance-grid, .maintenance-commands { grid-template-columns: 1fr; }.maintenance-commands > div { border-right: 0; border-bottom: 1px solid var(--line); }.maintenance-commands > div:last-child { border-bottom: 0; }
-  .settings-scroll-controls { position: absolute; z-index: 3; right: 12px; bottom: 12px; display: flex; gap: 6px; padding: 4px; border: 1px solid var(--line); background: color-mix(in srgb, var(--panel-2) 94%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--text) 12%, transparent); }
-  .settings-scroll-controls button { min-width: 44px; height: 44px; border: 1px solid var(--line-strong); padding: 0 12px; background: var(--panel); color: var(--text); font-family: var(--font-display, inherit); font-size: 13px; }
-  .settings-scroll-controls button:disabled { opacity: .28; }
   .settings-footer { flex: 0 0 auto; gap: 8px; padding: 10px 12px calc(10px + var(--studio-safe-area-bottom, env(safe-area-inset-bottom,0px))); }
   .settings-footer > div { display: none; }
   .settings-footer button { min-width: 0; flex: 1; }

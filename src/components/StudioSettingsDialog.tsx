@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
   RUNTIME_SETTINGS_SECTIONS,
   runtimeSettingByPath,
@@ -73,8 +73,6 @@ export function StudioSettingsDialog(props: Props) {
   const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
-  const [scrollState, setScrollState] = createSignal({ up: false, down: false });
-  let settingsContent: HTMLElement | undefined;
 
   const staged = createMemo(() => Object.values(changes()));
   const studioChanged = createMemo(() => theme() !== props.initialTheme
@@ -93,39 +91,7 @@ export function StudioSettingsDialog(props: Props) {
 
   onMount(() => {
     if (props.runtimeSettingsAvailable) void loadSettings(projectDir(), settingsHost());
-    const updateScrollState = () => {
-      if (!settingsContent) return;
-      const top = settingsContent.scrollTop;
-      const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
-      setScrollState({ up: top > 2, down: remaining > 2 });
-    };
-    const resizeObserver = new ResizeObserver(updateScrollState);
-    const mutationObserver = new MutationObserver(() => requestAnimationFrame(updateScrollState));
-    if (settingsContent) {
-      resizeObserver.observe(settingsContent);
-      mutationObserver.observe(settingsContent, { childList: true, subtree: true });
-    }
-    requestAnimationFrame(updateScrollState);
-    onCleanup(() => {
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
-    });
   });
-
-  const scrollSettings = (direction: -1 | 1) => {
-    if (!settingsContent) return;
-    settingsContent.scrollBy({
-      top: direction * Math.max(240, settingsContent.clientHeight * 0.72),
-      behavior: "smooth",
-    });
-  };
-
-  const trackSettingsScroll = () => {
-    if (!settingsContent) return;
-    const top = settingsContent.scrollTop;
-    const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
-    setScrollState({ up: top > 2, down: remaining > 2 });
-  };
 
   const close = () => {
     props.onThemePreview(props.initialTheme);
@@ -356,7 +322,7 @@ export function StudioSettingsDialog(props: Props) {
             <div class="settings-nav-footnote">29 durable runtime fields · 3 scopes · secrets redacted</div>
           </aside>
 
-          <main class="settings-content" ref={settingsContent} onScroll={trackSettingsScroll}>
+          <main class="settings-content">
             <Show when={error()}><div class="settings-error" role="alert">{error()}</div></Show>
             <Show when={section() === "appearance"}><AppearanceSection theme={theme()} onTheme={previewTheme} /></Show>
             <Show when={section() === "connection"}>
@@ -401,10 +367,6 @@ export function StudioSettingsDialog(props: Props) {
             )}</Show>
             <Show when={section() === "maintenance"}><MaintenanceSection snapshot={snapshot()} loading={loading()} onReload={() => void loadSettings(projectDir(), settingsHost())} /></Show>
           </main>
-          <div class="settings-scroll-controls" role="group" aria-label="Scroll settings">
-            <button type="button" disabled={!scrollState().up} onClick={() => scrollSettings(-1)} aria-label="Previous settings">↑</button>
-            <button type="button" disabled={!scrollState().down} onClick={() => scrollSettings(1)} aria-label="More settings">More&nbsp;↓</button>
-          </div>
         </div>
 
         <footer class="settings-footer">

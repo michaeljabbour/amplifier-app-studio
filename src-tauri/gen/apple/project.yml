@@ -52,7 +52,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.35
-        CFBundleVersion: "20"
+        CFBundleVersion: "21"
     entitlements:
       path: amplifier-studio_iOS/amplifier-studio_iOS.entitlements
     scheme:

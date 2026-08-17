@@ -6,6 +6,7 @@ const mainSource = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const mobileCss = readFileSync(new URL("./mobile.css", import.meta.url), "utf8");
 const settingsCss = readFileSync(new URL("./settings.css", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("./components/StudioSettingsDialog.tsx", import.meta.url), "utf8");
 const mobileViewportSource = readFileSync(new URL("./mobileViewport.ts", import.meta.url), "utf8");
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
 const transcriptSource = readFileSync(new URL("./components/Transcript.tsx", import.meta.url), "utf8");
@@ -47,14 +48,16 @@ describe("mobile layout contracts", () => {
     expect(mobileCss).toMatch(/\.footer-project,[\s\S]*\.footer-model,[\s\S]*display:\s*none/);
   });
 
-  it("uses compact session chrome and a dedicated touch-scroll settings flow", () => {
+  it("uses compact session chrome and one native touch-scroll settings surface", () => {
     expect(mobileCss).toMatch(/\.tab-host,[\s\S]*\.tab-close\s*\{[\s\S]*display:\s*none/);
     expect(mobileCss).toMatch(/\.session-tab\.active \.tab-close\s*\{[\s\S]*display:\s*grid/);
     expect(mobileCss).toMatch(/\.session-tab\s*\{[\s\S]*flex:\s*1 1 168px/);
     expect(settingsCss).toMatch(/\.settings-window\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column/);
-    expect(settingsCss).toMatch(/\.settings-layout\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*overflow:\s*hidden/);
-    expect(settingsCss).toMatch(/\.settings-content\s*\{[\s\S]*height:\s*0;[\s\S]*overflow-y:\s*scroll;[\s\S]*touch-action:\s*pan-y;[\s\S]*-webkit-overflow-scrolling:\s*touch/);
-    expect(settingsCss).toMatch(/\.settings-scroll-controls\s*\{[\s\S]*position:\s*absolute;[\s\S]*display:\s*flex/);
+    expect(settingsCss).toMatch(/\.settings-layout\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*overflow-y:\s*auto;[\s\S]*touch-action:\s*pan-y;[\s\S]*-webkit-overflow-scrolling:\s*touch/);
+    expect(settingsCss).toMatch(/\.settings-navigation\s*\{[\s\S]*position:\s*sticky/);
+    expect(settingsCss).toMatch(/\.settings-content\s*\{[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible/);
+    expect(settingsSource).not.toContain("settings-scroll-controls");
+    expect(settingsSource).not.toContain("More&nbsp;↓");
     expect(settingsCss).toMatch(/\.settings-footer\s*\{[\s\S]*flex:\s*0 0 auto/);
   });
 
