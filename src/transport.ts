@@ -141,6 +141,7 @@ interface BridgeEnvelope {
 const bridgeConnections = new Map<string, BridgeConnection>();
 const BRIDGE_STORAGE_KEY = "amplifier-studio.bridge-url";
 const BRIDGE_TOKEN_STORAGE_KEY = "amplifier-studio.bridge-token";
+const MOBILE_HOST_STORAGE_KEY = "amplifier-studio.mobile-host";
 const HOST_PROTOCOL_VERSION = 1;
 const HOST_API_PREFIX = "/v1/api";
 const WS_PROTOCOL = "amplifier-host.v1";
@@ -280,9 +281,8 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
 export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
   const local: RuntimeHost = { id: "local", name: "This Mac", url: "", tokenRef: "local" };
   if (isMobileRuntime()) {
-    // No local runtime on a phone: the only host is whatever bridge is configured.
-    const url = bridgeBaseUrl();
-    return url ? [{ id: "connected", name: "Connected host", url, tokenRef: "session" }] : [];
+    const host = mobileRuntimeHost();
+    return host ? [host] : [];
   }
   if (isDesktopRuntime()) {
     const remote = await invoke<RuntimeHost[]>("list_runtime_hosts");
@@ -305,18 +305,73 @@ export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
 }
 
 export async function saveRuntimeHost(host: RuntimeHost): Promise<RuntimeHost[]> {
+  if (isMobileRuntime()) {
+    saveBridgeUrl(host.url);
+    const url = bridgeBaseUrl();
+    if (!url) throw new Error("The compute host URL is invalid");
+    const mobileHost = { ...host, url, tokenRef: "session" };
+    localStorage.setItem(MOBILE_HOST_STORAGE_KEY, JSON.stringify(mobileHost));
+    return [mobileHost];
+  }
   requireDesktop();
   return invoke<RuntimeHost[]>("save_runtime_host", { host });
 }
 
 export async function removeRuntimeHost(id: string): Promise<RuntimeHost[]> {
+  if (isMobileRuntime()) {
+    const host = mobileRuntimeHost();
+    if (!host || host.id !== id) return host ? [host] : [];
+    saveBridgeToken("", host.url);
+    localStorage.removeItem(MOBILE_HOST_STORAGE_KEY);
+    saveBridgeUrl("");
+    return [];
+  }
   requireDesktop();
   return invoke<RuntimeHost[]>("remove_runtime_host", { id });
 }
 
 export async function storeRuntimeHostToken(id: string, token: string): Promise<void> {
+  if (isMobileRuntime()) {
+    const host = mobileRuntimeHost();
+    if (!host || host.id !== id) throw new Error(`Unknown Amplifier host '${id}'`);
+    saveBridgeToken(token, host.url);
+    return;
+  }
   requireDesktop();
   await invoke("store_runtime_host_token", { id, token });
+}
+
+function mobileRuntimeHost(): RuntimeHost | undefined {
+  const configured = bridgeBaseUrl();
+  if (!configured) return undefined;
+  const stored = localStorage.getItem(MOBILE_HOST_STORAGE_KEY);
+  if (stored) {
+    try {
+      const host = JSON.parse(stored) as Partial<RuntimeHost>;
+      const url = typeof host.url === "string" ? normalizedBridgeUrl(host.url) : undefined;
+      if (url === configured
+        && typeof host.id === "string" && host.id
+        && typeof host.name === "string" && host.name) {
+        return {
+          id: host.id,
+          name: host.name,
+          url: configured,
+          tokenRef: "session",
+          defaultProjectRoot: typeof host.defaultProjectRoot === "string"
+            ? host.defaultProjectRoot
+            : undefined,
+        };
+      }
+    } catch {
+      // Fall back to a host derived from the explicitly configured bridge.
+    }
+  }
+  return {
+    id: runtimeHostId(configured),
+    name: `Compute · ${new URL(configured).hostname}`,
+    url: configured,
+    tokenRef: "session",
+  };
 }
 
 export function durableRuntimeHostForSession(
