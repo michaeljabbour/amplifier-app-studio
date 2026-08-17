@@ -38,8 +38,8 @@
     ],
     "iOS": {
       "developmentTeam": "K74P73BUKF",
-      "bundleVersion": "22",
-      "minimumSystemVersion": "14.0"
+      "bundleVersion": "23",
+      "minimumSystemVersion": "15.0"
     }
   },
   "plugins": {
