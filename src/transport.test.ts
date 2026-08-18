@@ -6,12 +6,16 @@ import {
   configuredBridgeUrl,
   durableRuntimeHostForSession,
   launchSession,
+  listRuntimeHosts,
   probeRuntimeHost,
   readRuntimeSettings,
+  removeRuntimeHost,
   runtimeHostId,
   saveBridgeToken,
   saveBridgeUrl,
+  saveRuntimeHost,
   stopSession,
+  storeRuntimeHostToken,
 } from "./transport";
 
 describe("bridge trust storage", () => {
@@ -49,6 +53,35 @@ describe("bridge trust storage", () => {
 
     window.history.replaceState({}, "", "/?bridge=http://127.0.0.1:9666");
     expect(configuredBridgeToken()).toBe("");
+  });
+
+  it("persists proven mobile host metadata without invoking desktop-only storage", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("iPhone");
+    const url = "https://spark-288f.example.test";
+    const token = "0123456789abcdef0123456789abcdef";
+    const host = {
+      id: runtimeHostId(`${url}/`),
+      name: "Compute · spark-288f.example.test",
+      url,
+      tokenRef: `keychain:${runtimeHostId(`${url}/`)}`,
+      defaultProjectRoot: "/home/mjabbour/dev",
+    };
+
+    saveBridgeToken(token, url);
+    await expect(saveRuntimeHost(host)).resolves.toEqual([
+      { ...host, url: `${url}/`, tokenRef: "session" },
+    ]);
+    await expect(storeRuntimeHostToken(host.id, token)).resolves.toBeUndefined();
+    await expect(listRuntimeHosts()).resolves.toEqual([
+      { ...host, url: `${url}/`, tokenRef: "session" },
+    ]);
+    expect(configuredBridgeUrl()).toBe(url);
+    expect(configuredBridgeToken()).toBe(token);
+
+    await expect(removeRuntimeHost(host.id)).resolves.toEqual([]);
+    expect(configuredBridgeUrl()).toBe("");
+    expect(configuredBridgeToken(url)).toBe("");
   });
 
   it("turns a proven remote session into a stable durable compute host", () => {

@@ -105,6 +105,12 @@ pub fn resolve_token(id: &str) -> Result<String, String> {
             "No valid macOS Keychain token exists for host '{id}'"
         ));
     }
+    #[cfg(target_os = "windows")]
+    if let Some(account) = host.token_ref.strip_prefix("keychain:") {
+        return windows_resolve_token(account).map_err(|error| {
+            format!("Could not read the secure credential for host '{id}': {error}")
+        });
+    }
     Err(format!(
         "Token reference '{}' is not supported on this platform",
         host.token_ref
@@ -140,10 +146,100 @@ pub fn store_token(id: &str, token: &str) -> Result<(), String> {
         }
         return Err("macOS Keychain rejected the Amplifier Host token".to_owned());
     }
+    #[cfg(target_os = "windows")]
+    if let Some(account) = host.token_ref.strip_prefix("keychain:") {
+        return windows_store_token(account, token)
+            .map_err(|error| format!("Could not protect the credential for host '{id}': {error}"));
+    }
     Err(format!(
-        "Host '{}' does not use a keychain token reference on this platform",
+        "Host '{}' does not use a secure credential reference on this platform",
         host.id
     ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn credential_target(account: &str) -> String {
+    format!("Amplifier Studio/amplifier-host/{account}")
+}
+
+#[cfg(target_os = "windows")]
+fn windows_resolve_token(account: &str) -> Result<String, String> {
+    use windows_sys::Win32::Security::Credentials::{
+        CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
+    };
+
+    let target = credential_target(account);
+    let target_wide = target
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
+    if unsafe { CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) } == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    if credential.is_null() {
+        return Err("Windows Credential Manager returned an empty credential".to_owned());
+    }
+
+    let token_result = unsafe {
+        let credential = &*credential;
+        if credential.CredentialBlob.is_null() || credential.CredentialBlobSize == 0 {
+            Err("Windows Credential Manager returned an empty token".to_owned())
+        } else {
+            let blob = std::slice::from_raw_parts(
+                credential.CredentialBlob,
+                credential.CredentialBlobSize as usize,
+            );
+            String::from_utf8(blob.to_vec())
+                .map(|value| value.trim().to_owned())
+                .map_err(|_| "Windows Credential Manager returned a non-UTF-8 token".to_owned())
+        }
+    };
+    unsafe { CredFree(credential.cast()) };
+
+    let token = token_result?;
+    if !(32..=4096).contains(&token.as_bytes().len()) {
+        return Err("Windows Credential Manager returned an invalid bearer token".to_owned());
+    }
+    Ok(token)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_store_token(account: &str, token: &str) -> Result<(), String> {
+    use windows_sys::Win32::Security::Credentials::{
+        CredWriteW, CREDENTIALW, CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE,
+        CRED_TYPE_GENERIC,
+    };
+
+    if token.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+        return Err(format!(
+            "Windows Credential Manager accepts at most {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes"
+        ));
+    }
+    let target = credential_target(account);
+    let mut target_wide = target
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut username_wide = account
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut token_blob = token.as_bytes().to_vec();
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: target_wide.as_mut_ptr(),
+        CredentialBlobSize: token_blob.len() as u32,
+        CredentialBlob: token_blob.as_mut_ptr(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        UserName: username_wide.as_mut_ptr(),
+        ..Default::default()
+    };
+
+    if unsafe { CredWriteW(&credential, 0) } == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
 }
 
 fn write(hosts: &[RuntimeHost]) -> Result<(), String> {
@@ -222,5 +318,41 @@ mod tests {
         })
         .unwrap_err()
         .contains("HTTPS"));
+    }
+
+    #[test]
+    fn credential_target_is_namespaced_by_host_account() {
+        assert_eq!(
+            credential_target("spark-01"),
+            "Amplifier Studio/amplifier-host/spark-01"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_secure_credentials_round_trip() {
+        use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+
+        let account = format!("credential-test-{}", std::process::id());
+        let token = "amplifier-windows-test-token-000000000000";
+        windows_store_token(&account, token).expect("store disposable Windows credential");
+        let resolved = windows_resolve_token(&account);
+
+        let target = credential_target(&account);
+        let target_wide = target
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        assert_ne!(
+            unsafe { CredDeleteW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0) },
+            0,
+            "delete disposable Windows credential: {}",
+            std::io::Error::last_os_error()
+        );
+
+        assert_eq!(
+            resolved.expect("resolve disposable Windows credential"),
+            token
+        );
     }
 }

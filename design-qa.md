@@ -28,10 +28,13 @@
 7. Final comparison: URL-qualified settings contexts, runtime-matched active project selection, and the unified Amplifier Agent header remove the reported P1 regressions. No visible P0, P1, or P2 findings remain in the compared state.
 8. First transcript pass: P1 remained — moving the jump control fixed its button path, but Web Inspector measured a focused Simulator drag at `scrollTop: 1200` before and after; focus transferred from the textarea to the transcript.
 9. Focused-scroll pass: the keyboard transform was removed, focused pointer/touch defaults are both canceled, and pointer movement is clamped directly onto the transcript. The live bundled handler moved `scrollTop` from `1200` to `1520` for a 320 px upward pan while retaining textarea focus. `Jump to latest` measured `scrollTop: 4644`, `max: 4644`, and removed itself.
+10. Settings-scroll pass: the zero-height nested content scroller and floating `More` controls were removed. The mobile settings layout is now the single native `pan-y` scroll owner, with the section picker sticky inside it and the action footer outside it.
+11. Mobile compute-host persistence: adding a proven HTTPS bridge now stores its non-secret host metadata and activates its URL on-device instead of invoking desktop-only registry and Keychain commands. Removing the host clears the mobile bridge selection and session credential.
 
 ## Verification
 
 - Computer Use + Safari Web Inspector: launched the rebuilt app in Simulator, resumed the long transcript, reproduced the frozen focused state, measured real pointer/touch default cancellation with textarea focus retained, exercised the live pointer-move handler (`1200 → 1520`), and confirmed `Jump to latest` reaches the exact maximum (`4644`) and dismisses itself. The Computer Use drag injector emits down/up but no move events, so live move dispatch was exercised through the attached Inspector rather than inferred from screenshots.
+- Settings follow-up: installed the rebuilt iOS bundle, confirmed the manual paging controls are absent, and measured one eligible native scroll surface in Web Inspector (`clientHeight: 639`, `scrollHeight: 885`, `overflow-y: auto`, `touch-action: pan-y`). Macuse dispatched a 40-step, 350 px upward swipe that visibly moved the Settings body while the sticky section picker and footer remained anchored. Macuse's wheel injector did not reach the iOS web view, so it was not treated as product evidence and no unverified wheel shim was retained.
 - Frontend: 30 files, 155 tests passed.
 - Rust: 46 tests passed, including fresh-client durable reattachment.
 - Native: iPhone Simulator debug build succeeded and the rebuilt bundle was installed on iPhone 17 Pro / iOS 26.5.

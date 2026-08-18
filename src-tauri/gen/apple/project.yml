@@ -2,7 +2,7 @@ name: amplifier-studio
 options:
   bundleIdPrefix: com.amplifier.studio
   deploymentTarget:
-    iOS: 14.0
+    iOS: 15.0
 fileGroups: [../../src]
 configs:
   debug: debug
@@ -51,8 +51,9 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.1.35
-        CFBundleVersion: "20"
+        CFBundleShortVersionString: 0.1.36
+        CFBundleVersion: "23"
+        ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: amplifier-studio_iOS/amplifier-studio_iOS.entitlements
     scheme:

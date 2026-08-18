@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import {
   RUNTIME_SETTINGS_SECTIONS,
   runtimeSettingByPath,
@@ -10,6 +10,7 @@ import type { StudioTheme } from "../theme";
 import { isPathInsideRoot } from "../projectFolders";
 import {
   applyRuntimeSettings,
+  isMobileRuntime,
   listHostDirectories,
   readRuntimeSettings,
   type HostDirectoryListing,
@@ -73,8 +74,6 @@ export function StudioSettingsDialog(props: Props) {
   const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const [error, setError] = createSignal("");
   const [query, setQuery] = createSignal("");
-  const [scrollState, setScrollState] = createSignal({ up: false, down: false });
-  let settingsContent: HTMLElement | undefined;
 
   const staged = createMemo(() => Object.values(changes()));
   const studioChanged = createMemo(() => theme() !== props.initialTheme
@@ -93,39 +92,7 @@ export function StudioSettingsDialog(props: Props) {
 
   onMount(() => {
     if (props.runtimeSettingsAvailable) void loadSettings(projectDir(), settingsHost());
-    const updateScrollState = () => {
-      if (!settingsContent) return;
-      const top = settingsContent.scrollTop;
-      const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
-      setScrollState({ up: top > 2, down: remaining > 2 });
-    };
-    const resizeObserver = new ResizeObserver(updateScrollState);
-    const mutationObserver = new MutationObserver(() => requestAnimationFrame(updateScrollState));
-    if (settingsContent) {
-      resizeObserver.observe(settingsContent);
-      mutationObserver.observe(settingsContent, { childList: true, subtree: true });
-    }
-    requestAnimationFrame(updateScrollState);
-    onCleanup(() => {
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
-    });
   });
-
-  const scrollSettings = (direction: -1 | 1) => {
-    if (!settingsContent) return;
-    settingsContent.scrollBy({
-      top: direction * Math.max(240, settingsContent.clientHeight * 0.72),
-      behavior: "smooth",
-    });
-  };
-
-  const trackSettingsScroll = () => {
-    if (!settingsContent) return;
-    const top = settingsContent.scrollTop;
-    const remaining = settingsContent.scrollHeight - settingsContent.clientHeight - top;
-    setScrollState({ up: top > 2, down: remaining > 2 });
-  };
 
   const close = () => {
     props.onThemePreview(props.initialTheme);
@@ -356,11 +323,12 @@ export function StudioSettingsDialog(props: Props) {
             <div class="settings-nav-footnote">29 durable runtime fields · 3 scopes · secrets redacted</div>
           </aside>
 
-          <main class="settings-content" ref={settingsContent} onScroll={trackSettingsScroll}>
+          <main class="settings-content">
             <Show when={error()}><div class="settings-error" role="alert">{error()}</div></Show>
             <Show when={section() === "appearance"}><AppearanceSection theme={theme()} onTheme={previewTheme} /></Show>
             <Show when={section() === "connection"}>
               <ConnectionSection
+                mobile={isMobileRuntime()}
                 url={url()}
                 token={token()}
                 hosts={props.runtimeHosts}
@@ -401,10 +369,6 @@ export function StudioSettingsDialog(props: Props) {
             )}</Show>
             <Show when={section() === "maintenance"}><MaintenanceSection snapshot={snapshot()} loading={loading()} onReload={() => void loadSettings(projectDir(), settingsHost())} /></Show>
           </main>
-          <div class="settings-scroll-controls" role="group" aria-label="Scroll settings">
-            <button type="button" disabled={!scrollState().up} onClick={() => scrollSettings(-1)} aria-label="Previous settings">↑</button>
-            <button type="button" disabled={!scrollState().down} onClick={() => scrollSettings(1)} aria-label="More settings">More&nbsp;↓</button>
-          </div>
         </div>
 
         <footer class="settings-footer">
@@ -422,7 +386,7 @@ export function StudioSettingsDialog(props: Props) {
             studioChanged={studioChanged()}
             theme={theme()}
             sessionHomeChanged={sessionHomeHostId() !== props.initialSessionHomeHostId}
-            sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This Mac"}
+            sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This computer"}
             saving={saving()}
             onBack={() => setReviewing(false)}
             onApply={() => void apply()}
@@ -472,6 +436,7 @@ function AppearanceSection(props: { theme: StudioTheme; onTheme: (theme: StudioT
 }
 
 function ConnectionSection(props: {
+  mobile: boolean;
   url: string;
   token: string;
   hosts: RuntimeHost[];
@@ -484,13 +449,17 @@ function ConnectionSection(props: {
   onSessionHomeHost: (id: string) => void;
   onRemoveHost: (id: string) => void;
 }) {
-  const savedHosts = () => props.hosts.filter((host) => host.tokenRef.startsWith("keychain:") || host.tokenRef.startsWith("env:"));
+  const savedHosts = () => props.hosts.filter((host) => Boolean(host.url));
   return (
     <div class="settings-section">
-      <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description="Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in macOS Keychain." />
+      <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description={props.mobile
+        ? "Connect this phone to an authenticated compute host. Studio proves the URL and token before making it the home for new sessions."
+        : "Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in the operating system’s secure credential store."} />
       <div class="settings-field-stack">
         <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Use a loopback SSH tunnel on desktop, or HTTPS for a directly reachable remote host.</small></label>
-        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL.</small></label>
+        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>{props.mobile
+          ? "The token remains private to this app session and is never placed in the URL."
+          : "The token stays session-only until the host proves it can start a session. Studio then moves it to the operating system’s secure credential store—never settings, the host registry, or a shared URL."}</small></label>
         <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? "Testing & adding…" : "Add compute host"}</button><small>The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings.</small></div>
       </div>
       <div class="compute-pool">
@@ -500,7 +469,7 @@ function ConnectionSection(props: {
             <For each={savedHosts()}>{(host) => (
               <article>
                 <div><strong>{host.name}</strong><code>{host.url}</code><small>{host.defaultProjectRoot || "Choose a project root when starting"}</small></div>
-                <span>{host.tokenRef.startsWith("keychain:") ? "KEYCHAIN" : "ENV"}</span>
+                <span>{host.tokenRef.startsWith("keychain:") ? "SECURE" : host.tokenRef === "session" ? "SESSION" : "ENV"}</span>
                 <button type="button" disabled={props.removingHost === host.id} onClick={() => props.onRemoveHost(host.id)}>{props.removingHost === host.id ? "Removing…" : "Remove"}</button>
               </article>
             )}</For>
@@ -509,7 +478,7 @@ function ConnectionSection(props: {
         <label class="settings-form-field session-home-field">
           <span>Session home <em>default compute + durable history</em></span>
           <select value={props.sessionHomeHostId} onChange={(event) => props.onSessionHomeHost(event.currentTarget.value)}>
-            <option value="local">This Mac</option>
+            <Show when={!props.mobile}><option value="local">This computer</option></Show>
             <For each={savedHosts()}>{(host) => <option value={host.id}>{host.name}</option>}</For>
           </select>
           <small>New sessions start here by default, and Stored sessions reads this host’s history. Existing sessions remain on the machine where they were created; Studio does not silently migrate them.</small>

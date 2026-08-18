@@ -89,6 +89,7 @@ import { toolContractFailure } from "./providerSafety";
 import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
 import { openGuiIdForStoredSession } from "./sessionSelection";
 import { projectContextForHost } from "./settingsProjectContext";
+import { createLatestAsyncRunner } from "./latestAsync";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
@@ -122,7 +123,7 @@ export default function App() {
   // so the app claims "Runtime setup required" even with a healthy bridge.
   const defaultHostId = isMobileRuntime() ? "connected" : "local";
   const [runtimeHosts, setRuntimeHosts] = createSignal<RuntimeHost[]>(
-    isMobileRuntime() ? [] : [{ id: "local", name: "This Mac", url: "", tokenRef: "local" }],
+    isMobileRuntime() ? [] : [{ id: "local", name: "This computer", url: "", tokenRef: "local" }],
   );
   const [hostProjectRoots, setHostProjectRoots] = createSignal<Record<string, string>>({});
   const [sessionHomeHostId, setSessionHomeHostId] = createSignal(localStorage.getItem(SESSION_HOME_HOST_KEY) || defaultHostId);
@@ -135,6 +136,7 @@ export default function App() {
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
   const pendingInitialPrompts = new Map<string, { runtimeText: string; attachments: ComposerAttachment[] }>();
+  const runLatestRuntimeRefresh = createLatestAsyncRunner<RuntimeStatus>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -905,7 +907,7 @@ export default function App() {
           activeId={activeId()}
           loading={storedLoading()}
           error={storedError()}
-          sourceName={sessionHomeHost()?.name || "This Mac"}
+          sourceName={sessionHomeHost()?.name || "This computer"}
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
           onResume={(session) => void prepareStoredResume(session)}
@@ -1039,14 +1041,15 @@ export default function App() {
   async function refreshRuntime() {
     setRuntimeChecking(true);
     setRuntimeError(undefined);
-    try {
-      const host = sessionHomeHost();
-      setRuntime(await getRuntimeStatus(host?.url || undefined, host?.id || "local"));
-    } catch (error) {
-      setRuntimeError(cleanError(error));
-    } finally {
-      setRuntimeChecking(false);
-    }
+    const host = sessionHomeHost();
+    await runLatestRuntimeRefresh(
+      () => getRuntimeStatus(host?.url || undefined, host?.id || "local"),
+      {
+        commit: setRuntime,
+        reject: (error) => setRuntimeError(cleanError(error)),
+        finish: () => setRuntimeChecking(false),
+      },
+    );
   }
 
   async function refreshTranscription() {
@@ -1254,7 +1257,7 @@ export default function App() {
 
 function sessionHostInput(host?: RuntimeHost): Pick<NewSessionInput, "hostId" | "hostName" | "hostUrl"> {
   if (!host || host.id === "local" || !host.url) {
-    return { hostId: "local", hostName: host?.name || "This Mac" };
+    return { hostId: "local", hostName: host?.name || "This computer" };
   }
   return { hostId: host.id, hostName: host.name, hostUrl: host.url };
 }

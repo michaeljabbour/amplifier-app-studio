@@ -304,16 +304,21 @@ impl SessionManager {
         resume_id: &str,
         sink: EventSink,
     ) -> Result<(String, AttachmentId), String> {
-        let canonical_project = canonical_project_dir(project_dir)?.to_string_lossy().into_owned();
+        let canonical_project = canonical_project_dir(project_dir)?
+            .to_string_lossy()
+            .into_owned();
         let (gui_id, handle) = self
             .sessions
             .lock()
             .await
             .iter()
             .find(|(_, handle)| {
-                handle.resume_identity.as_ref().is_some_and(|(project, session)| {
-                    project == &canonical_project && session == resume_id
-                })
+                handle
+                    .resume_identity
+                    .as_ref()
+                    .is_some_and(|(project, session)| {
+                        project == &canonical_project && session == resume_id
+                    })
             })
             .map(|(gui_id, handle)| (gui_id.clone(), handle.clone()))
             .ok_or_else(|| DUPLICATE_RESUME_ERROR.to_owned())?;
@@ -865,11 +870,14 @@ mod tests {
     #[tokio::test]
     async fn fresh_mobile_client_can_attach_by_durable_resume_identity() {
         let project = tempfile::tempdir().unwrap();
-        let project_path = project.path().canonicalize().unwrap().to_string_lossy().into_owned();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let manager = SessionManager::default();
-        let child = Arc::new(Mutex::new(
-            Command::new("sleep").arg("60").spawn().unwrap(),
-        ));
+        let child = Arc::new(Mutex::new(Command::new("sleep").arg("60").spawn().unwrap()));
         let original_sink: EventSink = Arc::new(|_| {});
         let sink_slot = Arc::new(RwLock::new(Some((1, original_sink))));
         manager.sessions.lock().await.insert(
