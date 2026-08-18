@@ -273,13 +273,14 @@ export function saveBridgeToken(value: string, bridgeUrl = configuredBridgeUrl()
     throw new Error("Bridge tokens must contain 32 to 4096 bytes");
   }
   // Unproven bridge credentials stay session-only. After a native Studio
-  // session starts successfully, App promotes the host token to Keychain.
+  // session starts successfully, App promotes the host token to the operating
+  // system's secure credential store.
   tokens[bridge] = token;
   sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, JSON.stringify({ tokens }));
 }
 
 export async function listRuntimeHosts(): Promise<RuntimeHost[]> {
-  const local: RuntimeHost = { id: "local", name: "This Mac", url: "", tokenRef: "local" };
+  const local: RuntimeHost = { id: "local", name: "This computer", url: "", tokenRef: "local" };
   if (isMobileRuntime()) {
     const host = mobileRuntimeHost();
     return host ? [host] : [];

@@ -52,29 +52,24 @@ jobs:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
     steps:
       - name: Require the identities a release cannot ship without
         run: |
           for name in TAURI_SIGNING_PRIVATE_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             test -n "${!name}" || { echo "$name is required: macOS builds must be signed and notarized" >&2; exit 1; }
           done
-      - name: Report whether Windows will be Authenticode-signed
+      - name: Require Windows Authenticode signing
         run: |
-          if [ -n "$WINDOWS_CERTIFICATE" ] && [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ] && [ -n "$WINDOWS_CERTIFICATE_THUMBPRINT" ]; then
-            echo "Windows installer will be Authenticode-signed."
-          else
-            echo "::warning::Windows Authenticode secrets absent; the installer ships UNSIGNED and will trigger SmartScreen. Updater signing is unaffected."
-          fi
+          for name in WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL; do
+            test -n "${!name}" || { echo "$name is required: Windows installers must be Authenticode-signed and timestamped" >&2; exit 1; }
+          done
 
   publish-desktop:
     needs: [verify, release-preflight]
     permissions:
       contents: write
     environment: release
-    # The `secrets` context is unavailable in step-level `if`, so resolve the
-    # Windows signing decision once here and branch on `env` instead.
-    env:
-      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' && secrets.WINDOWS_CERTIFICATE_THUMBPRINT != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -129,11 +124,8 @@ jobs:
           STUDIO_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$STUDIO_KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -n 1)"
           test -n "$STUDIO_SIGNING_IDENTITY" || { echo "The imported certificate is not a valid Developer ID Application identity" >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$STUDIO_SIGNING_IDENTITY" >> "$GITHUB_ENV"
-      # Skipped when no Authenticode cert is configured: the installer then ships
-      # unsigned rather than blocking the release. Updater signing is separate
-      # and always required.
       - name: Import Windows Authenticode certificate
-        if: matrix.platform == 'windows-latest' && env.SIGN_WINDOWS == 'true'
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -191,6 +183,28 @@ jobs:
           uploadUpdaterJson: false
           args: >-
             --config '{"bundle":{"createUpdaterArtifacts":true,"windows":{"certificateThumbprint":"${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}","digestAlgorithm":"sha256","timestampUrl":"${{ secrets.WINDOWS_TIMESTAMP_URL }}"}},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
+      - name: Verify Windows Authenticode signatures
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) {
+            throw "signtool.exe was not found on the Windows runner"
+          }
+          $artifacts = @(Get-ChildItem "src-tauri\target\release\bundle" -Recurse -File |
+            Where-Object { $_.Extension -in @(".exe", ".msi") })
+          if ($artifacts.Count -eq 0) {
+            throw "No Windows installer artifacts were produced"
+          }
+          foreach ($artifact in $artifacts) {
+            & $signTool.FullName verify /pa /all /v $artifact.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Authenticode verification failed for $($artifact.FullName)"
+            }
+          }
 
   publish-release:
     needs: publish-desktop

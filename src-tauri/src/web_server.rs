@@ -925,7 +925,11 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                     }
                     Err(error) if error == DUPLICATE_RESUME_ERROR && resume_identity.is_some() => {
                         let (project_dir, resume_id) = resume_identity.expect("checked above");
-                        match state.manager.attach_resume(&project_dir, &resume_id, sink).await {
+                        match state
+                            .manager
+                            .attach_resume(&project_dir, &resume_id, sink)
+                            .await
+                        {
                             Ok((live_gui_id, id)) => {
                                 attachment = Some((live_gui_id.clone(), id));
                                 outbound.send(json!({
@@ -937,7 +941,10 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                                 }));
                                 if let Err(error) = state
                                     .manager
-                                    .send(&live_gui_id, json!({ "op": "history.replay", "since": 0 }))
+                                    .send(
+                                        &live_gui_id,
+                                        json!({ "op": "history.replay", "since": 0 }),
+                                    )
                                     .await
                                 {
                                     outbound.error(error);

@@ -1,0 +1,79 @@
+name: Build Android release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-aab:
+    runs-on: ubuntu-22.04
+    environment: release
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Require and install the protected Android upload key
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            test -n "${!name}" || { echo "$name is required for a signed Android release" >&2; exit 1; }
+          done
+          ANDROID_UPLOAD_KEY_PATH="$RUNNER_TEMP/amplifier-studio-upload.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_UPLOAD_KEY_PATH"
+          chmod 600 "$ANDROID_UPLOAD_KEY_PATH"
+          echo "ANDROID_KEYSTORE_PATH=$ANDROID_UPLOAD_KEY_PATH" >> "$GITHUB_ENV"
+      - name: Build signed Android App Bundle
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          npm run tauri -- android build --aab
+      - name: Verify App Bundle signature
+        run: |
+          AAB_PATH="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name '*.aab' -print -quit)"
+          test -n "$AAB_PATH" || { echo "No Android App Bundle was produced" >&2; exit 1; }
+          JARSIGNER_REPORT="$RUNNER_TEMP/android-jarsigner.txt"
+          if ! jarsigner -verify "$AAB_PATH" > "$JARSIGNER_REPORT" 2>&1; then
+            cat "$JARSIGNER_REPORT"
+            exit 1
+          fi
+          grep -Fq "jar verified." "$JARSIGNER_REPORT" || {
+            cat "$JARSIGNER_REPORT"
+            echo "jarsigner did not confirm the App Bundle signature" >&2
+            exit 1
+          }
+          keytool -printcert -jarfile "$AAB_PATH" > "$RUNNER_TEMP/android-upload-certificate.txt"
+          if grep -Fq "CN=Android Debug" "$RUNNER_TEMP/android-upload-certificate.txt"; then
+            echo "The AAB was signed with the Android debug key, not the protected upload key" >&2
+            exit 1
+          fi
+          sha256sum "$AAB_PATH"
+          echo "AAB_PATH=$AAB_PATH" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: amplifier-studio-android-aab
+          path: ${{ env.AAB_PATH }}
+          if-no-files-found: error
+          retention-days: 14

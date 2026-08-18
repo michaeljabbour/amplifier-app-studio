@@ -11,5 +11,14 @@
         "minHeight": 620
       }
     ]
+  },
+  "bundle": {
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      }
+    }
   }
 }

@@ -386,7 +386,7 @@ export function StudioSettingsDialog(props: Props) {
             studioChanged={studioChanged()}
             theme={theme()}
             sessionHomeChanged={sessionHomeHostId() !== props.initialSessionHomeHostId}
-            sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This Mac"}
+            sessionHomeName={props.runtimeHosts.find((host) => host.id === sessionHomeHostId())?.name || "This computer"}
             saving={saving()}
             onBack={() => setReviewing(false)}
             onApply={() => void apply()}
@@ -454,12 +454,12 @@ function ConnectionSection(props: {
     <div class="settings-section">
       <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description={props.mobile
         ? "Connect this phone to an authenticated compute host. Studio proves the URL and token before making it the home for new sessions."
-        : "Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in macOS Keychain."} />
+        : "Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in the operating system’s secure credential store."} />
       <div class="settings-field-stack">
         <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Use a loopback SSH tunnel on desktop, or HTTPS for a directly reachable remote host.</small></label>
         <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>{props.mobile
           ? "The token remains private to this app session and is never placed in the URL."
-          : "The token stays session-only until the host proves it can start a session. Studio then stores it in macOS Keychain—never in settings, the registry, or a shared URL."}</small></label>
+          : "The token stays session-only until the host proves it can start a session. Studio then moves it to the operating system’s secure credential store—never settings, the host registry, or a shared URL."}</small></label>
         <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? "Testing & adding…" : "Add compute host"}</button><small>The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings.</small></div>
       </div>
       <div class="compute-pool">
@@ -469,7 +469,7 @@ function ConnectionSection(props: {
             <For each={savedHosts()}>{(host) => (
               <article>
                 <div><strong>{host.name}</strong><code>{host.url}</code><small>{host.defaultProjectRoot || "Choose a project root when starting"}</small></div>
-                <span>{host.tokenRef.startsWith("keychain:") ? "KEYCHAIN" : host.tokenRef === "session" ? "SESSION" : "ENV"}</span>
+                <span>{host.tokenRef.startsWith("keychain:") ? "SECURE" : host.tokenRef === "session" ? "SESSION" : "ENV"}</span>
                 <button type="button" disabled={props.removingHost === host.id} onClick={() => props.onRemoveHost(host.id)}>{props.removingHost === host.id ? "Removing…" : "Remove"}</button>
               </article>
             )}</For>
@@ -478,7 +478,7 @@ function ConnectionSection(props: {
         <label class="settings-form-field session-home-field">
           <span>Session home <em>default compute + durable history</em></span>
           <select value={props.sessionHomeHostId} onChange={(event) => props.onSessionHomeHost(event.currentTarget.value)}>
-            <Show when={!props.mobile}><option value="local">This Mac</option></Show>
+            <Show when={!props.mobile}><option value="local">This computer</option></Show>
             <For each={savedHosts()}>{(host) => <option value={host.id}>{host.name}</option>}</For>
           </select>
           <small>New sessions start here by default, and Stored sessions reads this host’s history. Existing sessions remain on the machine where they were created; Studio does not silently migrate them.</small>
