@@ -97,9 +97,10 @@ App Store export re-signs the IPA with Apple Distribution. The workflow
 validates the exported IPA before upload and adds the processed build to the
 configured TestFlight group through the App Store Connect API.
 
-Configure the Apple secrets and `IOS_TESTFLIGHT_GROUP` described in the README.
-The API issuer UUID and exact group name must come from App Store Connect; they
-must not be guessed from the key filename or tester email addresses.
+Configure the Apple secrets and `IOS_TESTFLIGHT_GROUPS` described in the
+README. The API issuer UUID and exact group names must come from App Store
+Connect; they must not be guessed from the key filename or tester email
+addresses.
 
 Before claiming TestFlight delivery, verify the workflow upload, Apple's build
 processing state, group assignment, and an actual tester installation as four

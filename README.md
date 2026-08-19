@@ -333,8 +333,8 @@ the selection. GitHub's protected `release` environment holds:
   development-signs the device build before the App Store export re-signs it);
 - `APPLE_KEYCHAIN_PASSWORD`, `APP_STORE_CONNECT_API_KEY_ID`,
   `APP_STORE_CONNECT_ISSUER_ID`, and `APP_STORE_CONNECT_API_PRIVATE_KEY`;
-- `IOS_PROVISIONING_PROFILE_BASE64` plus the non-secret
-  `IOS_TESTFLIGHT_GROUP` environment variable.
+- `IOS_PROVISIONING_PROFILE_BASE64` plus the non-secret, comma-separated
+  `IOS_TESTFLIGHT_GROUPS` environment variable.
 
 The App Store Connect key replaces Apple-ID passwords in CI and is shared by
 macOS notarization and TestFlight delivery.

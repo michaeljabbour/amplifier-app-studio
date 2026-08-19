@@ -24,7 +24,7 @@ jobs:
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-      IOS_TESTFLIGHT_GROUP: ${{ vars.IOS_TESTFLIGHT_GROUP }}
+      IOS_TESTFLIGHT_GROUPS: ${{ vars.IOS_TESTFLIGHT_GROUPS || vars.IOS_TESTFLIGHT_GROUP }}
       IOS_BUNDLE_ID: com.amplifier.studio
     steps:
       - uses: actions/checkout@v7
@@ -41,7 +41,7 @@ jobs:
       - name: Require TestFlight credentials
         shell: bash
         run: |
-          for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_PRIVATE_KEY IOS_PROVISIONING_PROFILE_BASE64 IOS_TESTFLIGHT_GROUP; do
+          for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_PRIVATE_KEY IOS_PROVISIONING_PROFILE_BASE64 IOS_TESTFLIGHT_GROUPS; do
             test -n "${!name}" || { echo "$name is required for TestFlight publishing" >&2; exit 1; }
           done
       - run: npm ci

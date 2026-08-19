@@ -19,7 +19,7 @@ const firstId = (document, description) => {
 export async function assignBuildToTestFlight({
   bundleId,
   buildNumber,
-  groupName,
+  groupNames,
   issuerId,
   keyId,
   privateKey,
@@ -52,19 +52,23 @@ export async function assignBuildToTestFlight({
     description: `App Store processing for build ${buildNumber}`,
   });
 
-  const groupQuery = new URLSearchParams({
-    "filter[app]": appId,
-    "filter[name]": groupName,
-    limit: "1",
-  });
-  const groupId = firstId(await get(`/betaGroups?${groupQuery}`), `TestFlight group ${groupName}`);
-  await requestJson(`${API_ROOT}/betaGroups/${groupId}/relationships/builds`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({ data: [{ type: "builds", id: buildId }] }),
-  }, fetchImpl);
+  const groups = [];
+  for (const groupName of groupNames) {
+    const groupQuery = new URLSearchParams({
+      "filter[app]": appId,
+      "filter[name]": groupName,
+      limit: "1",
+    });
+    const groupId = firstId(await get(`/betaGroups?${groupQuery}`), `TestFlight group ${groupName}`);
+    await requestJson(`${API_ROOT}/betaGroups/${groupId}/relationships/builds`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ data: [{ type: "builds", id: buildId }] }),
+    }, fetchImpl);
+    groups.push({ id: groupId, name: groupName });
+  }
 
-  return { appId, buildId, groupId };
+  return { appId, buildId, groups };
 }
 
 async function main() {
@@ -75,17 +79,20 @@ async function main() {
   const configuration = {
     bundleId: process.env.IOS_BUNDLE_ID || "com.amplifier.studio",
     buildNumber: process.env.IOS_BUILD_NUMBER,
-    groupName: process.env.IOS_TESTFLIGHT_GROUP,
+    groupNames: (process.env.IOS_TESTFLIGHT_GROUPS || process.env.IOS_TESTFLIGHT_GROUP || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
     issuerId: process.env.APP_STORE_CONNECT_ISSUER_ID,
     keyId: process.env.APP_STORE_CONNECT_API_KEY_ID,
     privateKey: await readFile(privateKeyPath, "utf8"),
   };
   for (const [name, value] of Object.entries(configuration)) {
-    if (!value) throw new Error(`${name} is required`);
+    if (!value || (Array.isArray(value) && !value.length)) throw new Error(`${name} is required`);
   }
 
   const result = await assignBuildToTestFlight(configuration);
-  console.log(`Assigned build ${configuration.buildNumber} to ${configuration.groupName} (${result.buildId}).`);
+  console.log(`Assigned build ${configuration.buildNumber} to ${result.groups.map((group) => group.name).join(", ")} (${result.buildId}).`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
