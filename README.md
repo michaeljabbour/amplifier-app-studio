@@ -284,14 +284,25 @@ the model streams, so raw HTML never floods the conversation. Ordinary code
 fences stay code. The complete authoring and security
 contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATION-PROTOCOL.md).
 
-## Publishing desktop updates
+## Publishing releases
 
-The release workflow in `.github/workflows/publish.yml` builds macOS (Apple
-Silicon and Intel), Windows, and Linux packages. It also creates Tauri's signed
-updater artifacts and `latest.json`. Published desktop builds check that file
-after launch and show an **Update _version_** control in the top bar when a
-newer release exists. Updates never interrupt an active turn; the control
-enables after running turns finish or are interrupted.
+A matching `studio-vX.Y.Z` tag fans out into three independently visible
+GitHub workflows:
+
+- `.github/workflows/publish.yml` builds the signed and notarized Apple Silicon
+  desktop app plus the Authenticode-signed Windows installers, then publishes
+  one GitHub Release and cross-platform `latest.json` updater feed;
+- `.github/workflows/ios-testflight.yml` builds an App Store IPA, validates and
+  uploads it with Apple's API key, waits for processing, and assigns it to the
+  configured TestFlight group;
+- `.github/workflows/android-release.yml` builds and verifies the signed AAB,
+  obtains a short-lived Google credential through GitHub OIDC, and commits the
+  bundle to the configured Google Play testing track.
+
+Published desktop builds check `latest.json` after launch and show an
+**Update _version_** control when a newer complete desktop release exists.
+Updates never interrupt an active turn; the control enables after running turns
+finish or are interrupted. Mobile updates remain store-owned.
 
 The updater public key is committed in `src-tauri/tauri.conf.json`. Its
 passwordless private counterpart was generated locally at
@@ -312,34 +323,52 @@ npm run macos:build:signed
 
 The script discovers the certificate without committing a developer-specific
 identity to this open-source repository. `APPLE_SIGNING_IDENTITY` can override
-the selection. GitHub publishing requires `APPLE_CERTIFICATE` (base64 `.p12`),
-`APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_ID`,
-`APPLE_PASSWORD`, and `APPLE_TEAM_ID` secrets in addition to the Tauri updater
-key. The workflow imports the certificate, signs both macOS architectures, and
-lets Tauri notarize them before publishing.
+the selection. GitHub's protected `release` environment holds:
+
+- `APPLE_DEVELOPER_ID_CERTIFICATE_BASE64` and optional
+  `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD` for desktop signing;
+- `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` and optional
+  `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` for an iOS PKCS#12 bundle that
+  contains both Apple Development and Apple Distribution identities (Tauri
+  development-signs the device build before the App Store export re-signs it);
+- `APPLE_KEYCHAIN_PASSWORD`, `APP_STORE_CONNECT_API_KEY_ID`,
+  `APP_STORE_CONNECT_ISSUER_ID`, and `APP_STORE_CONNECT_API_PRIVATE_KEY`;
+- `IOS_PROVISIONING_PROFILE_BASE64` plus the non-secret
+  `IOS_TESTFLIGHT_GROUP` environment variable.
+
+The App Store Connect key replaces Apple-ID passwords in CI and is shared by
+macOS notarization and TestFlight delivery.
 
 Windows releases require `WINDOWS_CERTIFICATE` (base64 `.pfx`),
 `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT` (the
 certificate's 40-character SHA-1 thumbprint), and `WINDOWS_TIMESTAMP_URL`.
 Store all desktop signing secrets in the protected `release` environment so
-its deployment rules act as the human release gate.
+only release tags can request them.
+
+Android signing uses `ANDROID_UPLOAD_KEYSTORE_BASE64`,
+`ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and
+`ANDROID_UPLOAD_KEY_PASSWORD`. Google access does not use a JSON key: the
+`GOOGLE_PLAY_WORKLOAD_IDENTITY_PROVIDER` and `GOOGLE_PLAY_SERVICE_ACCOUNT`
+environment variables identify a workload identity restricted to this
+repository's release tags. The service account must also be granted app access
+inside Google Play Console.
 
 To publish, update the version in `package.json`, `src-tauri/Cargo.toml`,
 `src-tauri/tauri.conf.json`, and the generated iOS `Info.plist`/`project.yml`,
-then push a matching tag such as `studio-v0.2.0`. `npm run release:check`
-rejects a desktop/mobile marketing-version mismatch.
-The tag-triggered workflow holds a draft GitHub Release while all four desktop
-builds finish, generates one complete cross-platform `latest.json`, and then
-publishes the release as the repository's latest release automatically.
+increment the shared mobile build number, then push a matching tag such as
+`studio-v0.2.0`. `npm run release:check` rejects marketing-version, tag, and
+mobile-build mismatches. The desktop workflow holds a draft GitHub Release
+while macOS and Windows finish, generates one complete cross-platform
+`latest.json`, and only then publishes the release as latest.
 `releases/latest/download/latest.json` becomes the update feed only after that
 final job succeeds. Production desktop builds check the canonical Amplifier
 Studio feed by default; set `VITE_STUDIO_UPDATER_ENABLED=false` for a local or
 forked production build that must not check upstream. Development builds leave
 updates disabled unless the flag is explicitly set to `true`.
 
-Android and iOS updates should continue through Google Play and the App Store;
-desktop-style binary replacement is intentionally limited to Windows, macOS,
-and Linux.
+Android and iOS updates continue through Google Play and TestFlight/App Store;
+desktop-style binary replacement is intentionally limited to Windows and
+macOS.
 
 ## Protocol boundary
 

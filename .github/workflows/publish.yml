@@ -1,4 +1,4 @@
-name: Publish Amplifier Studio
+name: Publish desktop release
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - "studio-v*"
 
 concurrency:
-  group: amplifier-studio-release-${{ github.ref }}
+  group: amplifier-studio-desktop-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -35,47 +35,14 @@ jobs:
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  # Deliberately does not wait on `verify`: a missing secret should fail in
-  # seconds, not after a full build. Every previous release died here having
-  # already burned ten minutes.
-  release-preflight:
-    runs-on: ubuntu-22.04
-    environment: release
-    env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
-    steps:
-      - name: Require the identities a release cannot ship without
-        run: |
-          for name in TAURI_SIGNING_PRIVATE_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            test -n "${!name}" || { echo "$name is required: macOS builds must be signed and notarized" >&2; exit 1; }
-          done
-      - name: Require Windows Authenticode signing
-        run: |
-          for name in WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL; do
-            test -n "${!name}" || { echo "$name is required: Windows installers must be Authenticode-signed and timestamped" >&2; exit 1; }
-          done
-
   publish-desktop:
-    needs: [verify, release-preflight]
+    needs: verify
     permissions:
       contents: write
     environment: release
     strategy:
       fail-fast: false
       matrix:
-        # Apple Silicon and Windows are the two shipping targets. Intel macOS and
-        # Linux were dropped: they built green for eleven releases that never
-        # published, and no updater feed has ever offered them.
         include:
           - platform: macos-15
             args: --target aarch64-apple-darwin
@@ -86,11 +53,6 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -104,17 +66,44 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npm run release:check
+      - name: Require macOS signing and notarization credentials
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_API_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY; do
+            test -n "${!name}" || { echo "$name is required for a signed and notarized macOS release" >&2; exit 1; }
+          done
+      - name: Require Windows Authenticode credentials
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          foreach ($name in @("WINDOWS_CERTIFICATE", "WINDOWS_CERTIFICATE_PASSWORD", "WINDOWS_CERTIFICATE_THUMBPRINT", "WINDOWS_TIMESTAMP_URL", "TAURI_SIGNING_PRIVATE_KEY")) {
+            if (-not (Get-Item "env:$name").Value) { throw "$name is required for an Authenticode-signed Windows release" }
+          }
       - name: Import Developer ID certificate
         if: startsWith(matrix.platform, 'macos')
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
-          test -n "$APPLE_CERTIFICATE" || { echo "APPLE_CERTIFICATE is required for macOS releases" >&2; exit 1; }
-          STUDIO_CERTIFICATE_PATH="$RUNNER_TEMP/amplifier-studio.p12"
+          STUDIO_CERTIFICATE_PATH="$RUNNER_TEMP/amplifier-studio-developer-id.p12"
           STUDIO_KEYCHAIN_PATH="$RUNNER_TEMP/amplifier-studio-signing.keychain-db"
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode > "$STUDIO_CERTIFICATE_PATH"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$STUDIO_CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$STUDIO_KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$STUDIO_KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$STUDIO_KEYCHAIN_PATH"
@@ -122,8 +111,21 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$STUDIO_KEYCHAIN_PATH"
           security list-keychains -d user -s "$STUDIO_KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
           STUDIO_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$STUDIO_KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -n 1)"
-          test -n "$STUDIO_SIGNING_IDENTITY" || { echo "The imported certificate is not a valid Developer ID Application identity" >&2; exit 1; }
+          test -n "$STUDIO_SIGNING_IDENTITY" || { echo "The imported certificate does not contain a Developer ID Application identity" >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$STUDIO_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+      - name: Configure App Store Connect notarization key
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
+        run: |
+          APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$APPLE_API_KEY_PATH"
+          chmod 600 "$APPLE_API_KEY_PATH"
+          echo "APPLE_API_KEY=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_PATH=$APPLE_API_KEY_PATH" >> "$GITHUB_ENV"
       - name: Import Windows Authenticode certificate
         if: matrix.platform == 'windows-latest'
         shell: pwsh
@@ -153,14 +155,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
           VITE_STUDIO_UPDATER_ENABLED: "true"
         with:
           tagName: studio-v__VERSION__
           releaseName: Amplifier Studio v__VERSION__
-          releaseBody: See the assets below to install or update Amplifier Studio.
+          releaseBody: Signed desktop installers and updater artifacts for Amplifier Studio.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: false
@@ -177,7 +179,7 @@ jobs:
         with:
           tagName: studio-v__VERSION__
           releaseName: Amplifier Studio v__VERSION__
-          releaseBody: See the assets below to install or update Amplifier Studio.
+          releaseBody: Signed desktop installers and updater artifacts for Amplifier Studio.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: false
@@ -191,20 +193,21 @@ jobs:
             Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1
-          if (-not $signTool) {
-            throw "signtool.exe was not found on the Windows runner"
-          }
+          if (-not $signTool) { throw "signtool.exe was not found on the Windows runner" }
           $artifacts = @(Get-ChildItem "src-tauri\target\release\bundle" -Recurse -File |
             Where-Object { $_.Extension -in @(".exe", ".msi") })
-          if ($artifacts.Count -eq 0) {
-            throw "No Windows installer artifacts were produced"
-          }
+          if ($artifacts.Count -eq 0) { throw "No Windows installer artifacts were produced" }
           foreach ($artifact in $artifacts) {
             & $signTool.FullName verify /pa /all /v $artifact.FullName
-            if ($LASTEXITCODE -ne 0) {
-              throw "Authenticode verification failed for $($artifact.FullName)"
-            }
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $($artifact.FullName)" }
           }
+      - name: Verify macOS signature and notarization ticket
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          APP_PATH="$(find src-tauri/target -type d -path '*/release/bundle/macos/Amplifier Studio.app' -print -quit)"
+          test -n "$APP_PATH" || { echo "Amplifier Studio.app was not produced" >&2; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
 
   publish-release:
     needs: publish-desktop
@@ -225,7 +228,23 @@ jobs:
         run: gh release download "$TAG_NAME" --dir release-assets
       - name: Build one cross-platform updater manifest
         run: node scripts/merge-update-manifest.mjs "$TAG_NAME" release-assets
-      - name: Replace partial updater metadata and publish exactly one release
+      - name: Publish exactly one complete desktop release
         run: |
           gh release upload "$TAG_NAME" release-assets/latest.json --clobber
           gh release edit "$TAG_NAME" --draft=false --latest
+      - name: Verify the public updater feed
+        run: |
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" \
+            --output public-latest.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const manifest = JSON.parse(readFileSync("public-latest.json", "utf8"));
+            const expected = JSON.parse(readFileSync("package.json", "utf8")).version;
+            if (manifest.version !== expected) throw new Error(`public updater is ${manifest.version}; expected ${expected}`);
+            for (const platform of ["darwin-aarch64", "windows-x86_64"]) {
+              if (!manifest.platforms?.[platform]?.url || !manifest.platforms?.[platform]?.signature) {
+                throw new Error(`public updater is missing ${platform}`);
+              }
+            }
+          '

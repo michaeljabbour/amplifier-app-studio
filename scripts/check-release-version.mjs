@@ -3,12 +3,15 @@ import { execFileSync } from "node:child_process";
 
 const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const tauriVersion = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).version;
+const tauriConfig = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const cargo = readFileSync(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
 const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 const iosInfo = readFileSync(new URL("../src-tauri/gen/apple/amplifier-studio_iOS/Info.plist", import.meta.url), "utf8");
 const iosMarketingVersion = iosInfo.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+const iosBuildNumber = iosInfo.match(/<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
 const iosProject = readFileSync(new URL("../src-tauri/gen/apple/project.yml", import.meta.url), "utf8");
 const iosProjectVersion = iosProject.match(/^\s*CFBundleShortVersionString:\s*([^\s]+)\s*$/m)?.[1];
+const iosProjectBuildNumber = iosProject.match(/^\s*CFBundleVersion:\s*"?([^"\s]+)"?\s*$/m)?.[1];
 const versions = new Map([
   ["package.json", packageVersion],
   ["src-tauri/Cargo.toml", cargoVersion],
@@ -20,6 +23,21 @@ const versions = new Map([
 for (const [file, version] of versions) {
   if (version !== packageVersion) {
     throw new Error(`${file} has version ${version || "missing"}; expected ${packageVersion}`);
+  }
+}
+
+const mobileBuildNumbers = new Map([
+  ["src-tauri/tauri.conf.json bundle.iOS.bundleVersion", tauriConfig.bundle?.iOS?.bundleVersion],
+  ["src-tauri/gen/apple/amplifier-studio_iOS/Info.plist CFBundleVersion", iosBuildNumber],
+  ["src-tauri/gen/apple/project.yml CFBundleVersion", iosProjectBuildNumber],
+]);
+const expectedBuildNumber = String(tauriConfig.bundle?.iOS?.bundleVersion || "");
+if (!/^\d+$/.test(expectedBuildNumber) || Number(expectedBuildNumber) < 1) {
+  throw new Error(`Mobile build number must be a positive integer; found ${expectedBuildNumber || "missing"}`);
+}
+for (const [file, buildNumber] of mobileBuildNumbers) {
+  if (String(buildNumber || "") !== expectedBuildNumber) {
+    throw new Error(`${file} has build number ${buildNumber || "missing"}; expected ${expectedBuildNumber}`);
   }
 }
 
@@ -52,6 +70,16 @@ if (baseRef) {
       `Studio app version must advance from ${basePackage.version}; current version is ${packageVersion}`,
     );
   }
+  const baseTauriConfig = JSON.parse(execFileSync("git", ["show", `${baseRef}:src-tauri/tauri.conf.json`], {
+    cwd: new URL("..", import.meta.url),
+    encoding: "utf8",
+  }));
+  const baseBuildNumber = Number(baseTauriConfig.bundle?.iOS?.bundleVersion);
+  if (Number(expectedBuildNumber) <= baseBuildNumber) {
+    throw new Error(
+      `Mobile build number must advance from ${baseBuildNumber}; current build number is ${expectedBuildNumber}`,
+    );
+  }
   console.log(`Amplifier Studio release version advances ${basePackage.version} -> ${packageVersion}.`);
 }
 
@@ -60,4 +88,4 @@ if (tag && tag !== `studio-v${packageVersion}`) {
   throw new Error(`Release tag ${tag} does not match studio-v${packageVersion}`);
 }
 
-console.log(`Amplifier Studio release version ${packageVersion} is consistent.`);
+console.log(`Amplifier Studio release version ${packageVersion} and mobile build ${expectedBuildNumber} are consistent.`);

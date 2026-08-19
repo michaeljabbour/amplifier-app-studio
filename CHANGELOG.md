@@ -4,6 +4,14 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.38 — 2026-08-18
+
+- Federated stored-session history across local and configured compute hosts,
+  with origin-aware resume and explicit duplication when recovery is required.
+- Repaired inline DOT rendering and exposed actionable graph errors.
+- Added signed desktop, TestFlight, and Google Play internal publishing lanes
+  with store API verification, mobile build-number gates, and release tests.
+
 ## 0.1.13 — 2026-08-11
 
 - Fixed automatic session restoration after a Finder launch or in-app update

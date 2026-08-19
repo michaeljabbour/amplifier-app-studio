@@ -1,13 +1,31 @@
-name: Build Android release
+name: Publish Android internal build
 
 on:
+  push:
+    tags:
+      - "studio-v*"
   workflow_dispatch:
+    inputs:
+      track:
+        description: Google Play track
+        required: true
+        default: internal
+        type: choice
+        options:
+          - internal
+          - alpha
+          - beta
+
+concurrency:
+  group: amplifier-studio-android-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  signed-aab:
+  play-internal:
     runs-on: ubuntu-22.04
     environment: release
     env:
@@ -15,6 +33,9 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+      GOOGLE_PLAY_PACKAGE_NAME: com.amplifier.studio
+      GOOGLE_PLAY_TRACK: ${{ inputs.track || vars.GOOGLE_PLAY_TRACK || 'internal' }}
+      GOOGLE_PLAY_RELEASE_STATUS: ${{ vars.GOOGLE_PLAY_RELEASE_STATUS || 'completed' }}
       NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@v7
@@ -37,6 +58,8 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - run: npm run release:check
+      - run: npm test
       - name: Require and install the protected Android upload key
         run: |
           for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
@@ -66,7 +89,7 @@ jobs:
           }
           keytool -printcert -jarfile "$AAB_PATH" > "$RUNNER_TEMP/android-upload-certificate.txt"
           if grep -Fq "CN=Android Debug" "$RUNNER_TEMP/android-upload-certificate.txt"; then
-            echo "The AAB was signed with the Android debug key, not the protected upload key" >&2
+            echo "The AAB was signed with the Android debug key" >&2
             exit 1
           fi
           sha256sum "$AAB_PATH"
@@ -76,4 +99,17 @@ jobs:
           name: amplifier-studio-android-aab
           path: ${{ env.AAB_PATH }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+      - name: Authenticate to Google Play with GitHub OIDC
+        id: google-auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - name: Publish to Google Play
+        env:
+          GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
+          GOOGLE_PLAY_RELEASE_NAME: Amplifier Studio ${{ github.ref_name }}
+        run: node scripts/google-play-release.mjs "$AAB_PATH"

@@ -1,4 +1,4 @@
-# Windows and Android certification
+# Windows, Android, and iOS certification
 
 This file distinguishes source readiness from signed, store-certified, and
 published releases. A green build is not certification.
@@ -44,7 +44,9 @@ Before Store submission:
    reached during certification.
 
 If no CA-issued PFX exists, use Azure Artifact Signing or obtain an EV/OV code
-signing identity before enabling the release workflow.
+signing identity before enabling the release workflow. Azure Artifact Signing
+requires a paid account and a human identity-validation step; creating a cloud
+resource without completing that validation is not a signing solution.
 
 ## Android release gate
 
@@ -60,9 +62,11 @@ backup securely, and add these GitHub `release` environment secrets:
 - `ANDROID_UPLOAD_KEY_ALIAS`;
 - `ANDROID_UPLOAD_KEY_PASSWORD`.
 
-Run **Build Android release** manually. It builds a signed `.aab`, verifies its
-JAR signature, and retains it as a short-lived workflow artifact. It does not
-upload to Google Play yet.
+The **Publish Android internal build** workflow builds a signed `.aab`, verifies
+its JAR signature, retains it as a workflow artifact, authenticates with Google
+through GitHub OIDC, and commits the bundle to the configured Play track. The
+service account still needs an app-level Play Console grant before that API
+call can succeed.
 
 Before Play submission:
 
@@ -84,6 +88,23 @@ Before Play submission:
    reviewer location without one-time codes. Do not provide a production user's
    account or require access to a personal tailnet.
 
+## iOS TestFlight gate
+
+The iOS workflow imports Apple Development and Apple Distribution identities,
+the App Store provisioning profile for `com.amplifier.studio`, and a team App
+Store Connect API key. Tauri development-signs its first device build, then the
+App Store export re-signs the IPA with Apple Distribution. The workflow
+validates the exported IPA before upload and adds the processed build to the
+configured TestFlight group through the App Store Connect API.
+
+Configure the Apple secrets and `IOS_TESTFLIGHT_GROUP` described in the README.
+The API issuer UUID and exact group name must come from App Store Connect; they
+must not be guessed from the key filename or tester email addresses.
+
+Before claiming TestFlight delivery, verify the workflow upload, Apple's build
+processing state, group assignment, and an actual tester installation as four
+separate states.
+
 ## Evidence states
 
 - **Built:** compilation produced an installer or AAB.
@@ -94,22 +115,22 @@ Before Play submission:
 
 ## Current Android build evidence (2026-08-18)
 
-A local arm64 debug build completed from this checkout and produced
-`src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`.
+A local release build completed from this checkout and produced
+`src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab`.
 
-- SHA-256: `6d017aea30479529ce565f8f2097ccb8ccb24137a7a183366930af534b543658`
+- version name: `0.1.38`
+- version code: `1038`
 - application ID: `com.amplifier.studio`
 - minimum SDK: 24
 - target SDK: 36
-- declared permissions: `INTERNET`, `RECORD_AUDIO`, and Android's generated
-  non-exported dynamic-receiver permission
-- APK Signature Scheme v2 verification: passed
-- signer: Android Debug, as expected for this diagnostic artifact
+- AAB SHA-256: `54c38be3c4106f5eac80d53db26c7a3a639ac87d725224569da76a79ec3e4b44`
+- `jarsigner` verification: passed
+- upload signer SHA-256: `0E:D7:94:41:4B:E8:6E:04:0B:D9:6C:58:6D:F0:B6:5D:F1:13:E5:D3:F0:7D:B4:79:FA:CE:B6:5C:F5:AD:6D:4C`
 
-This proves Android compilation and debug packaging, not release signing or
-Play upload. On this Mac, `/opt/homebrew/bin/rustc` precedes the Rustup proxy;
-the Android build must run with `$HOME/.cargo/bin` first in `PATH` so Rust can
-locate the installed Android standard library. GitHub's Android workflow uses
-`dtolnay/rust-toolchain`, but the same toolchain-path assertion should be added
-to release preflight to prevent a runner image change from recreating this
-failure.
+This proves release compilation and upload-key signing, not Play upload or
+Google-managed app signing. On this Mac, `/opt/homebrew/bin/rustc` precedes the
+Rustup proxy; the Android build must run with `$HOME/.cargo/bin` first in
+`PATH` so Rust can locate the installed Android standard library. GitHub's
+Android workflow uses `dtolnay/rust-toolchain`, but the same toolchain-path
+assertion should be added to release preflight to prevent a runner image change
+from recreating this failure.

@@ -1,0 +1,101 @@
+name: Publish iOS TestFlight build
+
+on:
+  push:
+    tags:
+      - "studio-v*"
+
+concurrency:
+  group: amplifier-studio-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    environment: release
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TESTFLIGHT_GROUP: ${{ vars.IOS_TESTFLIGHT_GROUP }}
+      IOS_BUNDLE_ID: com.amplifier.studio
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Require TestFlight credentials
+        shell: bash
+        run: |
+          for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_PRIVATE_KEY IOS_PROVISIONING_PROFILE_BASE64 IOS_TESTFLIGHT_GROUP; do
+            test -n "${!name}" || { echo "$name is required for TestFlight publishing" >&2; exit 1; }
+          done
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm test
+      - name: Import Apple signing identities and App Store profile
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/amplifier-studio-distribution.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/amplifier-studio-ios.keychain-db"
+          PROFILE_PATH="$RUNNER_TEMP/amplifier-studio.mobileprovision"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          SIGNING_IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH")"
+          grep -F "Apple Development:" <<< "$SIGNING_IDENTITIES"
+          grep -F "Apple Distribution:" <<< "$SIGNING_IDENTITIES"
+          PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -o - -)"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+      - name: Install App Store Connect API key
+        run: |
+          API_KEY_DIRECTORY="$HOME/.appstoreconnect/private_keys"
+          API_KEY_PATH="$API_KEY_DIRECTORY/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          mkdir -p "$API_KEY_DIRECTORY"
+          printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          echo "APP_STORE_CONNECT_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
+      - name: Build signed App Store IPA
+        run: npm run tauri -- ios build --export-method app-store-connect --ci
+      - name: Locate and verify IPA
+        run: |
+          IPA_PATH="$(find src-tauri/gen/apple -type f -name '*.ipa' -print -quit)"
+          test -n "$IPA_PATH" || { echo "No IPA was produced" >&2; exit 1; }
+          IOS_BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - src-tauri/gen/apple/amplifier-studio_iOS/Info.plist)"
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          echo "IOS_BUILD_NUMBER=$IOS_BUILD_NUMBER" >> "$GITHUB_ENV"
+          xcrun altool --validate-app --file "$IPA_PATH" --type ios \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: amplifier-studio-ios-ipa
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload IPA to App Store Connect
+        run: |
+          xcrun altool --upload-app --file "$IPA_PATH" --type ios \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+      - name: Assign processed build to TestFlight group
+        run: node scripts/app-store-connect-testflight.mjs "$APP_STORE_CONNECT_API_KEY_PATH"

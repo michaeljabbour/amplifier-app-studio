@@ -1,12 +1,13 @@
 {
   "name": "amplifier-app-studio",
   "private": true,
-  "version": "0.1.37",
+  "version": "0.1.38",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:release",
+    "test:release": "node --test scripts/*.node-test.mjs",
     "build": "npm run typecheck && vite build",
     "release:check": "node scripts/check-release-version.mjs",
     "preview": "vite preview",
