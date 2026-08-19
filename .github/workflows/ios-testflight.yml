@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "studio-v*"
+  workflow_dispatch:
 
 concurrency:
   group: amplifier-studio-ios-${{ github.ref }}
@@ -19,6 +20,7 @@ jobs:
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -41,7 +43,7 @@ jobs:
       - name: Require TestFlight credentials
         shell: bash
         run: |
-          for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_PRIVATE_KEY IOS_PROVISIONING_PROFILE_BASE64 IOS_TESTFLIGHT_GROUPS; do
+          for name in APPLE_CERTIFICATE APPLE_TEAM_ID KEYCHAIN_PASSWORD APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_PRIVATE_KEY IOS_PROVISIONING_PROFILE_BASE64 IOS_TESTFLIGHT_GROUPS; do
             test -n "${!name}" || { echo "$name is required for TestFlight publishing" >&2; exit 1; }
           done
       - run: npm ci
@@ -64,8 +66,11 @@ jobs:
           grep -F "Apple Development:" <<< "$SIGNING_IDENTITIES"
           grep -F "Apple Distribution:" <<< "$SIGNING_IDENTITIES"
           PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -o - -)"
+          PROFILE_NAME="$(security cms -D -i "$PROFILE_PATH" | plutil -extract Name raw -o - -)"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "IOS_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
       - name: Install App Store Connect API key
         run: |
           API_KEY_DIRECTORY="$HOME/.appstoreconnect/private_keys"
@@ -75,7 +80,13 @@ jobs:
           chmod 600 "$API_KEY_PATH"
           echo "APP_STORE_CONNECT_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
       - name: Build signed App Store IPA
-        run: npm run tauri -- ios build --export-method app-store-connect --ci
+        run: |
+          npm run tauri -- ios build --export-method app-store-connect --ci -- \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME"
       - name: Locate and verify IPA
         run: |
           IPA_PATH="$(find src-tauri/gen/apple -type f -name '*.ipa' -print -quit)"
