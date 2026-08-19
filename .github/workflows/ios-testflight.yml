@@ -80,8 +80,9 @@ jobs:
             -configuration release \
             -showBuildSettings)"
           grep -F "CODE_SIGN_IDENTITY = Apple Distribution" <<< "$SIGNING_SETTINGS"
-          grep -F "CODE_SIGN_STYLE = Automatic" <<< "$SIGNING_SETTINGS"
+          grep -F "CODE_SIGN_STYLE = Manual" <<< "$SIGNING_SETTINGS"
           grep -F "DEVELOPMENT_TEAM = $APPLE_TEAM_ID" <<< "$SIGNING_SETTINGS"
+          grep -F "PROVISIONING_PROFILE_SPECIFIER = $IOS_PROFILE_NAME" <<< "$SIGNING_SETTINGS"
           IOS_PROFILE_PATH="$IOS_PROFILE_PATH" python3 - <<'PY'
           import hashlib
           import os

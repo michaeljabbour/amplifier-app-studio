@@ -75,7 +75,8 @@ targets:
       configs:
         release:
           CODE_SIGN_IDENTITY: Apple Distribution
-          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: Amplifier Studio App Store CI
       groups: [app]
     dependencies:
       - framework: libapp.a
