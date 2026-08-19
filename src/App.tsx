@@ -10,6 +10,7 @@ import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
 import { SessionToolbar } from "./components/SessionToolbar";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
+import { StoredSessionDialog } from "./components/StoredSessionDialog";
 import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
@@ -60,12 +61,14 @@ import {
   openLocalOutput,
   probeRuntimeHost,
   installRuntime,
+  importStoredSession,
   listenNativeAttachmentDrops,
   localRuntimeSettingsAvailable,
   launchSession,
   listCatalog,
   listRuntimeHosts,
   listStoredSessions,
+  exportStoredSession,
   removeRuntimeHost,
   sendOp,
   saveBridgeToken,
@@ -88,11 +91,18 @@ import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } 
 import { toolContractFailure } from "./providerSafety";
 import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
 import { openGuiIdForStoredSession } from "./sessionSelection";
+import { storedSessionResumeBlocker } from "./sessionAvailability";
 import { projectContextForHost } from "./settingsProjectContext";
 import { createLatestAsyncRunner } from "./latestAsync";
+import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, type FederatedStoredSessions } from "./storedSessions";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
+
+interface StoredSessionRecovery {
+  session: StoredSession;
+  resumeDisabledReason?: string;
+}
 
 export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
@@ -102,6 +112,8 @@ export default function App() {
   const [stored, setStored] = createSignal<StoredSession[]>([]);
   const [storedLoading, setStoredLoading] = createSignal(false);
   const [storedError, setStoredError] = createSignal<string>();
+  const [storedWarning, setStoredWarning] = createSignal<string>();
+  const [storedSessionDialog, setStoredSessionDialog] = createSignal<StoredSessionRecovery>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [studioTheme, setStudioTheme] = createSignal<StudioTheme>(loadStudioTheme());
@@ -137,6 +149,7 @@ export default function App() {
   const restoreTimers = new Map<string, number>();
   const pendingInitialPrompts = new Map<string, { runtimeText: string; attachments: ComposerAttachment[] }>();
   const runLatestRuntimeRefresh = createLatestAsyncRunner<RuntimeStatus>();
+  const runLatestStoredRefresh = createLatestAsyncRunner<FederatedStoredSessions>();
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -191,9 +204,9 @@ export default function App() {
       if (!hosts.some((host) => host.id === sessionHomeHostId())) {
         setSessionHomeHost("local");
       } else if (sessionHomeHostId() !== "local") {
-        void refreshStored();
         void refreshRuntime();
       }
+      void refreshStored();
       const home = hosts.find((host) => host.id === sessionHomeHostId()) || hosts[0];
       if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
@@ -318,6 +331,17 @@ export default function App() {
     } catch (error) {
       pendingInitialPrompts.delete(guiId);
       update(guiId, (current) => markExited(current, undefined, cleanError(error)));
+      if (input.resumeId && cleanError(error).includes("already open in Amplifier Studio")) {
+        const session = stored().find((item) => item.sessionId === input.resumeId
+          && (!input.hostId || item.hostId === input.hostId));
+        if (session) {
+          await close(guiId);
+          setStoredSessionDialog({
+            session,
+            resumeDisabledReason: "This durable session is already open on its owning compute. Duplicate it to continue independently.",
+          });
+        }
+      }
       throw error;
     }
   };
@@ -461,14 +485,27 @@ export default function App() {
   const refreshStored = async () => {
     setStoredLoading(true);
     setStoredError(undefined);
-    try {
-      const host = sessionHomeHost();
-      setStored(await listStoredSessions(undefined, host?.url || undefined, host?.id || "local"));
-    } catch (error) {
-      setStoredError(cleanError(error));
-    } finally {
-      setStoredLoading(false);
-    }
+    setStoredWarning(undefined);
+    const hosts = runtimeHosts().length
+      ? runtimeHosts()
+      : [{ id: "local", name: "This computer", url: "", tokenRef: "local" }];
+    await runLatestStoredRefresh(
+      () => loadStoredSessionsAcrossHosts(hosts, (host) => listStoredSessions(
+        undefined,
+        host.url || undefined,
+        host.id,
+      )),
+      {
+        commit: (result) => {
+          setStored(result.sessions);
+          const message = storedHistoryFailureMessage(result);
+          if (result.failures.length === result.hostsQueried) setStoredError(message);
+          else setStoredWarning(message);
+        },
+        reject: (error) => setStoredError(cleanError(error)),
+        finish: () => setStoredLoading(false),
+      },
+    );
   };
 
   const refreshCatalog = async (projectDir?: string, hostUrl?: string, hostId?: string) => {
@@ -747,7 +784,7 @@ export default function App() {
             installing={runtimeInstalling()}
             error={runtimeError()}
             onSend={startFromHome}
-            onResume={prepareStoredResume}
+            onResume={requestStoredResume}
             onNew={openNew}
             projectDir={knownHostProjectRoot(sessionHomeHost())}
             onChooseProject={chooseHomeProject}
@@ -907,16 +944,28 @@ export default function App() {
           activeId={activeId()}
           loading={storedLoading()}
           error={storedError()}
-          sourceName={sessionHomeHost()?.name || "This computer"}
+          warning={storedWarning()}
+          sourceName={`All compute · ${runtimeHosts().length || 1} host${(runtimeHosts().length || 1) === 1 ? "" : "s"}`}
+          sessionHomeName={sessionHomeHost()?.name || "This computer"}
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
-          onResume={(session) => void prepareStoredResume(session)}
+          onResume={requestStoredResume}
           onSelectOpen={setActiveId}
           onNew={openNew}
           onCapabilities={() => setCapabilitiesOpen(true)}
           onSettings={() => setSettingsOpen(true)}
         />
       </Show>
+      <Show when={storedSessionDialog()} keyed>{(recovery) => (
+        <StoredSessionDialog
+          session={recovery.session}
+          sessionHomeName={sessionHomeHost()?.name || "This computer"}
+          resumeDisabledReason={recovery.resumeDisabledReason}
+          onClose={() => setStoredSessionDialog(undefined)}
+          onResume={() => prepareStoredResume(recovery.session)}
+          onDuplicate={() => duplicateStoredSession(recovery.session)}
+        />
+      )}</Show>
       <Show when={settingsOpen()}>
         <StudioSettingsDialog
           initialProjectDir={settingsProjectDir()}
@@ -1117,23 +1166,72 @@ export default function App() {
     await refreshCatalog(projectDir);
   }
 
+  function requestStoredResume(session: StoredSession) {
+    setDrawerOpen(false);
+    if (storedSessionResumeBlocker(session, false)) {
+      setStoredSessionDialog({ session });
+      return;
+    }
+    void prepareStoredResume(session).catch((error) => setStoredError(cleanError(error)));
+  }
+
   async function prepareStoredResume(session: StoredSession) {
-    const alreadyOpenGuiId = openGuiIdForStoredSession(sessions(), session.sessionId);
+    const alreadyOpenGuiId = openGuiIdForStoredSession(sessions(), session.sessionId, session);
     if (alreadyOpenGuiId) {
       setActiveId(alreadyOpenGuiId);
       setDrawerOpen(false);
+      setStoredSessionDialog(undefined);
       return;
     }
-    const host = sessionHomeHost();
+    const host = runtimeHostForStoredSession(session, runtimeHosts());
+    if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);
     const remembered = session.projectDir || knownHostProjectRoot(host);
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
+    const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
+    if (!projectDir) throw new Error("Choose the original project folder before resuming this session.");
     setDrawerOpen(false);
-    setDialog({
+    setStoredSessionDialog(undefined);
+    await start({
       projectDir: projectDir || "",
       ...sessionHostInput(host),
       resumeId: session.sessionId,
       resumeName: session.name,
+    });
+  }
+
+  async function duplicateStoredSession(session: StoredSession) {
+    const source = runtimeHostForStoredSession(session, runtimeHosts());
+    if (!source) throw new Error(`Reconnect ${session.hostName || "the original compute host"} before duplicating this session.`);
+    if (!session.projectDir) throw new Error("Studio cannot locate the original project store for this session.");
+    const destination = sessionHomeHost();
+    if (!destination) throw new Error("Choose a session-home compute in Settings first.");
+    const destinationProject = destination.url
+      ? await refreshHostProjectRoot(destination).catch(() => knownHostProjectRoot(destination))
+      : await selectProjectFolder(knownHostProjectRoot(destination));
+    if (!destinationProject) throw new Error(`Choose a project folder on ${destination.name} before duplicating this session.`);
+
+    const payload = await exportStoredSession(
+      session.projectDir,
+      session.sessionId,
+      source.url || undefined,
+      source.id,
+    );
+    const copyId = createGuiId();
+    const copyName = `${session.name.replace(/\s+copy(?:\s+\d+)?$/i, "")} copy`;
+    await importStoredSession(
+      destinationProject,
+      payload,
+      copyId,
+      copyName,
+      destination.url || undefined,
+      destination.id,
+    );
+    setStoredSessionDialog(undefined);
+    await refreshStored();
+    await start({
+      projectDir: destinationProject,
+      ...sessionHostInput(destination),
+      resumeId: copyId,
+      resumeName: copyName,
     });
   }
 
@@ -1273,6 +1371,23 @@ function runtimeHostForSession(session: SessionViewState, hosts: RuntimeHost[]):
       tokenRef: "session",
       defaultProjectRoot: session.projectDir,
     } : undefined);
+}
+
+function runtimeHostForStoredSession(session: StoredSession, hosts: RuntimeHost[]): RuntimeHost | undefined {
+  const sessionUrl = session.hostUrl?.replace(/\/$/, "");
+  const configured = hosts.find((host) => host.id === session.hostId
+    || Boolean(sessionUrl && host.url.replace(/\/$/, "") === sessionUrl));
+  if (configured) return configured;
+  if (session.hostId === "local" || (!session.hostId && !session.hostUrl)) {
+    return hosts.find((host) => host.id === "local");
+  }
+  return session.hostUrl ? {
+    id: session.hostId || "configured",
+    name: session.hostName || "Connected host",
+    url: session.hostUrl,
+    tokenRef: "session",
+    defaultProjectRoot: session.projectDir,
+  } : undefined;
 }
 
 function cleanError(error: unknown): string {

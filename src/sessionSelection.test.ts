@@ -24,4 +24,23 @@ describe("openGuiIdForStoredSession", () => {
   it("allows a genuinely closed session to resume", () => {
     expect(openGuiIdForStoredSession([], "durable-789")).toBeUndefined();
   });
+
+  it("does not confuse identical durable ids owned by different compute hosts", () => {
+    const session = createSessionState("gui-spark-a", {
+      projectDir: "/home/mjabbour/dev/project",
+      hostId: "spark-a",
+      hostName: "Spark A",
+      hostUrl: "http://127.0.0.1:4318/",
+      resumeId: "durable-shared",
+    });
+
+    expect(openGuiIdForStoredSession([session], "durable-shared", {
+      hostId: "spark-b",
+      hostUrl: "http://127.0.0.1:4319/",
+    })).toBeUndefined();
+    expect(openGuiIdForStoredSession([session], "durable-shared", {
+      hostId: "spark-a",
+      hostUrl: "http://127.0.0.1:4318",
+    })).toBe("gui-spark-a");
+  });
 });

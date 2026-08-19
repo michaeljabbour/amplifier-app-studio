@@ -9,7 +9,9 @@ interface Props {
   activeId?: string;
   loading: boolean;
   error?: string;
+  warning?: string;
   sourceName: string;
+  sessionHomeName: string;
   onClose: () => void;
   onRefresh: () => void;
   onResume: (session: StoredSession) => void | Promise<void>;
@@ -26,7 +28,7 @@ export function SessionDrawer(props: Props) {
     const needle = query().trim().toLocaleLowerCase();
     const sessions = needle
       ? props.sessions.filter((session) =>
-          [session.name, session.bundle, session.sessionId, session.projectDir, ...session.tags]
+          [session.name, session.bundle, session.sessionId, session.projectDir, session.hostName, ...session.tags]
             .filter(Boolean)
             .some((value) => value?.toLocaleLowerCase().includes(needle)),
         )
@@ -111,18 +113,20 @@ export function SessionDrawer(props: Props) {
         </Show>
 
         <div class="stored-list">
+          <Show when={props.warning}><div class="drawer-warning">{props.warning}</div></Show>
           <For each={visible()}>
             {(session) => {
               const blocker = () => storedSessionResumeBlocker(session, false);
               const note = () => blocker() || storedSessionWarning(session);
               return (
-                <button class="stored-row" disabled={Boolean(blocker())} title={note()} onClick={() => void props.onResume(session)}>
+                <button class="stored-row" classList={{ "needs-recovery": Boolean(blocker()) }} title={note()} onClick={() => void props.onResume(session)}>
                   <div class="stored-topline">
                     <strong>{session.name}</strong>
                     <span>{timeAgo(session.mtimeMs)}</span>
                   </div>
                   <p class="stored-summary">{session.summary}</p>
                   <div class="stored-meta">
+                    <span>{session.hostName || "This computer"}</span><i />
                     <span>{session.bundle}</span><i />
                     <span>{session.turnCount ?? "—"} turns</span><i />
                     <span>{session.messageCount} messages</span>
@@ -144,7 +148,7 @@ export function SessionDrawer(props: Props) {
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
           <button type="button" class="mobile-runtime-settings" onClick={() => { props.onClose(); props.onSettings(); }}>
             <span class="mobile-runtime-avatar"><RadioTower aria-hidden="true" /></span>
-            <span><strong>{props.sourceName}</strong><small>Runtime and settings</small></span>
+            <span><strong>{props.sessionHomeName}</strong><small>Default for new sessions</small></span>
             <Settings aria-hidden="true" />
           </button>
         </div>

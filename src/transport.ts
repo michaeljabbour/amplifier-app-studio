@@ -77,6 +77,15 @@ export interface OutputPreview {
   size?: number;
 }
 
+export interface PortableSession {
+  schema: string;
+  session_id: string;
+  metadata: Record<string, unknown>;
+  transcript: Record<string, unknown>[];
+  sanitized?: boolean;
+  [key: string]: unknown;
+}
+
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 export type NativeAttachment = WithoutId<ComposerAttachment>;
 
@@ -632,6 +641,46 @@ export async function listStoredSessions(projectDir?: string, hostUrl?: string, 
   }
   requireTauri();
   return invoke<StoredSession[]>("list_stored_sessions", { projectDir: clean(projectDir) });
+}
+
+export async function exportStoredSession(
+  projectDir: string,
+  sessionId: string,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<PortableSession> {
+  const bridge = hostId === "local" ? undefined : hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
+  if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
+    const url = hostApiUrl(bridge, "/stored-session-export");
+    url.searchParams.set("projectDir", projectDir.trim());
+    url.searchParams.set("sessionId", sessionId);
+    return fetchJson<PortableSession>(url);
+  }
+  requireTauri();
+  return invoke<PortableSession>("export_stored_session", { projectDir, sessionId });
+}
+
+export async function importStoredSession(
+  projectDir: string,
+  payload: PortableSession,
+  newId: string,
+  name: string | undefined,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<string> {
+  const bridge = hostId === "local" ? undefined : hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
+  if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
+    const result = await fetchJson<{ sessionId: string }>(hostApiUrl(bridge, "/stored-session-import"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectDir, payload, newId, name: clean(name) }),
+    });
+    return result.sessionId;
+  }
+  requireTauri();
+  return invoke<string>("import_stored_session", { projectDir, payload, newId, name: clean(name) });
 }
 
 export async function listCatalog(projectDir?: string, hostUrl?: string, hostId?: string): Promise<CapabilityCatalog> {

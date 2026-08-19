@@ -6,9 +6,9 @@ export function storedSessionResumeBlocker(session: StoredSession, requireProjec
   }
   switch (session.state) {
     case "recovered":
-      return "Only recovered metadata is available, so automatic resume is disabled.";
+      return "The original metadata was recovered from backup. Create an independent copy before continuing.";
     case "indexing":
-      return "This session has transcript data but no metadata record, so it cannot be resumed safely.";
+      return "This session has a conversation but no metadata record. Studio can reconstruct it as an independent copy.";
     case "empty":
       return "This runtime attempt ended before it wrote a resumable conversation.";
     case "corrupt":
@@ -16,6 +16,10 @@ export function storedSessionResumeBlocker(session: StoredSession, requireProjec
     default:
       return undefined;
   }
+}
+
+export function storedSessionCanDuplicate(session: StoredSession): boolean {
+  return session.messageCount > 0 && !["empty", "corrupt", "transcript_lost"].includes(session.state);
 }
 
 export function storedSessionWarning(session: StoredSession): string | undefined {

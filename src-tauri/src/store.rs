@@ -3,10 +3,13 @@ use serde_json::{Map, Value};
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{BufRead, BufReader},
-    path::Path,
-    time::UNIX_EPOCH,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+const SESSION_EXPORT_SCHEMA: &str = "amplifier-tui/session-export/v1";
+const SESSION_EXPORT_SCHEMA_PREFIX: &str = "amplifier-tui/session-export/";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,9 +28,13 @@ pub struct StoredSession {
     pub summary: String,
 }
 
-pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
+fn projects_root() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Could not resolve the home directory".to_owned())?;
-    let projects = home.join(".amplifier/projects");
+    Ok(home.join(".amplifier/projects"))
+}
+
+pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
+    let projects = projects_root()?;
     if !projects.is_dir() {
         return Ok(Vec::new());
     }
@@ -88,6 +95,200 @@ pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSes
     }
     sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
     Ok(sessions)
+}
+
+/// Build the same structured, portable checkpoint used by amplifier-runtime.
+///
+/// Live process state and UI telemetry are intentionally not included. The
+/// imported copy remounts its bundle/provider on the destination compute.
+pub fn export_stored_session(project_dir: String, session_id: String) -> Result<Value, String> {
+    export_stored_session_from(&projects_root()?, project_dir, session_id)
+}
+
+fn export_stored_session_from(
+    projects: &Path,
+    project_dir: String,
+    session_id: String,
+) -> Result<Value, String> {
+    validate_session_id(&session_id)?;
+    let project = canonical_project_dir(&project_dir)?;
+    let session_dir = projects
+        .join(project_slug(&project))
+        .join("sessions")
+        .join(&session_id);
+    if !session_dir.is_dir() {
+        return Err(format!(
+            "Stored session '{session_id}' was not found in this project"
+        ));
+    }
+
+    let transcript = load_transcript_records_with_backup(&session_dir.join("transcript.jsonl"))?
+        .ok_or_else(|| "The stored transcript is corrupt and cannot be duplicated".to_owned())?;
+    if transcript.is_empty() {
+        return Err("This runtime attempt did not write a conversation to duplicate".to_owned());
+    }
+    let (metadata, _) = read_json_with_backup(&session_dir.join("metadata.json"));
+    let mut metadata = metadata.unwrap_or_default();
+    metadata.insert("session_id".to_owned(), Value::String(session_id.clone()));
+    metadata.insert(
+        "working_dir".to_owned(),
+        Value::String(project.to_string_lossy().into_owned()),
+    );
+
+    Ok(serde_json::json!({
+        "schema": SESSION_EXPORT_SCHEMA,
+        "exported_at": unix_timestamp(),
+        "sanitized": false,
+        "tool_io_redacted": false,
+        "session_id": session_id,
+        "metadata": metadata,
+        "transcript": transcript,
+    }))
+}
+
+pub fn import_stored_session(
+    project_dir: String,
+    payload: Value,
+    new_id: String,
+    name: Option<String>,
+) -> Result<String, String> {
+    import_stored_session_into(&projects_root()?, project_dir, payload, new_id, name)
+}
+
+fn import_stored_session_into(
+    projects: &Path,
+    project_dir: String,
+    payload: Value,
+    new_id: String,
+    name: Option<String>,
+) -> Result<String, String> {
+    validate_session_id(&new_id)?;
+    let Value::Object(payload) = payload else {
+        return Err("Session transfer payload must be a JSON object".to_owned());
+    };
+    let schema = payload
+        .get("schema")
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with(SESSION_EXPORT_SCHEMA_PREFIX))
+        .ok_or_else(|| "Session transfer payload has an unrecognized schema".to_owned())?;
+    let transcript = payload
+        .get("transcript")
+        .and_then(Value::as_array)
+        .filter(|records| !records.is_empty())
+        .ok_or_else(|| "Session transfer payload does not contain a conversation".to_owned())?;
+    if transcript.iter().any(|record| !record.is_object()) {
+        return Err("Session transfer transcript contains an invalid record".to_owned());
+    }
+
+    let project = canonical_project_dir(&project_dir)?;
+    let sessions_dir = projects.join(project_slug(&project)).join("sessions");
+    fs::create_dir_all(&sessions_dir)
+        .map_err(|error| format!("Could not prepare the destination session store: {error}"))?;
+    let destination = sessions_dir.join(&new_id);
+    if destination.exists() {
+        return Err(format!("A stored session named '{new_id}' already exists"));
+    }
+    let temporary = sessions_dir.join(format!(".{new_id}.importing"));
+    if temporary.exists() {
+        fs::remove_dir_all(&temporary)
+            .map_err(|error| format!("Could not clear an interrupted session import: {error}"))?;
+    }
+    fs::create_dir(&temporary)
+        .map_err(|error| format!("Could not create the imported session: {error}"))?;
+
+    let result: Result<(), String> = (|| {
+        let mut metadata = payload
+            .get("metadata")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        metadata.insert("session_id".to_owned(), Value::String(new_id.clone()));
+        metadata.insert(
+            "working_dir".to_owned(),
+            Value::String(project.to_string_lossy().into_owned()),
+        );
+        metadata.insert("source_schema".to_owned(), Value::String(schema.to_owned()));
+        metadata.insert("imported_at".to_owned(), Value::String(unix_timestamp()));
+        metadata.insert(
+            "imported_from".to_owned(),
+            Value::String(
+                payload
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+        );
+        metadata.insert(
+            "sanitized".to_owned(),
+            Value::Bool(
+                payload
+                    .get("sanitized")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            ),
+        );
+        if let Some(name) = name.map(|value| value.trim().chars().take(50).collect::<String>()) {
+            if !name.is_empty() {
+                metadata.insert("name".to_owned(), Value::String(name));
+            }
+        }
+
+        let metadata_text = serde_json::to_string_pretty(&Value::Object(metadata))
+            .map_err(|error| format!("Could not encode imported metadata: {error}"))?;
+        fs::write(temporary.join("metadata.json"), metadata_text)
+            .map_err(|error| format!("Could not write imported metadata: {error}"))?;
+        let mut output = File::create(temporary.join("transcript.jsonl"))
+            .map_err(|error| format!("Could not write imported transcript: {error}"))?;
+        for record in transcript {
+            serde_json::to_writer(&mut output, record)
+                .map_err(|error| format!("Could not encode imported transcript: {error}"))?;
+            output
+                .write_all(b"\n")
+                .map_err(|error| format!("Could not write imported transcript: {error}"))?;
+        }
+        output
+            .sync_all()
+            .map_err(|error| format!("Could not finish imported transcript: {error}"))?;
+        fs::rename(&temporary, &destination)
+            .map_err(|error| format!("Could not publish the imported session: {error}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temporary);
+    }
+    result?;
+    Ok(new_id)
+}
+
+fn canonical_project_dir(project_dir: &str) -> Result<PathBuf, String> {
+    let trimmed = project_dir.trim();
+    let project = Path::new(trimmed)
+        .canonicalize()
+        .map_err(|error| format!("Project directory '{trimmed}' is unavailable: {error}"))?;
+    if !project.is_dir() {
+        return Err(format!("'{}' is not a directory", project.display()));
+    }
+    Ok(project)
+}
+
+fn validate_session_id(session_id: &str) -> Result<(), String> {
+    if !(8..=128).contains(&session_id.len())
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("Stored session id contains unsupported characters".to_owned());
+    }
+    Ok(())
+}
+
+fn unix_timestamp() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
 }
 
 fn summarize(
@@ -226,6 +427,50 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
             count: 0,
             summary: TranscriptSummary::default(),
         })
+    }
+}
+
+fn load_transcript_records_with_backup(path: &Path) -> Result<Option<Vec<Value>>, String> {
+    let backup = path.with_file_name("transcript.jsonl.backup");
+    let mut saw_candidate = false;
+    for candidate in [path, backup.as_path()] {
+        if !candidate.is_file() {
+            continue;
+        }
+        saw_candidate = true;
+        let file = match File::open(candidate) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        let mut records = Vec::new();
+        let mut valid = true;
+        for line in BufReader::new(file).lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(&line) {
+                Ok(record @ Value::Object(_)) => records.push(record),
+                _ => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            return Ok(Some(records));
+        }
+    }
+    if saw_candidate {
+        Ok(None)
+    } else {
+        Ok(Some(Vec::new()))
     }
 }
 
@@ -593,5 +838,117 @@ mod tests {
             Some(&project.to_string_lossy().into_owned())
         );
         assert!(!project.exists(), "the test workspace must remain unprobed");
+    }
+
+    #[test]
+    fn portable_session_round_trip_mints_a_new_resumable_copy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let projects = temp.path().join("projects");
+        let source_project = temp.path().join("source");
+        let destination_project = temp.path().join("destination");
+        fs::create_dir_all(&source_project).expect("source project");
+        fs::create_dir_all(&destination_project).expect("destination project");
+        let source_id = "source-session-1234";
+        let source_dir = projects
+            .join(project_slug(
+                &source_project.canonicalize().expect("canonical source"),
+            ))
+            .join("sessions")
+            .join(source_id);
+        fs::create_dir_all(&source_dir).expect("source session");
+        fs::write(
+            source_dir.join("metadata.json"),
+            serde_json::json!({
+                "session_id": source_id,
+                "name": "Original",
+                "bundle": "anchors",
+                "working_dir": source_project,
+            })
+            .to_string(),
+        )
+        .expect("metadata");
+        fs::write(
+            source_dir.join("transcript.jsonl"),
+            "{\"role\":\"user\",\"content\":\"Continue this work\"}\n",
+        )
+        .expect("transcript");
+
+        let payload = export_stored_session_from(
+            &projects,
+            source_project.to_string_lossy().into_owned(),
+            source_id.to_owned(),
+        )
+        .expect("export");
+        let copy_id = "copied-session-5678";
+        assert_eq!(
+            import_stored_session_into(
+                &projects,
+                destination_project.to_string_lossy().into_owned(),
+                payload,
+                copy_id.to_owned(),
+                Some("Original copy".to_owned()),
+            )
+            .expect("import"),
+            copy_id
+        );
+
+        let copy_dir = projects
+            .join(project_slug(
+                &destination_project
+                    .canonicalize()
+                    .expect("canonical destination"),
+            ))
+            .join("sessions")
+            .join(copy_id);
+        let (metadata, _) = read_json_with_backup(&copy_dir.join("metadata.json"));
+        let metadata = metadata.expect("copied metadata");
+        assert_eq!(string_field(&metadata, "session_id"), copy_id);
+        assert_eq!(string_field(&metadata, "imported_from"), source_id);
+        assert_eq!(string_field(&metadata, "name"), "Original copy");
+        assert_eq!(
+            string_field(&metadata, "working_dir"),
+            destination_project
+                .canonicalize()
+                .expect("canonical destination")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            load_transcript_records_with_backup(&copy_dir.join("transcript.jsonl"))
+                .expect("read copied transcript")
+                .expect("valid copied transcript")
+                .len(),
+            1
+        );
+        assert!(source_dir.exists(), "duplicating must preserve the source");
+    }
+
+    #[test]
+    fn portable_session_ids_cannot_escape_the_store() {
+        assert!(validate_session_id("../../escape").is_err());
+        assert!(validate_session_id("valid-session-1234").is_ok());
+    }
+
+    #[test]
+    fn corrupt_session_cannot_be_exported() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let projects = temp.path().join("projects");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let session_id = "corrupt-session-1234";
+        let session_dir = projects
+            .join(project_slug(
+                &project.canonicalize().expect("canonical project"),
+            ))
+            .join("sessions")
+            .join(session_id);
+        fs::create_dir_all(&session_dir).expect("session");
+        fs::write(session_dir.join("transcript.jsonl"), "not json\n").expect("transcript");
+        let error = export_stored_session_from(
+            &projects,
+            project.to_string_lossy().into_owned(),
+            session_id.to_owned(),
+        )
+        .expect_err("corrupt export should fail");
+        assert!(error.contains("corrupt"));
     }
 }

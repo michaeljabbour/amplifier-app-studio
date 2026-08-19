@@ -409,6 +409,10 @@ export interface NewSessionInput {
 
 export interface StoredSession {
   sessionId: string;
+  /** Compute origin is attached by Studio when it federates host histories. */
+  hostId?: string;
+  hostName?: string;
+  hostUrl?: string;
   name: string;
   bundle: string;
   model?: string;

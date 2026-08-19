@@ -336,6 +336,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .modal-backdrop, .drawer-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; background: rgba(2, 5, 9, .68); backdrop-filter: blur(8px); animation: fade-in 130ms ease; }
 .session-dialog { position: relative; width: min(680px, calc(100vw - 48px)); max-height: calc(100dvh - 24px); border: 1px solid var(--line-strong); border-radius: 14px; background: linear-gradient(180deg, #111b28, #0c141e); box-shadow: var(--shadow); overflow: auto; animation: modal-in 180ms ease-out; }
+.stored-session-dialog { width: min(610px, calc(100vw - 32px)); max-height: calc(100dvh - 24px); overflow: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); animation: modal-in 180ms ease-out; }
+.stored-session-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding: 22px 24px 18px; }
+.stored-session-dialog > header h2 { margin: 6px 0 0; color: var(--text); font-size: 21px; }
+.stored-session-dialog > header .icon-button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.stored-session-dialog > header .icon-button svg { width: 17px; }
+.stored-session-origin { display: grid; grid-template-columns: .8fr 1.5fr .9fr; gap: 1px; margin: 18px 24px 0; border: 1px solid var(--line); background: var(--line); }
+.stored-session-origin > div { min-width: 0; padding: 11px 12px; background: var(--panel-2); }
+.stored-session-origin span, .stored-session-origin strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stored-session-origin span { color: var(--dim); font-size: 7px; font-weight: 750; text-transform: uppercase; letter-spacing: .1em; }
+.stored-session-origin strong { margin-top: 5px; color: var(--muted); font: 9px var(--font-mono); }
+.stored-session-health, .stored-session-limit { margin: 14px 24px 0; border-left: 2px solid var(--amber); padding: 8px 10px; background: color-mix(in srgb, var(--amber) 7%, transparent); color: var(--muted); font-size: 9px; line-height: 1.5; }
+.stored-session-dialog .drawer-error { display: block; margin: 14px 24px 0; border-left: 2px solid var(--red); padding: 9px 10px; background: color-mix(in srgb, var(--red) 7%, transparent); text-align: left; line-height: 1.5; }
+.stored-session-choices { display: grid; gap: 9px; padding: 18px 24px 0; }
+.stored-session-choices > button { display: grid; grid-template-columns: 34px minmax(0,1fr); align-items: center; gap: 12px; width: 100%; border: 1px solid var(--line-strong); border-radius: 9px; padding: 13px 14px; background: color-mix(in srgb, var(--panel-2) 96%, var(--blue)); color: var(--text); text-align: left; cursor: pointer; }
+.stored-session-choices > button.primary { border-color: color-mix(in srgb, var(--blue) 48%, var(--line)); background: color-mix(in srgb, var(--panel-2) 91%, var(--blue)); }
+.stored-session-choices > button:hover:not(:disabled) { border-color: var(--blue); }
+.stored-session-choices > button:disabled { opacity: .4; cursor: default; }
+.stored-session-choices > button > svg { width: 21px; color: var(--blue); }
+.stored-session-choices strong, .stored-session-choices small { display: block; }
+.stored-session-choices strong { font-size: 11px; }
+.stored-session-choices small { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.stored-session-limit { border-color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
+.stored-session-footnote { margin: 16px 24px 22px; color: var(--dim); font-size: 8px; line-height: 1.5; }
+.stored-row.needs-recovery, .home-history-row.needs-recovery { border-color: color-mix(in srgb, var(--amber) 24%, var(--line)); }
 .dialog-heading, .drawer-heading { display: flex; justify-content: space-between; align-items: center; padding: 22px 24px 18px; border-bottom: 1px solid var(--line); }.dialog-heading h2, .drawer-heading h2 { margin: 5px 0 0; font-size: 19px; }.dialog-heading .icon-button, .drawer-heading .icon-button { width: 30px; height: 30px; border-radius: 7px; color: var(--muted); font-size: 20px; }
 .resume-chip { display: flex; gap: 12px; align-items: center; margin: 18px 24px 0; padding: 12px; border: 1px solid rgba(79, 183, 255, .2); border-radius: 8px; background: rgba(79, 183, 255, .055); }.resume-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: rgba(79, 183, 255, .12); color: var(--blue); }.resume-chip strong { display: block; font-size: 11px; }.resume-chip code { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
 .field { display: flex; flex-direction: column; gap: 7px; }.full-field { margin: 20px 24px 0; }.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px 24px 22px; }.field > span { color: #9aabba; font-size: 10px; font-weight: 650; }.field em { color: var(--dim); font-size: 8px; font-style: normal; font-weight: 500; }.field input, .field select { height: 37px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 0 10px; outline: 0; background: #0a111a; color: #dbe5ef; font: 11px ui-monospace, monospace; }.field input:focus, .field select:focus { border-color: rgba(79, 183, 255, .5); }.field input::placeholder { color: #425165; }.field small { color: var(--dim); font-size: 8px; line-height: 1.45; }
@@ -969,6 +993,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .composer-left-actions > span { display: none; }
   .modal-backdrop { padding: 8px; }
   .session-dialog { width: 100%; max-height: calc(100dvh - 16px); }
+  .stored-session-dialog { width: 100%; max-height: calc(100dvh - 16px); }
+  .stored-session-dialog > header { padding: 18px 16px 15px; }
+  .stored-session-origin { grid-template-columns: 1fr; margin-inline: 16px; }
+  .stored-session-health, .stored-session-limit, .stored-session-dialog .drawer-error { margin-inline: 16px; }
+  .stored-session-choices { padding-inline: 16px; }
+  .stored-session-footnote { margin-inline: 16px; }
   .dialog-heading { padding: 18px 16px 15px; }
   .full-field { margin: 16px 16px 0; }
   .field-grid { grid-template-columns: 1fr; padding: 16px; }
@@ -1104,4 +1134,32 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .sidebar-session-actions button, .inspector-tabs button { min-height: 44px; }
   .composer-autopilot { min-height: 44px; padding: 0 12px; }
   .drawer-search input, .field input, .field select { min-height: 44px; }
+}
+
+.drawer-warning {
+  margin: 0 14px 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(217, 165, 79, .28);
+  border-radius: 6px;
+  color: var(--amber);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.visual-artifact-error-actions {
+  padding: 26px;
+}
+
+.visual-artifact-error-actions .visual-artifact-error {
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.visual-artifact-error-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }

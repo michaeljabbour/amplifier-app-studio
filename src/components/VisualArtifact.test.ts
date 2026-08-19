@@ -5,6 +5,8 @@ import {
   ARTIFACT_RESIZE_MESSAGE,
   buildSandboxedHtmlDocument,
   clampArtifactHeight,
+  dotArtifactFailureMessage,
+  dotArtifactIsPending,
   isArtifactResizeMessage,
   renderDotArtifact,
   sanitizeVisualSvg,
@@ -82,6 +84,18 @@ describe("visual artifacts", () => {
     expect(result.error).toBeTruthy();
     expect(result.error).toContain("Graphviz rejected it");
     expect(result.error).toMatch(/syntax/i);
+    expect(dotArtifactFailureMessage(result)).toMatch(/Graphviz rejected it.*syntax/i);
+  });
+
+  it("never leaves a failed diagram as a generic blank panel", () => {
+    expect(dotArtifactFailureMessage(undefined, new Error("WASM module unavailable"))).toContain("WASM module unavailable");
+    expect(dotArtifactFailureMessage()).toContain("did not finish loading");
+  });
+
+  it("keeps an unresolved Graphviz resource in its loading state", () => {
+    expect(dotArtifactIsPending(false, "unresolved")).toBe(true);
+    expect(dotArtifactIsPending(true, "pending")).toBe(true);
+    expect(dotArtifactIsPending(false, "ready")).toBe(false);
   });
 
   it("derives inert titles and rejects empty or oversized payloads", () => {

@@ -476,12 +476,12 @@ function ConnectionSection(props: {
           </div>
         </Show>
         <label class="settings-form-field session-home-field">
-          <span>Session home <em>default compute + durable history</em></span>
+          <span>Session home <em>default for new sessions</em></span>
           <select value={props.sessionHomeHostId} onChange={(event) => props.onSessionHomeHost(event.currentTarget.value)}>
             <Show when={!props.mobile}><option value="local">This computer</option></Show>
             <For each={savedHosts()}>{(host) => <option value={host.id}>{host.name}</option>}</For>
           </select>
-          <small>New sessions start here by default, and Stored sessions reads this host’s history. Existing sessions remain on the machine where they were created; Studio does not silently migrate them.</small>
+          <small>New sessions start here by default. History scans this computer and every available compute host, and each resumed session returns to the machine where it was created.</small>
         </label>
       </div>
     </div>

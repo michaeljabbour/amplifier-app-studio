@@ -19,7 +19,7 @@ interface Props {
   installing: boolean;
   error?: string;
   onSend: (text: string, attachments: ComposerAttachment[]) => Promise<void>;
-  onResume: (session: StoredSession) => Promise<void>;
+  onResume: (session: StoredSession) => void | Promise<void>;
   onNew: () => void;
   projectDir: string;
   onChooseProject: () => Promise<void>;
@@ -106,12 +106,13 @@ export function CoordinatorHome(props: Props) {
                 <button
                   type="button"
                   class="home-history-row"
-                  disabled={Boolean(storedSessionResumeBlocker(session, true)) || starting()}
+                  classList={{ "needs-recovery": Boolean(storedSessionResumeBlocker(session, true)) }}
+                  disabled={starting()}
                   title={storedSessionResumeBlocker(session, true)}
-                  onClick={() => void run(() => props.onResume(session))}
+                  onClick={() => void props.onResume(session)}
                 >
                   <strong>{session.name}</strong>
-                  <span>{session.bundle} · {timeAgo(session.mtimeMs)}</span>
+                  <span>{session.hostName || "This computer"} · {session.bundle} · {timeAgo(session.mtimeMs)}</span>
                   <p>{session.summary}</p>
                   <Show when={storedSessionResumeBlocker(session, true)} keyed>{(reason) => <small>{reason}</small>}</Show>
                 </button>
@@ -129,7 +130,7 @@ export function CoordinatorHome(props: Props) {
           <h1>What are we building?</h1>
           <p>Describe the outcome. Amplifier Agent can organize the run, bring in specialists, and keep the work visible.</p>
           <Show when={latest()}>{(session) => (
-            <button type="button" class="home-continue" disabled={starting()} onClick={() => void run(() => props.onResume(session()))}>
+            <button type="button" class="home-continue" disabled={starting()} onClick={() => void props.onResume(session())}>
               <span>Continue recent work</span>
               <strong>{session().name}</strong>
               <small>{session().summary}</small>

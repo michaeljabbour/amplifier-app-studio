@@ -209,6 +209,29 @@ async fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredS
 }
 
 #[tauri::command]
+async fn export_stored_session(project_dir: String, session_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        store::export_stored_session(project_dir, session_id)
+    })
+    .await
+    .map_err(|error| format!("Session export task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn import_stored_session(
+    project_dir: String,
+    payload: Value,
+    new_id: String,
+    name: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        store::import_stored_session(project_dir, payload, new_id, name)
+    })
+    .await
+    .map_err(|error| format!("Session import task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn list_catalog(project_dir: Option<String>) -> Result<CapabilityCatalog, String> {
     tauri::async_runtime::spawn_blocking(move || catalog::list_catalog(project_dir))
         .await
@@ -461,6 +484,8 @@ pub fn run() {
             send_op,
             stop_session,
             list_stored_sessions,
+            export_stored_session,
+            import_stored_session,
             list_catalog,
             add_bundle,
             runtime_status,

@@ -29,10 +29,12 @@ export function VisualArtifact(props: Props) {
   const [showSource, setShowSource] = createSignal(false);
   const [frameHeight, setFrameHeight] = createSignal(420);
   const sourceError = createMemo(() => visualArtifactSourceError(props.source));
-  const [dotSvg] = createResource(
+  const [dotSvg, { refetch: refetchDot }] = createResource(
     () => props.format === "dot" && !sourceError() ? props.source : undefined,
     renderDotArtifact,
   );
+  const dotPending = createMemo(() => dotArtifactIsPending(dotSvg.loading, dotSvg.state));
+  const dotFailure = createMemo(() => dotArtifactFailureMessage(dotSvg(), dotSvg.error));
   const staticSvg = createMemo(() => props.format === "svg" && !sourceError() ? sanitizeVisualSvg(props.source) : undefined);
   const title = createMemo(() => visualArtifactTitle(props.format, props.source));
 
@@ -78,8 +80,13 @@ export function VisualArtifact(props: Props) {
               </Show>
             </Show>
             <Show when={props.format === "dot"}>
-              <Show when={!dotSvg.loading} fallback={<p class="visual-artifact-loading">Laying out diagram…</p>}>
-                <Show when={dotSvg()?.svg} fallback={<p class="visual-artifact-error">This DOT graph could not be rendered{dotSvg()?.error ? `: ${dotSvg()?.error}` : "."}</p>}>
+              <Show when={!dotPending()} fallback={<p class="visual-artifact-loading">Laying out diagram…</p>}>
+                <Show when={dotSvg()?.svg} fallback={
+                  <div class="visual-artifact-error-actions">
+                    <p class="visual-artifact-error">{dotFailure()}</p>
+                    <button type="button" onClick={() => void refetchDot()}>Retry diagram</button>
+                  </div>
+                }>
                   <div class="visual-artifact-svg" innerHTML={dotSvg()?.svg || ""} />
                 </Show>
               </Show>
@@ -198,6 +205,19 @@ export async function renderDotArtifact(source: string): Promise<DotArtifactResu
   if (svg) return { svg };
   console.error("DOT artifact: sanitizer produced no SVG", raw.slice(0, 500));
   return { svg: "", error: raw.includes("<svg") ? "its SVG output was rejected by the sanitizer." : "Graphviz returned no SVG for this graph." };
+}
+
+export function dotArtifactFailureMessage(result?: DotArtifactResult, resourceError?: unknown): string {
+  if (result?.error) return `This DOT graph could not be rendered: ${result.error}`;
+  if (resourceError !== undefined && resourceError !== null) {
+    const detail = resourceError instanceof Error ? resourceError.message : String(resourceError);
+    return `This DOT graph could not be rendered: the diagram engine failed (${detail.replace(/^Error:\s*/, "")}).`;
+  }
+  return "This DOT graph did not finish loading. Retry the diagram or open Source to inspect it.";
+}
+
+export function dotArtifactIsPending(loading: boolean, state: string): boolean {
+  return loading || state === "unresolved";
 }
 
 function isEngineFailure(detail: string): boolean {

@@ -257,6 +257,12 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         .route("/config", get(config))
         .route("/directories", get(directories).post(create_directory))
         .route("/stored-sessions", get(stored_sessions))
+        .route("/stored-session-export", get(stored_session_export))
+        .route(
+            "/stored-session-import",
+            post(stored_session_import)
+                .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         .route("/catalog", get(capability_catalog))
         .route("/catalog/bundles", post(register_bundle))
         .route("/runtime", get(runtime_status))
@@ -503,6 +509,22 @@ struct StoredQuery {
     project_dir: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredSessionExportQuery {
+    project_dir: String,
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredSessionImportRequest {
+    project_dir: String,
+    payload: Value,
+    new_id: String,
+    name: Option<String>,
+}
+
 async fn stored_sessions(
     State(state): State<ServerState>,
     Query(query): Query<StoredQuery>,
@@ -535,6 +557,39 @@ async fn stored_sessions(
     serde_json::to_value(sessions).map(Json).map_err(|error| {
         ServerError::internal(format!("Could not encode stored sessions: {error}"))
     })
+}
+
+async fn stored_session_export(
+    State(state): State<ServerState>,
+    Query(query): Query<StoredSessionExportQuery>,
+) -> Result<Json<Value>, ServerError> {
+    let project = authorize_project_dir(&query.project_dir, &state.security.allowed_project_roots)
+        .map_err(ServerError::forbidden)?;
+    let project_dir = project.to_string_lossy().into_owned();
+    let session_id = query.session_id;
+    let payload =
+        tokio::task::spawn_blocking(move || store::export_stored_session(project_dir, session_id))
+            .await
+            .map_err(|error| ServerError::internal(format!("Session export task failed: {error}")))?
+            .map_err(ServerError::internal)?;
+    Ok(Json(payload))
+}
+
+async fn stored_session_import(
+    State(state): State<ServerState>,
+    Json(request): Json<StoredSessionImportRequest>,
+) -> Result<Json<Value>, ServerError> {
+    let project =
+        authorize_project_dir(&request.project_dir, &state.security.allowed_project_roots)
+            .map_err(ServerError::forbidden)?;
+    let project_dir = project.to_string_lossy().into_owned();
+    let session_id = tokio::task::spawn_blocking(move || {
+        store::import_stored_session(project_dir, request.payload, request.new_id, request.name)
+    })
+    .await
+    .map_err(|error| ServerError::internal(format!("Session import task failed: {error}")))?
+    .map_err(ServerError::internal)?;
+    Ok(Json(json!({ "sessionId": session_id })))
 }
 
 async fn capability_catalog(
