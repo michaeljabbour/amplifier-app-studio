@@ -18,6 +18,7 @@ jobs:
     runs-on: macos-15
     environment: release
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       APPLE_CERTIFICATE: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -30,6 +31,16 @@ jobs:
       IOS_BUNDLE_ID: com.amplifier.studio
     steps:
       - uses: actions/checkout@v7
+      - name: Require App Store Xcode toolchain
+        shell: bash
+        run: |
+          test -d "$DEVELOPER_DIR" || { echo "Required Xcode toolchain is unavailable: $DEVELOPER_DIR" >&2; exit 1; }
+          XCODE_VERSION="$(xcodebuild -version | head -1)"
+          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "$XCODE_VERSION"
+          echo "iOS SDK $IOS_SDK_VERSION"
+          [[ "$XCODE_VERSION" == "Xcode 26."* ]] || { echo "Xcode 26 is required by App Store Connect" >&2; exit 1; }
+          [[ "$IOS_SDK_VERSION" == "26."* ]] || { echo "iOS SDK 26 is required by App Store Connect" >&2; exit 1; }
       - uses: actions/setup-node@v6
         with:
           node-version: 22
