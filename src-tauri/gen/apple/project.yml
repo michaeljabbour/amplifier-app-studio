@@ -75,8 +75,7 @@ targets:
       configs:
         release:
           CODE_SIGN_IDENTITY: Apple Distribution
-          CODE_SIGN_STYLE: Manual
-          PROVISIONING_PROFILE_SPECIFIER: "iOS Team Store Provisioning Profile: com.amplifier.studio"
+          CODE_SIGN_STYLE: Automatic
       groups: [app]
     dependencies:
       - framework: libapp.a
