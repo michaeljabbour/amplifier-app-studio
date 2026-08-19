@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredSession } from "./protocol";
-import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage } from "./storedSessions";
+import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, storedSessionMatchesQuery } from "./storedSessions";
 import type { RuntimeHost } from "./transport";
 
 const hosts: RuntimeHost[] = [
@@ -29,6 +29,16 @@ describe("federated stored sessions", () => {
     expect(result.sessions.map((item) => item.hostId)).toEqual(["spark-a", "spark-b"]);
   });
 
+  it("keeps the same durable id when one host owns copies in different projects", async () => {
+    const result = await loadStoredSessionsAcrossHosts(hosts.slice(1, 2), async () => [
+      session("same-id", 20, { projectSlug: "project-a" }),
+      session("same-id", 10, { projectSlug: "project-b" }),
+    ]);
+
+    expect(result.sessions).toHaveLength(2);
+    expect(result.sessions.map((item) => item.projectSlug)).toEqual(["project-a", "project-b"]);
+  });
+
   it("keeps successful history when one compute host is unavailable", async () => {
     const result = await loadStoredSessionsAcrossHosts(hosts.slice(1), async (host) => {
       if (host.id === "spark-b") throw new Error("bridge timed out");
@@ -39,9 +49,23 @@ describe("federated stored sessions", () => {
     expect(result.failures).toEqual([{ hostId: "spark-b", hostName: "Spark B", message: "bridge timed out" }]);
     expect(storedHistoryFailureMessage(result)).toBe("History is partial. Could not reach Spark B.");
   });
+
+  it("searches summaries and bounded conversation text with multi-term queries", () => {
+    const item = session("stored-1", 10, {
+      hostName: "Spark 288f",
+      projectDir: "/home/mjabbour/dev/runtime",
+      summary: "Last update: release verification complete.",
+      searchText: "Earlier we diagnosed the federated history scanner and repaired Graphviz rendering.",
+    });
+
+    expect(storedSessionMatchesQuery(item, "federated graphviz")).toBe(true);
+    expect(storedSessionMatchesQuery(item, "spark runtime")).toBe(true);
+    expect(storedSessionMatchesQuery(item, "release verification")).toBe(true);
+    expect(storedSessionMatchesQuery(item, "missing phrase")).toBe(false);
+  });
 });
 
-function session(sessionId: string, mtimeMs: number): StoredSession {
+function session(sessionId: string, mtimeMs: number, overrides: Partial<StoredSession> = {}): StoredSession {
   return {
     sessionId,
     name: sessionId,
@@ -52,5 +76,6 @@ function session(sessionId: string, mtimeMs: number): StoredSession {
     projectSlug: "project",
     state: "ok",
     summary: "Stored work",
+    ...overrides,
   };
 }

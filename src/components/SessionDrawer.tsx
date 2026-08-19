@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Blocks, FolderKanban, History, MessageCircle, Plus, RadioTower, RefreshCw, Search, Settings, X } from "lucide-solid";
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
+import { storedSessionMatchesQuery } from "../storedSessions";
 
 interface Props {
   sessions: StoredSession[];
@@ -24,17 +25,14 @@ interface Props {
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
-  const visible = createMemo(() => {
-    const needle = query().trim().toLocaleLowerCase();
-    const sessions = needle
-      ? props.sessions.filter((session) =>
-          [session.name, session.bundle, session.sessionId, session.projectDir, session.hostName, ...session.tags]
-            .filter(Boolean)
-            .some((value) => value?.toLocaleLowerCase().includes(needle)),
-        )
+  const [limit, setLimit] = createSignal(300);
+  const matching = createMemo(() => {
+    const needle = query().trim();
+    return needle
+      ? props.sessions.filter((session) => storedSessionMatchesQuery(session, needle))
       : props.sessions;
-    return sessions.slice(0, 300);
   });
+  const visible = createMemo(() => matching().slice(0, limit()));
 
   return (
     <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
@@ -59,7 +57,7 @@ export function SessionDrawer(props: Props) {
               <input
                 value={query()}
                 onInput={(event) => setQuery(event.currentTarget.value)}
-                placeholder="Search sessions"
+                placeholder="Search conversations, projects, hosts…"
                 aria-label="Search sessions"
                 autofocus
               />
@@ -102,7 +100,7 @@ export function SessionDrawer(props: Props) {
         </div>
         <div class="drawer-search">
           <span>⌕</span>
-          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search names, bundles, tags, ids…" autofocus />
+          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search conversations, projects, hosts…" autofocus />
           <button onClick={props.onRefresh} aria-label="Refresh sessions" title="Refresh">↻</button>
         </div>
 
@@ -142,8 +140,15 @@ export function SessionDrawer(props: Props) {
               );
             }}
           </For>
+          <Show when={visible().length < matching().length}>
+            <button class="drawer-load-more" type="button" onClick={() => setLimit((value) => value + 300)}>
+              Show 300 more <span>{matching().length - visible().length} remaining</span>
+            </button>
+          </Show>
         </div>
-        <div class="drawer-footer">{props.sourceName} · showing {visible().length} of {props.sessions.length} top-level sessions</div>
+        <div class="drawer-footer">
+          {props.sourceName} · showing {visible().length} of {matching().length} matches · search covers {props.sessions.length} sessions across compute
+        </div>
         <div class="mobile-drawer-footer">
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
           <button type="button" class="mobile-runtime-settings" onClick={() => { props.onClose(); props.onSettings(); }}>

@@ -5,34 +5,36 @@ published releases. A green build is not certification.
 
 ## Recommended distribution paths
 
-- **Windows:** ship the Authenticode-signed NSIS/MSI release directly and list
-  the same silent installer in Microsoft Store. The Windows bundle embeds the
-  offline WebView2 installer so Store installation does not depend on a second
-  network download.
+- **Windows:** ship an MSIX through Microsoft Store. The Store provides package
+  hosting, signing, installation, and updates without an Azure Artifact Signing
+  subscription or a commercial PFX. Direct EXE/MSI downloads remain disabled
+  until a trusted Authenticode identity exists.
 - **Android:** ship an Android App Bundle through Google Play with Play App
   Signing enabled. Google holds the app-signing key; CI uses a separate upload
   key that can be replaced if compromised.
 
 ## Windows release gate
 
-The desktop release workflow now refuses to publish an unsigned Windows
-installer and verifies every generated `.exe` and `.msi` with `signtool`.
+The **Build Windows Store package** workflow builds the unpackaged Tauri
+executable, wraps it as an intentionally unsigned MSIX with Microsoft's WinApp
+CLI, verifies its identity and payload, and retains it as a workflow artifact.
+Microsoft Store applies the public signature during submission processing.
 
-Configure these GitHub `release` environment secrets:
+Configure these exact Partner Center Product identity values as GitHub
+`release` environment variables (not secrets):
 
-- `WINDOWS_CERTIFICATE`: base64-encoded PFX;
-- `WINDOWS_CERTIFICATE_PASSWORD`;
-- `WINDOWS_CERTIFICATE_THUMBPRINT`: 40-character SHA-1 thumbprint;
-- `WINDOWS_TIMESTAMP_URL`.
+- `WINDOWS_STORE_IDENTITY_NAME`;
+- `WINDOWS_STORE_PUBLISHER_ID` (the complete `CN=...` value);
+- `WINDOWS_STORE_PUBLISHER_DISPLAY_NAME`.
 
 Before Store submission:
 
 1. Create or confirm the Microsoft Partner Center account and reserve
    **Amplifier Studio**.
-2. Set `bundle.publisher` to the exact publisher identity associated with the
-   Partner Center account and signing identity. Do not guess this value.
-3. Produce a signed installer from a release tag and retain the CI signature
-   verification log.
+2. Copy all three Product identity values into the protected GitHub environment.
+   Do not guess or derive them from the product name.
+3. Run **Build Windows Store package**, download the MSIX artifact, and upload
+   it to the app submission. Do not sideload the unsigned artifact.
 4. On a clean supported Windows machine, test silent install, ordinary install,
    first launch, WebView2 startup, remote-host pairing, session resume, update,
    and uninstall.
@@ -43,10 +45,9 @@ Before Store submission:
    tailnet, and Microsoft may reject an app whose required server cannot be
    reached during certification.
 
-If no CA-issued PFX exists, use Azure Artifact Signing or obtain an EV/OV code
-signing identity before enabling the release workflow. Azure Artifact Signing
-requires a paid account and a human identity-validation step; creating a cloud
-resource without completing that validation is not a signing solution.
+Only direct web distribution of EXE/MSI installers needs a separately funded
+Authenticode identity. That optional channel must not block the free Store
+channel or the macOS release.
 
 ## Android release gate
 

@@ -1,8 +1,10 @@
-use serde::Serialize;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
+    hash::{DefaultHasher, Hash, Hasher},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,8 +12,11 @@ use std::{
 
 const SESSION_EXPORT_SCHEMA: &str = "amplifier-tui/session-export/v1";
 const SESSION_EXPORT_SCHEMA_PREFIX: &str = "amplifier-tui/session-export/";
+const SESSION_SEARCH_TEXT_LIMIT: usize = 8 * 1024;
+const SESSION_INDEX_CACHE_VERSION: u8 = 1;
+const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v1.json";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session_id: String,
@@ -24,8 +29,22 @@ pub struct StoredSession {
     pub mtime_ms: u64,
     pub project_slug: String,
     pub project_dir: Option<String>,
-    pub state: &'static str,
+    pub state: String,
     pub summary: String,
+    #[serde(default)]
+    pub search_text: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct SessionIndexCache {
+    version: u8,
+    entries: HashMap<String, CachedStoredSession>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CachedStoredSession {
+    signature: u64,
+    session: StoredSession,
 }
 
 fn projects_root() -> Result<PathBuf, String> {
@@ -35,10 +54,6 @@ fn projects_root() -> Result<PathBuf, String> {
 
 pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSession>, String> {
     let projects = projects_root()?;
-    if !projects.is_dir() {
-        return Ok(Vec::new());
-    }
-
     let project_filter = match project_dir {
         Some(value) if !value.trim().is_empty() => {
             let canonical = Path::new(value.trim()).canonicalize().map_err(|error| {
@@ -51,9 +66,47 @@ pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSes
         }
         _ => None,
     };
+    Ok(list_stored_sessions_from(
+        &projects,
+        project_filter.as_deref(),
+        None,
+    ))
+}
+
+/// List every stored session whose project is the authorized root itself or a
+/// descendant of it. Runtime hosts expose roots such as `/home/me/dev`; their
+/// durable sessions are stored per concrete project below that root rather
+/// than in the root's own project bucket.
+pub fn list_stored_sessions_for_roots(roots: &[PathBuf]) -> Result<Vec<StoredSession>, String> {
+    Ok(list_stored_sessions_for_roots_from(
+        &projects_root()?,
+        roots,
+    ))
+}
+
+fn list_stored_sessions_for_roots_from(projects: &Path, roots: &[PathBuf]) -> Vec<StoredSession> {
+    if roots.is_empty() {
+        return Vec::new();
+    }
+    let root_slugs = roots
+        .iter()
+        .map(|root| project_slug(root))
+        .collect::<Vec<_>>();
+    list_stored_sessions_from(projects, None, Some(&root_slugs))
+}
+
+fn list_stored_sessions_from(
+    projects: &Path,
+    project_filter: Option<&str>,
+    allowed_root_slugs: Option<&[String]>,
+) -> Vec<StoredSession> {
+    if !projects.is_dir() {
+        return Vec::new();
+    }
     let directory_hints = project_directory_hints(&projects);
 
-    let mut sessions = Vec::new();
+    let cache = read_session_index_cache(projects);
+    let mut tasks = Vec::new();
     for project in read_dirs(&projects) {
         let Ok(file_type) = project.file_type() else {
             continue;
@@ -62,9 +115,11 @@ pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSes
             continue;
         }
         let slug = project.file_name().to_string_lossy().into_owned();
-        if project_filter
-            .as_deref()
-            .is_some_and(|filter| filter != slug)
+        if project_filter.is_some_and(|filter| filter != slug) {
+            continue;
+        }
+        if allowed_root_slugs
+            .is_some_and(|roots| !roots.iter().any(|root| slug_is_within_root(&slug, root)))
         {
             continue;
         }
@@ -85,16 +140,159 @@ pub fn list_stored_sessions(project_dir: Option<String>) -> Result<Vec<StoredSes
             if session_id.starts_with('.') || session_id.contains('_') {
                 continue;
             }
-            sessions.push(summarize(
-                &entry.path(),
+            tasks.push((
+                entry.path(),
                 session_id,
                 slug.clone(),
-                project_dir_hint.as_deref(),
+                project_dir_hint.clone(),
             ));
         }
     }
+    let mut sessions = tasks
+        .into_par_iter()
+        .map(
+            |(session_dir, session_id, project_slug, project_dir_hint)| {
+                let signature = session_signature(&session_dir);
+                let key = session_cache_key(&project_slug, &session_id);
+                if let Some(cached) = cache
+                    .entries
+                    .get(&key)
+                    .filter(|cached| cached.signature == signature)
+                {
+                    let mut session = cached.session.clone();
+                    if session.project_dir.is_none() {
+                        session.project_dir = project_dir_hint;
+                    }
+                    return session;
+                }
+                summarize(
+                    &session_dir,
+                    session_id,
+                    project_slug,
+                    project_dir_hint.as_deref(),
+                )
+            },
+        )
+        .collect::<Vec<_>>();
     sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
-    Ok(sessions)
+    write_session_index_cache(projects, &cache, &sessions);
+    sessions
+}
+
+fn slug_is_within_root(project_slug: &str, root_slug: &str) -> bool {
+    project_slug == root_slug
+        || if root_slug.ends_with('-') {
+            project_slug.starts_with(root_slug)
+        } else {
+            project_slug.starts_with(&format!("{root_slug}-"))
+        }
+}
+
+fn session_cache_key(project_slug: &str, session_id: &str) -> String {
+    format!("{project_slug}\0{session_id}")
+}
+
+fn session_signature(session_dir: &Path) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for path in [
+        session_dir.to_path_buf(),
+        session_dir.join("metadata.json"),
+        session_dir.join("metadata.json.backup"),
+        session_dir.join("transcript.jsonl"),
+        session_dir.join("transcript.jsonl.backup"),
+    ] {
+        path.file_name().hash(&mut hasher);
+        match fs::metadata(path) {
+            Ok(metadata) => {
+                metadata.len().hash(&mut hasher);
+                metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_nanos())
+                    .hash(&mut hasher);
+            }
+            Err(_) => false.hash(&mut hasher),
+        }
+    }
+    hasher.finish()
+}
+
+fn session_mtime_ms(session_dir: &Path) -> u64 {
+    [
+        session_dir.to_path_buf(),
+        session_dir.join("metadata.json"),
+        session_dir.join("metadata.json.backup"),
+        session_dir.join("transcript.jsonl"),
+        session_dir.join("transcript.jsonl.backup"),
+    ]
+    .iter()
+    .filter_map(|path| modified_ms(path))
+    .max()
+    .unwrap_or(0)
+}
+
+fn modified_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+}
+
+fn read_session_index_cache(projects: &Path) -> SessionIndexCache {
+    let Ok(text) = fs::read_to_string(projects.join(SESSION_INDEX_CACHE_FILE)) else {
+        return SessionIndexCache::default();
+    };
+    let Ok(cache) = serde_json::from_str::<SessionIndexCache>(&text) else {
+        return SessionIndexCache::default();
+    };
+    if cache.version == SESSION_INDEX_CACHE_VERSION {
+        cache
+    } else {
+        SessionIndexCache::default()
+    }
+}
+
+fn write_session_index_cache(
+    projects: &Path,
+    existing: &SessionIndexCache,
+    sessions: &[StoredSession],
+) {
+    let mut entries = existing.entries.clone();
+    for session in sessions {
+        entries.insert(
+            session_cache_key(&session.project_slug, &session.session_id),
+            CachedStoredSession {
+                signature: session_signature(
+                    &projects
+                        .join(&session.project_slug)
+                        .join("sessions")
+                        .join(&session.session_id),
+                ),
+                session: session.clone(),
+            },
+        );
+    }
+    let cache = SessionIndexCache {
+        version: SESSION_INDEX_CACHE_VERSION,
+        entries,
+    };
+    let Ok(encoded) = serde_json::to_vec(&cache) else {
+        return;
+    };
+    let destination = projects.join(SESSION_INDEX_CACHE_FILE);
+    let temporary = projects.join(format!(
+        "{SESSION_INDEX_CACHE_FILE}.{}.tmp",
+        std::process::id()
+    ));
+    if fs::write(&temporary, encoded).is_err() {
+        return;
+    }
+    if fs::rename(&temporary, &destination).is_err() {
+        let _ = fs::remove_file(&destination);
+        let _ = fs::rename(&temporary, &destination);
+    }
 }
 
 /// Build the same structured, portable checkpoint used by amplifier-runtime.
@@ -302,8 +500,12 @@ fn summarize(
     project_dir_hint: Option<&str>,
 ) -> StoredSession {
     let metadata_path = session_dir.join("metadata.json");
-    let metadata_exists = metadata_path.is_file();
-    let (metadata, metadata_recovered) = read_json_with_backup(&metadata_path);
+    let metadata_exists = metadata_path.is_file()
+        || metadata_path
+            .with_file_name("metadata.json.backup")
+            .is_file();
+    let (metadata, metadata_recovered_or_corrupt) = read_json_with_backup(&metadata_path);
+    let metadata_valid = metadata.is_some();
     let metadata = metadata.unwrap_or_default();
 
     let transcript_path = session_dir.join("transcript.jsonl");
@@ -316,24 +518,25 @@ fn summarize(
             .is_file();
     let message_count = transcript.unwrap_or(0);
 
-    let state = if metadata_exists && metadata_recovered {
+    let state = if transcript_exists && transcript.is_none() {
+        if metadata_valid {
+            "transcript_lost"
+        } else {
+            "corrupt"
+        }
+    } else if metadata_exists && !metadata_valid {
+        "corrupt"
+    } else if metadata_recovered_or_corrupt {
         "recovered"
-    } else if metadata_exists && transcript_exists && transcript.is_none() {
-        "transcript_lost"
     } else if !metadata_exists && message_count > 0 {
         "indexing"
-    } else if !metadata_exists {
+    } else if message_count == 0 {
         "empty"
     } else {
         "ok"
     };
 
-    let mtime_ms = fs::metadata(session_dir)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0);
+    let mtime_ms = session_mtime_ms(session_dir);
 
     let stored_name = string_field(&metadata, "name");
     let name = if stored_name.trim().is_empty() {
@@ -343,15 +546,18 @@ fn summarize(
     };
     let project_dir = nonempty_string_field(&metadata, "working_dir")
         .or_else(|| project_dir_hint.map(str::to_owned));
-    let summary = if state == "empty" {
-        "No resumable conversation was written for this runtime attempt.".to_owned()
-    } else {
-        friendly_summary(
+    let summary = match state {
+        "empty" => "No resumable conversation was written for this runtime attempt.".to_owned(),
+        "corrupt" => "Stored session files are corrupt and cannot be resumed safely.".to_owned(),
+        "transcript_lost" => {
+            "The durable metadata remains, but the conversation transcript is damaged.".to_owned()
+        }
+        _ => friendly_summary(
             transcript_summary.last_assistant.as_deref(),
             turn_count_from(&metadata),
             message_count,
             project_dir.as_deref(),
-        )
+        ),
     };
 
     StoredSession {
@@ -365,8 +571,9 @@ fn summarize(
         message_count,
         mtime_ms,
         project_slug,
-        state,
+        state: state.to_owned(),
         summary,
+        search_text: transcript_summary.search_text,
     }
 }
 
@@ -374,6 +581,8 @@ fn summarize(
 struct TranscriptSummary {
     first_user: Option<String>,
     last_assistant: Option<String>,
+    search_text: String,
+    search_terms: HashSet<String>,
 }
 
 struct TranscriptScan {
@@ -414,10 +623,14 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
             let Some(text) = readable_content(record.get("content")) else {
                 continue;
             };
-            if role == "user" && summary.first_user.is_none() && user_visible_prompt(&text) {
-                summary.first_user = Some(text);
+            if role == "user" && user_visible_prompt(&text) {
+                if summary.first_user.is_none() {
+                    summary.first_user = Some(text.clone());
+                }
+                append_search_text(&mut summary, &text);
             } else if role == "assistant" {
-                summary.last_assistant = Some(text);
+                summary.last_assistant = Some(text.clone());
+                append_search_text(&mut summary, &text);
             }
         }
         if valid {
@@ -431,6 +644,32 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
             count: 0,
             summary: TranscriptSummary::default(),
         })
+    }
+}
+
+fn append_search_text(summary: &mut TranscriptSummary, text: &str) {
+    for raw in text.split(|character: char| {
+        !character.is_alphanumeric() && !matches!(character, '-' | '_' | '.' | '/' | '\\')
+    }) {
+        let term = raw.trim().to_lowercase();
+        if term.len() < 2 || term.len() > 128 || summary.search_terms.contains(&term) {
+            continue;
+        }
+        let separator = usize::from(!summary.search_text.is_empty());
+        if summary
+            .search_text
+            .len()
+            .saturating_add(separator)
+            .saturating_add(term.len())
+            > SESSION_SEARCH_TEXT_LIMIT
+        {
+            continue;
+        }
+        summary.search_terms.insert(term.clone());
+        if separator > 0 {
+            summary.search_text.push(' ');
+        }
+        summary.search_text.push_str(&term);
     }
 }
 
@@ -776,6 +1015,79 @@ mod tests {
     }
 
     #[test]
+    fn authorized_root_includes_nested_projects_without_collapsing_session_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let projects = temp.path().join("projects");
+        let allowed = temp.path().join("dev");
+        let first = allowed.join("first");
+        let second = allowed.join("second");
+        let outside = temp.path().join("private");
+        for project in [&first, &second, &outside] {
+            fs::create_dir_all(project).expect("project");
+            let session_dir = projects
+                .join(project_slug(project))
+                .join("sessions")
+                .join("shared-session-1234");
+            fs::create_dir_all(&session_dir).expect("session");
+            fs::write(
+                session_dir.join("metadata.json"),
+                serde_json::json!({
+                    "name": project.file_name().unwrap().to_string_lossy(),
+                    "working_dir": project,
+                })
+                .to_string(),
+            )
+            .expect("metadata");
+            fs::write(
+                session_dir.join("transcript.jsonl"),
+                "{\"role\":\"user\",\"content\":\"keep this conversation\"}\n",
+            )
+            .expect("transcript");
+        }
+
+        let sessions =
+            list_stored_sessions_for_roots_from(&projects, std::slice::from_ref(&allowed));
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions
+            .iter()
+            .any(|session| session.project_slug == project_slug(&first)));
+        assert!(sessions
+            .iter()
+            .any(|session| session.project_slug == project_slug(&second)));
+        assert!(!sessions
+            .iter()
+            .any(|session| session.project_slug == project_slug(&outside)));
+        assert!(projects.join(SESSION_INDEX_CACHE_FILE).is_file());
+
+        let cached = list_stored_sessions_for_roots_from(&projects, std::slice::from_ref(&allowed));
+        assert_eq!(cached.len(), 2);
+
+        let first_transcript = projects
+            .join(project_slug(&first))
+            .join("sessions")
+            .join("shared-session-1234")
+            .join("transcript.jsonl");
+        let mut transcript = fs::OpenOptions::new()
+            .append(true)
+            .open(first_transcript)
+            .expect("open transcript");
+        writeln!(
+            transcript,
+            "{{\"role\":\"assistant\",\"content\":\"cache invalidated after append\"}}"
+        )
+        .expect("append transcript");
+        drop(transcript);
+        let refreshed =
+            list_stored_sessions_for_roots_from(&projects, std::slice::from_ref(&allowed));
+        let first_session = refreshed
+            .iter()
+            .find(|session| session.project_slug == project_slug(&first))
+            .expect("first session");
+        assert_eq!(first_session.message_count, 2);
+        assert!(first_session.search_text.contains("invalidated"));
+    }
+
+    #[test]
     fn event_only_runtime_attempt_is_empty_not_perpetually_indexing() {
         let temp = tempfile::tempdir().expect("tempdir");
         fs::write(
@@ -838,6 +1150,55 @@ mod tests {
             ),
             "Last update: The updater is repaired. The remaining release blocker is Apple notarization. 2 turns saved in amplifier-app-studio."
         );
+    }
+
+    #[test]
+    fn transcript_search_text_covers_the_conversation_but_not_tool_or_hidden_prompts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let transcript = temp.path().join("transcript.jsonl");
+        fs::write(
+            &transcript,
+            concat!(
+                "{\"role\":\"user\",\"content\":\"Find the federated history bug\"}\n",
+                "{\"role\":\"tool\",\"content\":\"secret tool output\"}\n",
+                "{\"role\":\"user\",\"content\":\"<system-reminder>hidden instruction</system-reminder>\"}\n",
+                "{\"role\":\"assistant\",\"content\":\"The nested project scan was repaired\"}\n",
+            ),
+        )
+        .expect("transcript");
+        let summary = read_transcript_summary(&transcript);
+        assert!(summary.search_text.contains("federated history"));
+        assert!(summary.search_text.contains("nested project scan"));
+        assert!(!summary.search_text.contains("secret tool output"));
+        assert!(!summary.search_text.contains("hidden instruction"));
+    }
+
+    #[test]
+    fn corrupt_and_zero_message_sessions_are_not_reported_ready() {
+        let corrupt = tempfile::tempdir().expect("corrupt tempdir");
+        fs::write(corrupt.path().join("transcript.jsonl"), "not json\n")
+            .expect("corrupt transcript");
+        let corrupt_summary = summarize(
+            corrupt.path(),
+            "session-corrupt".into(),
+            "-project".into(),
+            Some("/project"),
+        );
+        assert_eq!(corrupt_summary.state, "corrupt");
+
+        let empty = tempfile::tempdir().expect("empty tempdir");
+        fs::write(
+            empty.path().join("metadata.json"),
+            "{\"name\":\"Started but empty\"}\n",
+        )
+        .expect("metadata");
+        let empty_summary = summarize(
+            empty.path(),
+            "session-empty-with-metadata".into(),
+            "-project".into(),
+            Some("/project"),
+        );
+        assert_eq!(empty_summary.state, "empty");
     }
 
     #[test]

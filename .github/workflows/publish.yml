@@ -47,9 +47,6 @@ jobs:
           - platform: macos-15
             args: --target aarch64-apple-darwin
             target: aarch64-apple-darwin
-          - platform: windows-latest
-            args: ""
-            target: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -81,19 +78,6 @@ jobs:
           for name in APPLE_CERTIFICATE KEYCHAIN_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_API_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY; do
             test -n "${!name}" || { echo "$name is required for a signed and notarized macOS release" >&2; exit 1; }
           done
-      - name: Require Windows Authenticode credentials
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          foreach ($name in @("WINDOWS_CERTIFICATE", "WINDOWS_CERTIFICATE_PASSWORD", "WINDOWS_CERTIFICATE_THUMBPRINT", "WINDOWS_TIMESTAMP_URL", "TAURI_SIGNING_PRIVATE_KEY")) {
-            if (-not (Get-Item "env:$name").Value) { throw "$name is required for an Authenticode-signed Windows release" }
-          }
       - name: Import Developer ID certificate
         if: startsWith(matrix.platform, 'macos')
         env:
@@ -126,30 +110,7 @@ jobs:
           echo "APPLE_API_KEY=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_API_KEY_PATH=$APPLE_API_KEY_PATH" >> "$GITHUB_ENV"
-      - name: Import Windows Authenticode certificate
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-        run: |
-          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[0-9A-Fa-f]{40}$') {
-            throw "WINDOWS_CERTIFICATE_THUMBPRINT must be a 40-character SHA-1 thumbprint"
-          }
-          $expectedThumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT).ToUpperInvariant()
-          $certificatePath = Join-Path $env:RUNNER_TEMP "amplifier-studio.pfx"
-          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
-          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword)
-          $certificate = $importedCertificates |
-            Where-Object { ($_.Thumbprint -replace '\s', '').ToUpperInvariant() -eq $expectedThumbprint } |
-            Select-Object -First 1
-          if (-not $certificate) {
-            throw "Imported Authenticode certificate thumbprint does not match WINDOWS_CERTIFICATE_THUMBPRINT"
-          }
       - uses: tauri-apps/tauri-action@v1
-        if: matrix.platform != 'windows-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -162,45 +123,13 @@ jobs:
         with:
           tagName: studio-v__VERSION__
           releaseName: Amplifier Studio v__VERSION__
-          releaseBody: Signed desktop installers and updater artifacts for Amplifier Studio.
+          releaseBody: Signed and notarized macOS installer and updater artifacts for Amplifier Studio.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: false
           args: >-
             ${{ matrix.args }}
             --config '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
-      - uses: tauri-apps/tauri-action@v1
-        if: matrix.platform == 'windows-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          VITE_STUDIO_UPDATER_ENABLED: "true"
-        with:
-          tagName: studio-v__VERSION__
-          releaseName: Amplifier Studio v__VERSION__
-          releaseBody: Signed desktop installers and updater artifacts for Amplifier Studio.
-          releaseDraft: true
-          prerelease: false
-          uploadUpdaterJson: false
-          args: >-
-            --config '{"bundle":{"createUpdaterArtifacts":true,"windows":{"certificateThumbprint":"${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}","digestAlgorithm":"sha256","timestampUrl":"${{ secrets.WINDOWS_TIMESTAMP_URL }}"}},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
-      - name: Verify Windows Authenticode signatures
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        run: |
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $signTool) { throw "signtool.exe was not found on the Windows runner" }
-          $artifacts = @(Get-ChildItem "src-tauri\target\release\bundle" -Recurse -File |
-            Where-Object { $_.Extension -in @(".exe", ".msi") })
-          if ($artifacts.Count -eq 0) { throw "No Windows installer artifacts were produced" }
-          foreach ($artifact in $artifacts) {
-            & $signTool.FullName verify /pa /all /v $artifact.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $($artifact.FullName)" }
-          }
       - name: Verify macOS signature and notarization ticket
         if: startsWith(matrix.platform, 'macos')
         run: |
@@ -242,7 +171,7 @@ jobs:
             const manifest = JSON.parse(readFileSync("public-latest.json", "utf8"));
             const expected = JSON.parse(readFileSync("package.json", "utf8")).version;
             if (manifest.version !== expected) throw new Error(`public updater is ${manifest.version}; expected ${expected}`);
-            for (const platform of ["darwin-aarch64", "windows-x86_64"]) {
+            for (const platform of ["darwin-aarch64"]) {
               if (!manifest.platforms?.[platform]?.url || !manifest.platforms?.[platform]?.signature) {
                 throw new Error(`public updater is missing ${platform}`);
               }

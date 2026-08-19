@@ -24,7 +24,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
     env,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -540,16 +539,7 @@ async fn stored_sessions(
         if let Some(project) = project {
             return store::list_stored_sessions(Some(project.to_string_lossy().into_owned()));
         }
-        let mut sessions = Vec::new();
-        for root in roots {
-            sessions.extend(store::list_stored_sessions(Some(
-                root.to_string_lossy().into_owned(),
-            ))?);
-        }
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
-        let mut seen = HashSet::new();
-        sessions.retain(|session| seen.insert(session.session_id.clone()));
-        Ok(sessions)
+        store::list_stored_sessions_for_roots(&roots)
     })
     .await
     .map_err(|error| ServerError::internal(format!("Session scan task failed: {error}")))?

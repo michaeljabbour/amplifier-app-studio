@@ -19,12 +19,10 @@ if (tag !== `studio-v${version}`) {
 const assets = readdirSync(assetDirectory, { withFileTypes: true })
   .filter((entry) => entry.isFile())
   .map((entry) => entry.name);
-// Apple Silicon and Windows are the shipping targets. Both patterns are
-// validated against real release assets: Amplifier.Studio_aarch64.app.tar.gz
-// and Amplifier.Studio_<version>_x64-setup.exe.
+// The direct updater is the signed Apple Silicon channel. Windows, Android,
+// and iOS updates are owned by their platform stores.
 const specs = {
   "darwin-aarch64": /_aarch64\.app\.tar\.gz$/,
-  "windows-x86_64": /_x64-setup\.exe$/,
 };
 const platforms = {};
 for (const [platform, pattern] of Object.entries(specs)) {

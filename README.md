@@ -339,11 +339,12 @@ the selection. GitHub's protected `release` environment holds:
 The App Store Connect key replaces Apple-ID passwords in CI and is shared by
 macOS notarization and TestFlight delivery.
 
-Windows releases require `WINDOWS_CERTIFICATE` (base64 `.pfx`),
-`WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT` (the
-certificate's 40-character SHA-1 thumbprint), and `WINDOWS_TIMESTAMP_URL`.
-Store all desktop signing secrets in the protected `release` environment so
-only release tags can request them.
+Windows uses the Microsoft Store MSIX channel so the Store supplies its public
+signature and updates without a paid Azure signing subscription. Copy the exact
+Partner Center Product identity values into the protected `release` environment
+variables `WINDOWS_STORE_IDENTITY_NAME`, `WINDOWS_STORE_PUBLISHER_ID`, and
+`WINDOWS_STORE_PUBLISHER_DISPLAY_NAME`, then run **Build Windows Store
+package**. The resulting unsigned MSIX is only for Store upload, not sideloading.
 
 Android signing uses `ANDROID_UPLOAD_KEYSTORE_BASE64`,
 `ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and
@@ -358,17 +359,16 @@ To publish, update the version in `package.json`, `src-tauri/Cargo.toml`,
 increment the shared mobile build number, then push a matching tag such as
 `studio-v0.2.0`. `npm run release:check` rejects marketing-version, tag, and
 mobile-build mismatches. The desktop workflow holds a draft GitHub Release
-while macOS and Windows finish, generates one complete cross-platform
-`latest.json`, and only then publishes the release as latest.
+while macOS finishes, generates its `latest.json`, and only then publishes the
+release as latest.
 `releases/latest/download/latest.json` becomes the update feed only after that
 final job succeeds. Production desktop builds check the canonical Amplifier
 Studio feed by default; set `VITE_STUDIO_UPDATER_ENABLED=false` for a local or
 forked production build that must not check upstream. Development builds leave
 updates disabled unless the flag is explicitly set to `true`.
 
-Android and iOS updates continue through Google Play and TestFlight/App Store;
-desktop-style binary replacement is intentionally limited to Windows and
-macOS.
+Android, iOS, and Windows updates are store-owned. Tauri's desktop updater is
+used only by the directly distributed, signed macOS build.
 
 ## Protocol boundary
 

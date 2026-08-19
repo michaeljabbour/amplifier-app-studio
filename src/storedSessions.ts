@@ -49,7 +49,7 @@ export async function loadStoredSessionsAcrossHosts(
         hostName: host.name,
         hostUrl: host.url || undefined,
       };
-      const key = `${host.id}\u0000${session.sessionId}`;
+      const key = `${host.id}\u0000${session.projectSlug}\u0000${session.sessionId}`;
       const existing = sessions.get(key);
       if (!existing || annotated.mtimeMs > existing.mtimeMs) sessions.set(key, annotated);
     }
@@ -60,6 +60,24 @@ export async function loadStoredSessionsAcrossHosts(
     failures,
     hostsQueried: uniqueHosts.length,
   };
+}
+
+export function storedSessionMatchesQuery(session: StoredSession, query: string): boolean {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const searchable = [
+    session.name,
+    session.bundle,
+    session.model,
+    session.sessionId,
+    session.projectSlug,
+    session.projectDir,
+    session.hostName,
+    session.summary,
+    session.searchText,
+    ...session.tags,
+  ].filter(Boolean).join("\n").toLocaleLowerCase();
+  return terms.every((term) => searchable.includes(term));
 }
 
 export function storedHistoryFailureMessage(result: FederatedStoredSessions): string | undefined {

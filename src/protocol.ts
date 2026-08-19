@@ -424,6 +424,8 @@ export interface StoredSession {
   projectDir?: string;
   state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing" | "empty";
   summary: string;
+  /** Bounded user/assistant transcript text used by federated history search. */
+  searchText?: string;
 }
 
 export interface BundleOption {

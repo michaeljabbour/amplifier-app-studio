@@ -1,6 +1,6 @@
 [package]
 name = "amplifier-studio"
-version = "0.1.38"
+version = "0.1.39"
 edition = "2021"
 rust-version = "1.77.2"
 default-run = "amplifier-studio"
@@ -25,6 +25,7 @@ base64 = "0.22"
 subtle = "2"
 reqwest = { version = "0.13", features = ["json", "multipart"] }
 pdf-extract = "0.12"
+rayon = "1.10"
 quick-xml = "0.37.5"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 

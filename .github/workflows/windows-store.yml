@@ -1,0 +1,89 @@
+name: Build Windows Store package
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: amplifier-studio-windows-store-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    environment: release
+    env:
+      WINDOWS_STORE_IDENTITY_NAME: ${{ vars.WINDOWS_STORE_IDENTITY_NAME }}
+      WINDOWS_STORE_PUBLISHER_ID: ${{ vars.WINDOWS_STORE_PUBLISHER_ID }}
+      WINDOWS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.WINDOWS_STORE_PUBLISHER_DISPLAY_NAME }}
+      VITE_STUDIO_UPDATER_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: microsoft/setup-WinAppCli@v0.1
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm test
+      - name: Require the exact Partner Center product identity
+        shell: pwsh
+        run: |
+          foreach ($name in @("WINDOWS_STORE_IDENTITY_NAME", "WINDOWS_STORE_PUBLISHER_ID", "WINDOWS_STORE_PUBLISHER_DISPLAY_NAME")) {
+            if (-not (Get-Item "env:$name").Value) {
+              throw "$name must be copied exactly from Partner Center Product identity into the release environment variables"
+            }
+          }
+      - name: Build unpackaged Windows executable
+        run: npm run tauri -- build --no-bundle --config src-tauri/tauri.windows.conf.json
+      - name: Stage Store package layout
+        id: stage
+        shell: pwsh
+        run: |
+          $result = node scripts/prepare-windows-store-package.mjs `
+            src-tauri/target/release/amplifier-studio.exe `
+            windows-store-stage | ConvertFrom-Json
+          "package_version=$($result.packageVersion)" >> $env:GITHUB_OUTPUT
+      - name: Build unsigned MSIX for Microsoft Store signing
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force windows-store-artifacts | Out-Null
+          winapp pack windows-store-stage `
+            --manifest windows-store-stage/Package.appxmanifest `
+            --executable amplifier-studio.exe `
+            --output "windows-store-artifacts/AmplifierStudio_${{ steps.stage.outputs.package_version }}_x64.msix"
+      - name: Verify packaged Partner Center identity and payload
+        id: verify
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem windows-store-artifacts -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { throw "No MSIX package was produced" }
+          $unpacked = Join-Path $env:RUNNER_TEMP "amplifier-studio-msix"
+          MakeAppx unpack /p $msix.FullName /d $unpacked /o
+          [xml]$manifest = Get-Content (Join-Path $unpacked "AppxManifest.xml")
+          if ($manifest.Package.Identity.Name -ne $env:WINDOWS_STORE_IDENTITY_NAME) { throw "MSIX identity name drifted from Partner Center" }
+          if ($manifest.Package.Identity.Publisher -ne $env:WINDOWS_STORE_PUBLISHER_ID) { throw "MSIX publisher drifted from Partner Center" }
+          if (-not (Test-Path (Join-Path $unpacked "amplifier-studio.exe"))) { throw "MSIX is missing amplifier-studio.exe" }
+          Get-FileHash $msix.FullName -Algorithm SHA256
+          "msix_path=$($msix.FullName)" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v6
+        with:
+          name: amplifier-studio-windows-store-msix
+          path: ${{ steps.verify.outputs.msix_path }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Explain signing state
+        shell: pwsh
+        run: |
+          @"
+          ### Windows Store MSIX built
+
+          The artifact is intentionally unsigned. Microsoft Store applies its complimentary signature during submission processing. It is not a direct-download installer and should not be sideloaded.
+          "@ >> $env:GITHUB_STEP_SUMMARY
