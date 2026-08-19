@@ -250,6 +250,10 @@ fn import_stored_session_into(
         output
             .sync_all()
             .map_err(|error| format!("Could not finish imported transcript: {error}"))?;
+        // Windows will not rename a directory while a file inside it remains
+        // open. Close the transcript explicitly before publishing the atomic
+        // import directory; Unix permits the rename either way.
+        drop(output);
         fs::rename(&temporary, &destination)
             .map_err(|error| format!("Could not publish the imported session: {error}"))?;
         Ok(())
