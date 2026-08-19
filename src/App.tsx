@@ -91,7 +91,7 @@ import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } 
 import { toolContractFailure } from "./providerSafety";
 import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
 import { openGuiIdForStoredSession } from "./sessionSelection";
-import { storedSessionResumeBlocker } from "./sessionAvailability";
+import { storedSessionLegacyBundleOverride, storedSessionResumeBlocker } from "./sessionAvailability";
 import { projectContextForHost } from "./settingsProjectContext";
 import { createLatestAsyncRunner } from "./latestAsync";
 import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, type FederatedStoredSessions } from "./storedSessions";
@@ -486,9 +486,13 @@ export default function App() {
     setStoredLoading(true);
     setStoredError(undefined);
     setStoredWarning(undefined);
-    const hosts = runtimeHosts().length
-      ? runtimeHosts()
-      : [{ id: "local", name: "This computer", url: "", tokenRef: "local" }];
+    const refreshedHosts = await listRuntimeHosts().catch(() => runtimeHosts());
+    if (refreshedHosts.length) setRuntimeHosts(refreshedHosts);
+    const hosts = refreshedHosts.length
+      ? refreshedHosts
+      : runtimeHosts().length
+        ? runtimeHosts()
+        : [{ id: "local", name: "This computer", url: "", tokenRef: "local" }];
     await runLatestStoredRefresh(
       () => loadStoredSessionsAcrossHosts(hosts, (host) => listStoredSessions(
         undefined,
@@ -1193,6 +1197,7 @@ export default function App() {
     await start({
       projectDir: projectDir || "",
       ...sessionHostInput(host),
+      bundle: storedSessionLegacyBundleOverride(session),
       resumeId: session.sessionId,
       resumeName: session.name,
     });

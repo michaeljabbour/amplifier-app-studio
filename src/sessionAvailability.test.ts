@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredSession } from "./protocol";
-import { storedSessionCanDuplicate, storedSessionResumeBlocker, storedSessionWarning } from "./sessionAvailability";
+import { storedSessionCanDuplicate, storedSessionLegacyBundleOverride, storedSessionResumeBlocker, storedSessionWarning } from "./sessionAvailability";
 
 function stored(overrides: Partial<StoredSession> = {}): StoredSession {
   return {
@@ -45,5 +45,12 @@ describe("stored session availability", () => {
     expect(storedSessionCanDuplicate(stored({ state: "indexing" }))).toBe(true);
     expect(storedSessionCanDuplicate(stored({ state: "empty", messageCount: 0 }))).toBe(false);
     expect(storedSessionCanDuplicate(stored({ state: "transcript_lost", messageCount: 0 }))).toBe(false);
+  });
+
+  it("translates only legacy bundle discovery identifiers for resume", () => {
+    expect(storedSessionLegacyBundleOverride(stored({ bundle: "bundle:anchors" }))).toBe("anchors");
+    expect(storedSessionLegacyBundleOverride(stored({ bundle: "bundle:git+https://example.test/bundle" }))).toBe("git+https://example.test/bundle");
+    expect(storedSessionLegacyBundleOverride(stored({ bundle: "anchors" }))).toBeUndefined();
+    expect(storedSessionLegacyBundleOverride(stored({ bundle: "unknown" }))).toBeUndefined();
   });
 });

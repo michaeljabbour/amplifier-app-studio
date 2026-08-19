@@ -25,7 +25,7 @@ interface Props {
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
-  const [limit, setLimit] = createSignal(300);
+  const [limit, setLimit] = createSignal(500);
   const matching = createMemo(() => {
     const needle = query().trim();
     return needle
@@ -33,6 +33,13 @@ export function SessionDrawer(props: Props) {
       : props.sessions;
   });
   const visible = createMemo(() => matching().slice(0, limit()));
+  const revealMoreNearBottom = (event: Event) => {
+    const list = event.currentTarget as HTMLDivElement;
+    if (visible().length >= matching().length) return;
+    if (list.scrollHeight - list.scrollTop - list.clientHeight < 320) {
+      setLimit((value) => value + 500);
+    }
+  };
 
   return (
     <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
@@ -104,13 +111,12 @@ export function SessionDrawer(props: Props) {
           <button onClick={props.onRefresh} aria-label="Refresh sessions" title="Refresh">↻</button>
         </div>
 
-        <Show when={props.loading}><div class="drawer-state"><span class="mini-spinner" /> Scanning ~/.amplifier/projects…</div></Show>
-        <Show when={props.error}><div class="drawer-error">{props.error}</div></Show>
-        <Show when={!props.loading && !props.error && visible().length === 0}>
-          <div class="drawer-empty"><span>◇</span><strong>No matching sessions</strong><p>Completed Amplifier sessions will appear here.</p></div>
-        </Show>
-
-        <div class="stored-list">
+        <div class="stored-list" onScroll={revealMoreNearBottom}>
+          <Show when={props.loading}><div class="drawer-state"><span class="mini-spinner" /> Scanning every configured compute host…</div></Show>
+          <Show when={props.error}><div class="drawer-error">{props.error}</div></Show>
+          <Show when={!props.loading && !props.error && visible().length === 0}>
+            <div class="drawer-empty"><span>◇</span><strong>No matching sessions</strong><p>Completed Amplifier sessions will appear here.</p></div>
+          </Show>
           <Show when={props.warning}><div class="drawer-warning">{props.warning}</div></Show>
           <For each={visible()}>
             {(session) => {

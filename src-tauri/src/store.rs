@@ -13,8 +13,10 @@ use std::{
 const SESSION_EXPORT_SCHEMA: &str = "amplifier-tui/session-export/v1";
 const SESSION_EXPORT_SCHEMA_PREFIX: &str = "amplifier-tui/session-export/";
 const SESSION_SEARCH_TEXT_LIMIT: usize = 8 * 1024;
-const SESSION_INDEX_CACHE_VERSION: u8 = 1;
-const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v1.json";
+// v2 forces older Studio indexes to rebuild the bounded full-conversation
+// searchText field instead of silently deserializing it as empty.
+const SESSION_INDEX_CACHE_VERSION: u8 = 2;
+const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v2.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

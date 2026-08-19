@@ -29,3 +29,14 @@ export function storedSessionWarning(session: StoredSession): string | undefined
   }
   return undefined;
 }
+
+/**
+ * Older Amplifier releases persisted discovery identifiers such as
+ * `bundle:anchors`. Current runtimes resolve the catalog name (`anchors`).
+ * Supply only that compatibility override; current sessions should continue
+ * to let amplifier-runtime enforce its stored-bundle resume policy.
+ */
+export function storedSessionLegacyBundleOverride(session: StoredSession): string | undefined {
+  const legacy = session.bundle.trim().match(/^bundle:(.+)$/i)?.[1]?.trim();
+  return legacy && legacy.toLowerCase() !== "unknown" ? legacy : undefined;
+}
