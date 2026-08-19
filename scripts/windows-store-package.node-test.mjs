@@ -3,8 +3,8 @@ import test from "node:test";
 import { renderWindowsStoreManifest, windowsStorePackageVersion } from "./prepare-windows-store-package.mjs";
 
 test("Windows Store version includes the monotonic mobile build number", () => {
-  assert.equal(windowsStorePackageVersion("0.1.39", "26"), "0.1.39.26");
-  assert.throws(() => windowsStorePackageVersion("0.1", "26"), /MAJOR.MINOR.PATCH/);
+  assert.equal(windowsStorePackageVersion("0.1.39", "27"), "0.1.39.27");
+  assert.throws(() => windowsStorePackageVersion("0.1", "27"), /MAJOR.MINOR.PATCH/);
   assert.throws(() => windowsStorePackageVersion("0.1.39", "0"), /1-65535/);
 });
 

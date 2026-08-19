@@ -35,6 +35,8 @@ jobs:
         shell: bash
         run: |
           test -d "$DEVELOPER_DIR" || { echo "Required Xcode toolchain is unavailable: $DEVELOPER_DIR" >&2; exit 1; }
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          test "$(xcode-select --print-path)" = "$DEVELOPER_DIR"
           XCODE_VERSION="$(xcodebuild -version | head -1)"
           IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
           echo "$XCODE_VERSION"
@@ -164,6 +166,13 @@ jobs:
         run: |
           test -n "$IPA_PATH" || { echo "No IPA was produced" >&2; exit 1; }
           IOS_BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - src-tauri/gen/apple/amplifier-studio_iOS/Info.plist)"
+          IPA_INFO_PLIST="$RUNNER_TEMP/amplifier-studio-ipa-info.plist"
+          unzip -p "$IPA_PATH" 'Payload/*.app/Info.plist' > "$IPA_INFO_PLIST"
+          IPA_BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - "$IPA_INFO_PLIST")"
+          IPA_SDK_NAME="$(plutil -extract DTSDKName raw -o - "$IPA_INFO_PLIST")"
+          test "$IPA_BUILD_NUMBER" = "$IOS_BUILD_NUMBER" || { echo "IPA build number $IPA_BUILD_NUMBER does not match $IOS_BUILD_NUMBER" >&2; exit 1; }
+          [[ "$IPA_SDK_NAME" == "iphoneos26."* ]] || { echo "IPA was built with unsupported SDK $IPA_SDK_NAME" >&2; exit 1; }
+          echo "Verified IPA build $IPA_BUILD_NUMBER with SDK $IPA_SDK_NAME"
           echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
           echo "IOS_BUILD_NUMBER=$IOS_BUILD_NUMBER" >> "$GITHUB_ENV"
           xcrun altool --validate-app --file "$IPA_PATH" --type ios \
