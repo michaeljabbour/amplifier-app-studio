@@ -26,11 +26,15 @@
 		0A65F4113543A925D0D13C42 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		1D7C25CA6BF548193C958199 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		284851325F8A3C7EB8E34EFE /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		30E120FB03631BF57D8E20FB /* runtime_setup.rs */ = {isa = PBXFileReference; path = runtime_setup.rs; sourceTree = "<group>"; };
 		3BC884859C549AA134FEC12F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3F4F0F9357B4744A4A464765 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		463346CE4958E13DD941995C /* remote_hosts.rs */ = {isa = PBXFileReference; path = remote_hosts.rs; sourceTree = "<group>"; };
+		48923B3087C51DBFEF79AC7E /* transcription.rs */ = {isa = PBXFileReference; path = transcription.rs; sourceTree = "<group>"; };
 		4A909B0A6BCF98212D0040B6 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		6720920BB6A3C9C198343AF9 /* amplifier-studio_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "amplifier-studio_iOS.entitlements"; sourceTree = "<group>"; };
 		67E3A97B1AAC623EA1657504 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		689AEAB00FB7670FCE121177 /* amplifier-host.rs */ = {isa = PBXFileReference; path = "amplifier-host.rs"; sourceTree = "<group>"; };
 		695F842D0E3ECF01829BD086 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		7F5BF9A733F6AE8387D5FBA5 /* store.rs */ = {isa = PBXFileReference; path = store.rs; sourceTree = "<group>"; };
 		81E36389279F9EBD3E8B2EF6 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -39,10 +43,13 @@
 		9A9F849F3DF9D4B88347FAA6 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		9B67825063102B825427EF75 /* protocol.rs */ = {isa = PBXFileReference; path = protocol.rs; sourceTree = "<group>"; };
 		9C0146C8CCDAADA59DE611DD /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		B12E1AD8918B10E4B9D8A504 /* runtime_settings.rs */ = {isa = PBXFileReference; path = runtime_settings.rs; sourceTree = "<group>"; };
 		BF9BBF05C6D6D7EF2B2AE2B6 /* amplifier-studio_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "amplifier-studio_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C14EB9CE84914F233720943A /* web_server.rs */ = {isa = PBXFileReference; path = web_server.rs; sourceTree = "<group>"; };
 		C6F1250412E790541770CD4C /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		C7D385023CE9D679BBD42AD9 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		D243C1A5BD2457641BD8F513 /* image_drop.rs */ = {isa = PBXFileReference; path = image_drop.rs; sourceTree = "<group>"; };
+		DAE01B1668C814D886FF0109 /* catalog.rs */ = {isa = PBXFileReference; path = catalog.rs; sourceTree = "<group>"; };
 		E4E959B4CA972CF55B611D92 /* amplifier-studio-server.rs */ = {isa = PBXFileReference; path = "amplifier-studio-server.rs"; sourceTree = "<group>"; };
 		EC898335C99D0F63879EAF78 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -77,6 +84,7 @@
 		3D68E9DD60E1A36EB6BDB067 /* bin */ = {
 			isa = PBXGroup;
 			children = (
+				689AEAB00FB7670FCE121177 /* amplifier-host.rs */,
 				E4E959B4CA972CF55B611D92 /* amplifier-studio-server.rs */,
 			);
 			path = bin;
@@ -89,7 +97,6 @@
 				67E3A97B1AAC623EA1657504 /* Assets.xcassets */,
 				81E36389279F9EBD3E8B2EF6 /* LaunchScreen.storyboard */,
 				FBACD6BE372CFA4EBA59690E /* amplifier-studio_iOS */,
-				E2FC5F4D93CE7BF3EBB66CBC /* Externals */,
 				9FBF37F20CC4C88C23BA3262 /* Sources */,
 				F0C905360C52EAEF18E4D9B0 /* src */,
 				A5CA2B00EA524065CB8D98B3 /* Frameworks */,
@@ -128,21 +135,20 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		E2FC5F4D93CE7BF3EBB66CBC /* Externals */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Externals;
-			sourceTree = "<group>";
-		};
 		F0C905360C52EAEF18E4D9B0 /* src */ = {
 			isa = PBXGroup;
 			children = (
+				DAE01B1668C814D886FF0109 /* catalog.rs */,
+				D243C1A5BD2457641BD8F513 /* image_drop.rs */,
 				4A909B0A6BCF98212D0040B6 /* lib.rs */,
 				0A65F4113543A925D0D13C42 /* main.rs */,
 				9B67825063102B825427EF75 /* protocol.rs */,
+				463346CE4958E13DD941995C /* remote_hosts.rs */,
+				B12E1AD8918B10E4B9D8A504 /* runtime_settings.rs */,
+				30E120FB03631BF57D8E20FB /* runtime_setup.rs */,
 				098A26EDE3AE175357A98A0C /* session.rs */,
 				7F5BF9A733F6AE8387D5FBA5 /* store.rs */,
+				48923B3087C51DBFEF79AC7E /* transcription.rs */,
 				C14EB9CE84914F233720943A /* web_server.rs */,
 				3D68E9DD60E1A36EB6BDB067 /* bin */,
 			);
@@ -200,6 +206,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					CFB352504ED248A1FCF175FA = {
+						DevelopmentTeam = K74P73BUKF;
+					};
 				};
 			};
 			buildConfigurationList = B8302D24D80955CBB39C64D5 /* Build configuration list for PBXProject "amplifier-studio" */;
@@ -398,7 +407,9 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = K74P73BUKF;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -414,10 +425,10 @@
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.amplifier.studio;
 				PRODUCT_NAME = "Amplifier Studio";
+				PROVISIONING_PROFILE_SPECIFIER = "iOS Team Store Provisioning Profile: com.amplifier.studio";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "K74P73BUKF";
 			};
 			name = release;
 		};
@@ -430,7 +441,9 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = K74P73BUKF;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -449,7 +462,6 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "K74P73BUKF";
 			};
 			name = debug;
 		};

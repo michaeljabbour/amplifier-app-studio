@@ -30,7 +30,6 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
       - path: amplifier-studio_iOS
       - path: assets
         buildPhase: resources
@@ -40,6 +39,7 @@ targets:
       path: amplifier-studio_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        NSMicrophoneUsageDescription: Amplifier Studio uses the microphone only when you choose voice input, so speech can be transcribed into an editable message draft.
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
@@ -62,6 +62,9 @@ targets:
         RUST_LOG: info
     settings:
       base:
+        CODE_SIGN_IDENTITY: Apple Development
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: K74P73BUKF
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64
@@ -69,6 +72,11 @@ targets:
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      configs:
+        release:
+          CODE_SIGN_IDENTITY: Apple Distribution
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: "iOS Team Store Provisioning Profile: com.amplifier.studio"
       groups: [app]
     dependencies:
       - framework: libapp.a

@@ -71,6 +71,17 @@ jobs:
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
           echo "IOS_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+      - name: Verify Xcode distribution signing settings
+        run: |
+          SIGNING_SETTINGS="$(xcodebuild \
+            -project src-tauri/gen/apple/amplifier-studio.xcodeproj \
+            -scheme amplifier-studio_iOS \
+            -configuration release \
+            -showBuildSettings)"
+          grep -F "CODE_SIGN_IDENTITY = Apple Distribution" <<< "$SIGNING_SETTINGS"
+          grep -F "CODE_SIGN_STYLE = Manual" <<< "$SIGNING_SETTINGS"
+          grep -F "DEVELOPMENT_TEAM = $APPLE_TEAM_ID" <<< "$SIGNING_SETTINGS"
+          grep -F "PROVISIONING_PROFILE_SPECIFIER = $IOS_PROFILE_NAME" <<< "$SIGNING_SETTINGS"
       - name: Install App Store Connect API key
         run: |
           API_KEY_DIRECTORY="$HOME/.appstoreconnect/private_keys"
@@ -80,13 +91,7 @@ jobs:
           chmod 600 "$API_KEY_PATH"
           echo "APP_STORE_CONNECT_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
       - name: Build signed App Store IPA
-        run: |
-          npm run tauri -- ios build --export-method app-store-connect --ci -- \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME"
+        run: npm run tauri -- ios build --export-method app-store-connect --ci
       - name: Locate and verify IPA
         run: |
           IPA_PATH="$(find src-tauri/gen/apple -type f -name '*.ipa' -print -quit)"
