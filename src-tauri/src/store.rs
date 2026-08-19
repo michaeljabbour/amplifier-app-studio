@@ -695,10 +695,19 @@ fn remember_directory_hint(hints: &mut HashMap<String, String>, candidate: &str)
 }
 
 fn project_slug(project_dir: &Path) -> String {
-    let mut slug = project_dir
-        .to_string_lossy()
-        .replace(['/', '\\'], "-")
-        .replace(':', "");
+    let rendered = project_dir.to_string_lossy();
+    // Rust's Windows canonicalize() returns extended-length paths such as
+    // `\\?\C:\work`, while the Python Amplifier runtime keys the same project
+    // as `C:\work`. Remove only that transport prefix so both processes use
+    // the existing shared session directory. Preserve UNC's leading pair.
+    let normalized = if let Some(rest) = rendered.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = rendered.strip_prefix(r"\\?\") {
+        rest.to_owned()
+    } else {
+        rendered.into_owned()
+    };
+    let mut slug = normalized.replace(['/', '\\'], "-").replace(':', "");
     if !slug.starts_with('-') {
         slug.insert(0, '-');
     }
@@ -742,6 +751,14 @@ mod tests {
         assert_eq!(
             project_slug(Path::new("/Users/me/dev/proj")),
             "-Users-me-dev-proj"
+        );
+        assert_eq!(
+            project_slug(Path::new(r"\\?\C:\projects\web-app")),
+            "-C-projects-web-app"
+        );
+        assert_eq!(
+            project_slug(Path::new(r"\\?\UNC\server\share\project")),
+            "--server-share-project"
         );
     }
 
