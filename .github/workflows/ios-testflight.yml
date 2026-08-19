@@ -108,11 +108,49 @@ jobs:
           printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$API_KEY_PATH"
           chmod 600 "$API_KEY_PATH"
           echo "APP_STORE_CONNECT_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
-      - name: Build signed App Store IPA
-        run: npm run tauri -- ios build --export-method app-store-connect --ci
+      - name: Build signed App Store archive
+        run: npm run tauri -- ios build --export-method app-store-connect --archive-only --ci
+      - name: Export signed App Store IPA
+        run: |
+          ARCHIVE_PATH="$(find src-tauri/gen/apple/build -maxdepth 1 -type d -name '*.xcarchive' -print -quit)"
+          test -n "$ARCHIVE_PATH" || { echo "No signed iOS archive was produced" >&2; exit 1; }
+          EXPORT_PATH="$RUNNER_TEMP/amplifier-studio-ios-export"
+          EXPORT_OPTIONS_PATH="$RUNNER_TEMP/amplifier-studio-export-options.plist"
+          IOS_PROFILE_NAME="$IOS_PROFILE_NAME" \
+          IOS_BUNDLE_ID="$IOS_BUNDLE_ID" \
+          APPLE_TEAM_ID="$APPLE_TEAM_ID" \
+          EXPORT_OPTIONS_PATH="$EXPORT_OPTIONS_PATH" \
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          options = {
+              "destination": "export",
+              "generateAppStoreInformation": False,
+              "manageAppVersionAndBuildNumber": True,
+              "method": "app-store-connect",
+              "provisioningProfiles": {
+                  os.environ["IOS_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
+              },
+              "signingCertificate": "Apple Distribution",
+              "signingStyle": "manual",
+              "stripSwiftSymbols": True,
+              "teamID": os.environ["APPLE_TEAM_ID"],
+              "testFlightInternalTestingOnly": False,
+              "uploadSymbols": True,
+          }
+          with open(os.environ["EXPORT_OPTIONS_PATH"], "wb") as destination:
+              plistlib.dump(options, destination)
+          PY
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
+          IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          test -n "$IPA_PATH" || { echo "Xcode exported no IPA" >&2; exit 1; }
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
       - name: Locate and verify IPA
         run: |
-          IPA_PATH="$(find src-tauri/gen/apple -type f -name '*.ipa' -print -quit)"
           test -n "$IPA_PATH" || { echo "No IPA was produced" >&2; exit 1; }
           IOS_BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - src-tauri/gen/apple/amplifier-studio_iOS/Info.plist)"
           echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
