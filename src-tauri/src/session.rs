@@ -27,8 +27,11 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
 const SINK_BACKPRESSURE_RETRY: Duration = Duration::from_millis(2);
+// Must remain above Studio's maximum WebSocket reconnect backoff (8 seconds
+// in src/transport.ts) so an ended runtime survives until the next retry.
+const EVENT_REATTACH_GRACE_PRODUCTION: Duration = Duration::from_secs(10);
 #[cfg(not(test))]
-const EVENT_REATTACH_GRACE: Duration = Duration::from_secs(5);
+const EVENT_REATTACH_GRACE: Duration = EVENT_REATTACH_GRACE_PRODUCTION;
 #[cfg(test)]
 const EVENT_REATTACH_GRACE: Duration = Duration::from_millis(200);
 pub const DUPLICATE_RESUME_ERROR: &str = "That stored session is already open in Amplifier Studio";
@@ -620,6 +623,25 @@ async fn deliver_exit_and_remove_session(
     readers: Vec<tokio::task::JoinHandle<()>>,
     code: Option<i32>,
 ) {
+    deliver_exit_and_remove_session_with_grace(
+        sessions,
+        attached_sink,
+        gui_id,
+        readers,
+        code,
+        EVENT_REATTACH_GRACE,
+    )
+    .await;
+}
+
+async fn deliver_exit_and_remove_session_with_grace(
+    sessions: &Arc<Mutex<HashMap<String, SessionHandle>>>,
+    attached_sink: &AttachedSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+    reattach_grace: Duration,
+) {
     // Keep the handle and attachment lease available while the final reader
     // tail drains. If the WebSocket is replaced in this interval, routed_sink
     // can move the remaining records to the new subscriber.
@@ -665,7 +687,7 @@ async fn deliver_exit_and_remove_session(
             // for the same bounded grace so Studio's scheduled reattach can
             // still claim the lease and receive the terminal exit.
             let deadline =
-                *reconnect_deadline.get_or_insert_with(|| Instant::now() + EVENT_REATTACH_GRACE);
+                *reconnect_deadline.get_or_insert_with(|| Instant::now() + reattach_grace);
             if timeout(
                 deadline.saturating_duration_since(Instant::now()),
                 changes.changed(),
@@ -696,7 +718,7 @@ async fn deliver_exit_and_remove_session(
             if attached_sink.released.load(Ordering::SeqCst) {
                 return;
             }
-            let deadline = Instant::now() + EVENT_REATTACH_GRACE;
+            let deadline = Instant::now() + reattach_grace;
             reconnect_deadline = Some(deadline);
             if timeout(
                 deadline.saturating_duration_since(Instant::now()),
@@ -1081,6 +1103,15 @@ mod tests {
         assert!(validate_gui_id("7c833764-b757-44a8").is_ok());
         assert!(validate_gui_id("bad/id").is_err());
         assert!(validate_gui_id("").is_err());
+    }
+
+    #[test]
+    fn production_exit_grace_exceeds_studio_maximum_reconnect_backoff() {
+        const STUDIO_MAXIMUM_RECONNECT_BACKOFF: Duration = Duration::from_secs(8);
+        const TRANSPORT_SOURCE: &str = include_str!("../../src/transport.ts");
+
+        assert!(TRANSPORT_SOURCE.contains("Math.min(8_000, 300 *"));
+        assert!(EVENT_REATTACH_GRACE_PRODUCTION > STUDIO_MAXIMUM_RECONNECT_BACKOFF);
     }
 
     #[test]
@@ -1491,6 +1522,91 @@ mod tests {
             .lock()
             .await
             .contains_key("clean-detach-before-exit"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ended_session_survives_six_second_client_backoff() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let sink_slot = attached_sink(Some((1, sync_sink(|_| true))));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "six-second-reconnect".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-six-second".to_owned())),
+                detached_owner: true,
+            },
+        );
+        assert!(manager.detach("six-second-reconnect", 1).await.unwrap());
+
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session_with_grace(
+                &sessions,
+                &finalizer_slot,
+                "six-second-reconnect",
+                Vec::new(),
+                Some(0),
+                EVENT_REATTACH_GRACE_PRODUCTION,
+            )
+            .await;
+        });
+        while sink_slot.changes.receiver_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        tokio::time::advance(Duration::from_secs(6)).await;
+        assert!(manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("six-second-reconnect"));
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        let (gui_id, _) = manager
+            .attach_resume(
+                &project_path,
+                "durable-six-second",
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gui_id, "six-second-reconnect");
+        finalizer.await.unwrap();
+
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "exit");
+        drop(replacement_events);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("six-second-reconnect"));
+        assert!(manager
+            .attach_resume(&project_path, "durable-six-second", sync_sink(|_| true),)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -2006,6 +2122,116 @@ mod tests {
             .attach_resume(&project_path, "durable-final", sync_sink(|_| true))
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn confirmed_terminal_cleanup_releases_gui_id_without_grace() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let (exit_entered_tx, exit_entered_rx) = tokio::sync::oneshot::channel();
+        let exit_entered_tx = Arc::new(StdMutex::new(Some(exit_entered_tx)));
+        let exit_entered_for_sink = exit_entered_tx.clone();
+        let (release_exit_tx, release_exit_rx) = tokio::sync::oneshot::channel();
+        let release_exit_rx = Arc::new(Mutex::new(Some(release_exit_rx)));
+        let release_exit_for_sink = release_exit_rx.clone();
+        let sink: EventSink = Arc::new(move |_| {
+            let entered = exit_entered_for_sink.lock().unwrap().take();
+            let release = release_exit_for_sink.clone();
+            Box::pin(async move {
+                if let Some(entered) = entered {
+                    let _ = entered.send(());
+                }
+                if let Some(release) = release.lock().await.take() {
+                    let _ = release.await;
+                }
+                true
+            })
+        });
+        let sink_slot = attached_sink(Some((1, sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "confirmed-terminal".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-terminal".to_owned())),
+                detached_owner: true,
+            },
+        );
+
+        let sessions = manager.sessions.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &sink_slot,
+                "confirmed-terminal",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        exit_entered_rx.await.unwrap();
+
+        // WebSocket cleanup races the finalizer immediately after the writer
+        // confirms exit. A terminal completion must leave the lease intact so
+        // the finalizer can remove it without entering reconnect grace.
+        crate::web_server::cleanup_socket_attachment(
+            &manager,
+            Some(("confirmed-terminal".to_owned(), 1)),
+            true,
+        )
+        .await;
+        let _ = release_exit_tx.send(());
+        timeout(EVENT_REATTACH_GRACE / 2, finalizer)
+            .await
+            .expect("confirmed exit removes the handle without reconnect grace")
+            .unwrap();
+
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("confirmed-terminal"));
+        assert!(manager
+            .attach_resume(&project_path, "durable-terminal", sync_sink(|_| true))
+            .await
+            .is_err());
+
+        let replacement_slot = attached_sink(Some((2, sync_sink(|_| true))));
+        #[cfg(windows)]
+        let replacement_child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let replacement_child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "confirmed-terminal".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(replacement_child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: replacement_slot,
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+        assert!(manager
+            .attach("confirmed-terminal", sync_sink(|_| true))
+            .await
+            .is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

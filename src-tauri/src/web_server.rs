@@ -27,7 +27,10 @@ use std::{
     env,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use subtle::ConstantTimeEq;
 use tokio::{
@@ -912,6 +915,22 @@ async fn acknowledge_stop_result(outbound: &Outbound, stopped: bool) {
     // frame here would let Studio discard the view before final records drain.
 }
 
+fn socket_attachment_requires_detach(terminal_exit_delivered: bool) -> bool {
+    !terminal_exit_delivered
+}
+
+pub(crate) async fn cleanup_socket_attachment(
+    manager: &SessionManager,
+    attachment: Option<(String, AttachmentId)>,
+    terminal_exit_delivered: bool,
+) {
+    if socket_attachment_requires_detach(terminal_exit_delivered) {
+        if let Some((attached_gui_id, id)) = attachment {
+            let _ = manager.detach(&attached_gui_id, id).await;
+        }
+    }
+}
+
 async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
     let mut shutdown = state.shutdown.subscribe();
     let (mut socket_tx, mut socket_rx) = socket.split();
@@ -921,6 +940,8 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         sender: event_tx,
         control_sender: control_tx,
     };
+    let terminal_exit_delivered = Arc::new(AtomicBool::new(false));
+    let writer_terminal_exit_delivered = terminal_exit_delivered.clone();
     let mut writer = tokio::spawn(async move {
         let mut ready_sent = false;
         while let Some((value, delivered)) =
@@ -942,6 +963,13 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 .await,
                 Ok(Ok(()))
             );
+            // Publish terminal delivery before waking the exit finalizer. The
+            // reader half may observe the peer's close response before this
+            // writer task is joined, but confirmed exit must never be treated
+            // as an ordinary disconnect and detached out from under cleanup.
+            if sent && terminal {
+                writer_terminal_exit_delivered.store(true, Ordering::Release);
+            }
             if let Some(delivered) = delivered {
                 let _ = delivered.send(sent);
             }
@@ -1188,9 +1216,12 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         }
     }
 
-    if let Some((attached_gui_id, id)) = attachment {
-        let _ = state.manager.detach(&attached_gui_id, id).await;
-    }
+    cleanup_socket_attachment(
+        &state.manager,
+        attachment,
+        terminal_exit_delivered.load(Ordering::Acquire),
+    )
+    .await;
     if !writer_finished {
         writer.abort();
     }
@@ -1723,6 +1754,16 @@ mod tests {
         let failed = control_receiver.recv().await.expect("failed stop response");
         assert_eq!(failed["type"], "stopped");
         assert_eq!(failed["stopped"], false);
+    }
+
+    #[test]
+    fn confirmed_terminal_exit_suppresses_disconnect_detach() {
+        assert!(socket_attachment_requires_detach(false));
+
+        // The writer publishes this marker before it acknowledges exit to the
+        // finalizer, so either writer completion or a peer close sees the same
+        // terminal cleanup decision.
+        assert!(!socket_attachment_requires_detach(true));
     }
 
     #[tokio::test]
