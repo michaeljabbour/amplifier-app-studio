@@ -68,7 +68,7 @@ describe("safe session lifecycle", () => {
     expect(tabStripSource).toContain('role="tablist"');
     expect(tabStripSource).toContain('role="tab"');
     expect(tabStripSource).toContain('aria-controls={`session-panel-${session.guiId}`}');
-    expect(tabStripSource).toContain('<button\n                class="tab-close"');
+    expect(tabStripSource).toMatch(/<button\r?\n\s+class="tab-close"/);
     expect(tabStripSource).not.toContain('role="button"');
     expect(appSource).toContain('role="tabpanel"');
   });
