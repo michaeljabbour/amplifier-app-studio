@@ -549,10 +549,8 @@ export default function App() {
     const remembered = host?.url
       ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
       : knownHostProjectRoot(host);
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
-    if (host?.url) await refreshCatalog(projectDir, host.url, host.id);
-    setDialog({ projectDir: projectDir || remembered, ...sessionHostInput(host) });
+    if (host?.url) await refreshCatalog(remembered, host.url, host.id);
+    setDialog({ projectDir: remembered, ...sessionHostInput(host) });
   };
 
   const openSibling = (bundle?: string, provider?: ProviderOption) => {
@@ -566,10 +564,8 @@ export default function App() {
     const remembered = session?.projectDir || (host?.url
       ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
       : knownHostProjectRoot(host));
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     setDialog({
-      projectDir: projectDir || remembered,
+      projectDir: remembered,
       ...sessionHostInput(host),
       bundle: bundle || (session?.bundle && session.bundle !== "default bundle" ? session.bundle : undefined),
       provider: provider?.name,
@@ -589,14 +585,12 @@ export default function App() {
     const remembered = session?.projectDir || (host?.url
       ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
       : knownHostProjectRoot(host));
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     const provider = catalog().providers.find((item) => item.model === session?.model)
       || catalog().providers.find((item) => item.active);
     setCapabilitiesOpen(false);
     setDialog({ ...capabilitySessionInput(
       capability,
-      projectDir || remembered,
+      remembered,
       provider ? { provider: provider.name, model: provider.model } : undefined,
     ), ...sessionHostInput(host) });
   };
