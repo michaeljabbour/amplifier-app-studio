@@ -121,6 +121,29 @@
 :root[data-theme="made"] .terminal-screen-toolbar { background: #24221f; color: #aaa39a; }
 :root[data-theme="made"] .terminal-screen { color: #eeeae3; }
 
+@media (min-width: 721px) {
+  :root[data-theme="made"] .terminal-work-surface button,
+  :root[data-theme="made"] .terminal-create label,
+  :root[data-theme="made"] .terminal-error,
+  :root[data-theme="made"] .terminal-rail > p,
+  :root[data-theme="made"] .terminal-empty span,
+  :root[data-theme="made"] .terminal-command-bar label { font-size: 11px; }
+  :root[data-theme="made"] .terminal-work-heading p,
+  :root[data-theme="made"] .terminal-create input,
+  :root[data-theme="made"] .terminal-session-heading input,
+  :root[data-theme="made"] .terminal-rail-item strong,
+  :root[data-theme="made"] .terminal-command-bar textarea { font-size: 12px; }
+  :root[data-theme="made"] .terminal-rail-item small,
+  :root[data-theme="made"] .terminal-rail-item b,
+  :root[data-theme="made"] .terminal-session-heading > div:first-child > span,
+  :root[data-theme="made"] .terminal-session-heading code,
+  :root[data-theme="made"] .terminal-connection,
+  :root[data-theme="made"] .terminal-screen-toolbar,
+  :root[data-theme="made"] .terminal-screen-toolbar button { font-size: 10px; }
+  :root[data-theme="made"] .terminal-reconnect,
+  :root[data-theme="made"] .terminal-readonly { font-size: 11px; }
+}
+
 @media (max-width: 720px) {
   .terminal-work-heading { align-items: center; padding: 12px 14px; }
   .terminal-work-heading p { display: none; }
