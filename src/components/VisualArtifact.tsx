@@ -36,6 +36,9 @@ const ARTIFACT_RESIZE_GRACE_MS = 2_500;
  *
  * Keep these bytes stable. After ANY edit run `node scripts/artifact-csp-hash.mjs --write`;
  * `VisualArtifact.test.ts` fails the build if the hash and the script disagree.
+ *
+ * Always emit it through `artifactResizeScript()`, never directly: a CRLF checkout would
+ * otherwise change the hashed bytes and silently reintroduce the very bug this guards against.
  */
 export const ARTIFACT_RESIZE_SCRIPT = `(() => {
   const MESSAGE = "amplifier-studio:artifact-resize";
@@ -69,6 +72,18 @@ export const ARTIFACT_RESIZE_SCRIPT = `(() => {
     schedule();
   });
 })();`;
+
+/**
+ * The resize script exactly as it is embedded and hashed, normalised to LF.
+ *
+ * Git for Windows checks out with `core.autocrlf=true` by default, so on a Windows build the
+ * literal above arrives with CRLF line endings. Hashing is byte-exact: without this the emitted
+ * script would no longer match the `'sha256-...'` in the app CSP, and artifacts would break on
+ * Windows in precisely the silent way they broke everywhere before.
+ */
+export function artifactResizeScript(): string {
+  return ARTIFACT_RESIZE_SCRIPT.replace(/\r\n/g, "\n");
+}
 
 export function VisualArtifact(props: Props) {
   let frame: HTMLIFrameElement | undefined;
@@ -182,7 +197,7 @@ export function buildSandboxedHtmlDocument(source: string): string {
     svg, canvas { max-width: 100%; }
     @media (prefers-color-scheme: light) { body { background: #f8f6f3; color: #24211e; } }
   </style>
-  <script>${ARTIFACT_RESIZE_SCRIPT}</script>
+  <script>${artifactResizeScript()}</script>
 </head>
 <body>${source}</body>
 </html>`;

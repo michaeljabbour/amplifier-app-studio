@@ -30,7 +30,8 @@ export function readArtifactResizeScript(source = readFileSync(ARTIFACT_SOURCE, 
   if (script.includes("${")) {
     throw new Error("ARTIFACT_RESIZE_SCRIPT must not interpolate: its bytes have to be stable to be hashed");
   }
-  return script;
+  // Match artifactResizeScript(): a CRLF checkout must not change the hash.
+  return script.replace(/\r\n/g, "\n");
 }
 
 export function artifactScriptHash(script = readArtifactResizeScript()) {

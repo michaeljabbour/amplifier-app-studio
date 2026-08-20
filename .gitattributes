@@ -1,0 +1,7 @@
+# Studio hashes the artifact frame's inline script into the app CSP, so source bytes must be
+# identical on every platform. Without this, a Windows checkout (core.autocrlf=true by default)
+# rewrites LF to CRLF and the emitted script no longer matches its own hash.
+* text=auto eol=lf
+*.png binary
+*.icns binary
+*.ico binary

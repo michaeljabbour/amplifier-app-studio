@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { artifactScriptHash, readArtifactResizeScript, TAURI_CONF } from "../../scripts/artifact-csp-hash.mjs";
 import {
   ARTIFACT_RESIZE_MESSAGE,
   buildSandboxedHtmlDocument,
   clampArtifactHeight,
   dotArtifactFailureMessage,
   dotArtifactIsPending,
-  ARTIFACT_RESIZE_SCRIPT,
+  artifactResizeScript,
   isArtifactResizeMessage,
   renderDotArtifact,
   sanitizeVisualSvg,
@@ -40,14 +41,21 @@ describe("visual artifacts", () => {
   // string-matching test on the generated markup structurally cannot catch that, so assert the
   // hash instead.
   it("keeps Studio's CSP hash in sync with the artifact frame's inline script", () => {
-    const script = readArtifactResizeScript();
-    expect(script).toBe(ARTIFACT_RESIZE_SCRIPT);
-    expect(script).not.toContain("${");
+    // Hash the value the component actually embeds, not the raw source text: that is what the
+    // browser sees, and it is already LF-normalised so a CRLF checkout cannot shift the digest.
+    const script = artifactResizeScript();
+    expect(script).not.toContain("\r");
+    expect(buildSandboxedHtmlDocument("<p>x</p>")).toContain(`<script>${script}</script>`);
 
-    const csp = JSON.parse(readFileSync(TAURI_CONF, "utf8")).app.security.csp as string;
+    const hash = `sha256-${createHash("sha256").update(script, "utf8").digest("base64")}`;
+    // process.cwd() rather than import.meta.url: the jsdom environment does not give this
+    // module a file: URL, and join() keeps the path valid on Windows too.
+    const tauriConf = join(process.cwd(), "src-tauri", "tauri.conf.json");
+    const csp = JSON.parse(readFileSync(tauriConf, "utf8")).app.security.csp as string;
     const scriptSrc = csp.split(";").map((directive) => directive.trim()).find((directive) => directive.startsWith("script-src "));
+
     expect(scriptSrc, "tauri.conf.json must declare script-src").toBeDefined();
-    expect(scriptSrc).toContain(`'${artifactScriptHash(script)}'`);
+    expect(scriptSrc, `run: node scripts/artifact-csp-hash.mjs --write`).toContain(`'${hash}'`);
     expect(scriptSrc).not.toContain("'unsafe-inline'");
   });
 
