@@ -4,6 +4,16 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.48 — 2026-08-20
+
+- Fixed the release gate that verifies the macOS microphone entitlement. The
+  check used an unescaped `plutil` key path, and `plutil` splits key paths on
+  `.`, so it read `com.apple.security.device.audio-input` as a nested path and
+  never found it. Caught by building and signing 0.1.47 locally: the gate
+  failed against a build that carried the entitlement correctly, i.e. it would
+  have blocked a good release. Now also asserts the Hardened Runtime, without
+  which the entitlement means nothing.
+
 ## 0.1.47 — 2026-08-20
 
 Second hardening pass: the remaining security and durability items that were
