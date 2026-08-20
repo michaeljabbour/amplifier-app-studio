@@ -895,6 +895,17 @@ async fn next_outbound_value(
     }
 }
 
+async fn acknowledge_stop_result(outbound: &Outbound, stopped: bool) {
+    if !stopped {
+        let _ = outbound
+            .control(json!({ "type": "stopped", "stopped": false }))
+            .await;
+    }
+    // A successful stop is acknowledged by the ordered exit event. The exit
+    // monitor waits for stdout/stderr readers, so using a priority control
+    // frame here would let Studio discard the view before final records drain.
+}
+
 async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
     let mut shutdown = state.shutdown.subscribe();
     let (mut socket_tx, mut socket_rx) = socket.split();
@@ -1139,9 +1150,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 } else {
                     match state.manager.stop(attached_gui_id).await {
                         Ok(stopped) => {
-                            let _ = outbound
-                                .control(json!({ "type": "stopped", "stopped": stopped }))
-                                .await;
+                            acknowledge_stop_result(&outbound, stopped).await;
                         }
                         Err(error) => {
                             let _ = outbound.error(error).await;
@@ -1635,6 +1644,27 @@ mod tests {
         .await
         .expect("control enqueue is time-bounded");
         assert!(!accepted);
+    }
+
+    #[tokio::test]
+    async fn successful_stop_waits_for_the_ordered_exit_event() {
+        let (sender, _receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (control_sender, mut control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+
+        acknowledge_stop_result(&outbound, true).await;
+        assert!(matches!(
+            control_receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        acknowledge_stop_result(&outbound, false).await;
+        let failed = control_receiver.recv().await.expect("failed stop response");
+        assert_eq!(failed["type"], "stopped");
+        assert_eq!(failed["stopped"], false);
     }
 
     #[tokio::test]
