@@ -93,20 +93,18 @@ composer, and a compact mobile layout. It renders terminal output as sanitized
 plain text; a later full-screen TUI milestone can replace only the screen view
 with a terminal emulator without changing the coordinator or adapter.
 
-Exact App integration points:
+Desktop Studio now constructs a native `TerminalCoordinator`, disposes it with
+the workbench, and exposes it through the top `Terminal` switcher. The Agent
+view stays mounted as durable application state rather than being stopped when
+the user supervises terminal work. New terminals inherit the current local
+project when one exists. The same surface supplies an explicit return to Agent.
 
-1. Construct one `TerminalBackend` per configured runtime host after the native
-   transport is available. Start with `inputAuthorization: "read-only"` unless
-   the operator's host policy explicitly grants MuxPlex input.
-2. Add a `TerminalCoordinator` to the Studio workbench owner and dispose it when
-   that host workspace closes.
-3. Add a `Terminal sessions` destination to `CapabilityPalette` or the top
-   workbench switcher and render `<TerminalWorkSurface coordinator={...} />` in
-   the center work area. This branch deliberately does not edit `App.tsx`, so it
-   can merge independently of the concurrent usability work.
-4. On mobile, route the same component as a full-height workspace rather than a
-   modal. Its session rail becomes a horizontal picker and its command actions
-   retain 44-pixel targets below 720px.
+The remote `MuxplexTerminalAdapter` remains an opt-in backend until its native
+credentialed HTTP/WebSocket transport is implemented. Mobile does not expose a
+terminal destination yet: it must first gain OS-backed host credential storage
+and signed-device validation. When that boundary exists, route the same
+component as a full-height workspace rather than a modal; its session rail and
+44-pixel command actions already have a compact layout.
 
 ## Current adapter assumptions
 

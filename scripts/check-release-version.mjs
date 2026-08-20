@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertReleaseHasNoEmbeddedBridgeToken } from "./build-security.mjs";
+
+assertReleaseHasNoEmbeddedBridgeToken();
 
 const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const tauriVersion = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).version;
