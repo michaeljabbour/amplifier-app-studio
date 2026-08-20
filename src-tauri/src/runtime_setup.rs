@@ -1,20 +1,100 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     env,
     ffi::{OsStr, OsString},
     path::PathBuf,
     process::{Command, Stdio},
 };
+use subtle::ConstantTimeEq;
 use tokio::io::AsyncWriteExt;
 
-#[cfg(test)]
+/// The reviewed amplifier-runtime revision. Both the bootstrap script URL and the `--ref`
+/// argument resolve to this commit, so "what Studio installs" is a single reviewable value.
 const RUNTIME_INSTALL_REF: &str = "b9568a25287ddf83ff7aa321aaefdc8ecf30ca52";
-const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref b9568a25287ddf83ff7aa321aaefdc8ecf30ca52 --no-update-shell";
+
+/// Bootstrap scripts are fetched from the pinned commit and checksum-verified before they run.
+///
+/// These used to be `curl .../main/scripts/install.sh | bash` and an `Invoke-RestMethod` piped
+/// into `[scriptblock]::Create`. Only the `--ref` ARGUMENT was pinned; the script consuming it
+/// was whatever the mutable `main` branch held at click time, with no checksum and no
+/// signature. That made any push to (or compromise of) amplifier-runtime@main arbitrary code
+/// execution on every Studio install, in a different trust domain from the minisign-verified
+/// Tauri updater. Refresh both digests with `scripts/runtime-installer-digest.sh` whenever
+/// RUNTIME_INSTALL_REF moves.
+const INSTALL_SCRIPT_SHA256: &str =
+    "a0904a1f8d7e6a11117f5398cd8faeb4a3a56b32cd30394136e4c6731075e611";
+#[cfg(target_os = "windows")]
+const WINDOWS_INSTALL_SCRIPT_SHA256: &str =
+    "85c13a6bd4f14b51c6e434081d437e4ae136b2ae4fe65e0183f7fa66271369aa";
+
 const REQUIRED_RUNTIME_VERSION: &str = "0.1.8";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
-#[cfg(target_os = "windows")]
-const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'b9568a25287ddf83ff7aa321aaefdc8ecf30ca52' -NoUpdateShell";
+
+fn install_script_url(file: &str) -> String {
+    format!("https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/{RUNTIME_INSTALL_REF}/scripts/{file}")
+}
+
+/// Downloads a bootstrap script over HTTPS and returns it only if it matches `expected_sha256`.
+async fn fetch_verified_install_script(
+    url: &str,
+    expected_sha256: &str,
+) -> Result<Vec<u8>, String> {
+    let response = reqwest::Client::builder()
+        .https_only(true)
+        .build()
+        .map_err(|error| format!("Could not start the Amplifier installer: {error}"))?
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Could not download the Amplifier installer: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Could not download the Amplifier installer: {} returned {}",
+            url,
+            response.status()
+        ));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Could not read the Amplifier installer: {error}"))?;
+    let actual = hex_digest(&bytes);
+    // Constant-time compare so a mismatch cannot be probed byte by byte.
+    if !bool::from(actual.as_bytes().ct_eq(expected_sha256.as_bytes())) {
+        return Err(format!(
+            "The Amplifier installer failed its integrity check and was not run. Expected SHA-256 {expected_sha256}, got {actual}."
+        ));
+    }
+    Ok(bytes.to_vec())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// Writes the verified script to a private temp file. Returned path is owner-only on Unix.
+fn stage_install_script(contents: &[u8], file_name: &str) -> Result<PathBuf, String> {
+    let path = env::temp_dir().join(format!(
+        "amplifier-runtime-{RUNTIME_INSTALL_REF}-{file_name}"
+    ));
+    std::fs::write(&path, contents)
+        .map_err(|error| format!("Could not stage the Amplifier installer: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not secure the Amplifier installer: {error}"))?;
+    }
+    Ok(path)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,26 +193,53 @@ pub async fn install() -> Result<RuntimeStatus, String> {
         );
     }
 
+    // Download -> verify -> execute, never fetch-and-pipe: the bytes are checked against a
+    // pinned digest before anything is handed to a shell.
+    #[cfg(target_os = "windows")]
+    let script_name = "install.ps1";
+    #[cfg(not(target_os = "windows"))]
+    let script_name = "install.sh";
+    #[cfg(target_os = "windows")]
+    let expected_digest = WINDOWS_INSTALL_SCRIPT_SHA256;
+    #[cfg(not(target_os = "windows"))]
+    let expected_digest = INSTALL_SCRIPT_SHA256;
+
+    let url = install_script_url(script_name);
+    let script = fetch_verified_install_script(&url, expected_digest).await?;
+    let script_path = stage_install_script(&script, script_name)?;
+    let script_arg = script_path.as_os_str().to_owned();
+
     #[cfg(target_os = "windows")]
     let output = tokio::process::Command::new("powershell.exe")
         .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            WINDOWS_INSTALL_COMMAND,
+            OsStr::new("-NoLogo"),
+            OsStr::new("-NoProfile"),
+            OsStr::new("-NonInteractive"),
+            OsStr::new("-ExecutionPolicy"),
+            OsStr::new("Bypass"),
+            OsStr::new("-File"),
+            script_arg.as_os_str(),
+            OsStr::new("-Ref"),
+            OsStr::new(RUNTIME_INSTALL_REF),
+            OsStr::new("-NoUpdateShell"),
         ])
         .output()
         .await
         .map_err(|error| format!("Could not start the Amplifier installer: {error}"))?;
     #[cfg(not(target_os = "windows"))]
     let output = tokio::process::Command::new("bash")
-        .args(["-o", "pipefail", "-c", INSTALL_COMMAND])
+        .args([
+            OsStr::new("-o"),
+            OsStr::new("pipefail"),
+            script_arg.as_os_str(),
+            OsStr::new("--ref"),
+            OsStr::new(RUNTIME_INSTALL_REF),
+            OsStr::new("--no-update-shell"),
+        ])
         .output()
         .await
         .map_err(|error| format!("Could not start the Amplifier installer: {error}"))?;
+    let _ = std::fs::remove_file(&script_path);
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
@@ -519,14 +626,56 @@ mod tests {
 
     #[test]
     fn installers_pin_the_reviewed_runtime_revision() {
-        assert!(INSTALL_COMMAND.contains("michaeljabbour/amplifier-runtime"));
-        assert!(INSTALL_COMMAND.contains(RUNTIME_INSTALL_REF));
-        assert!(!INSTALL_COMMAND.contains("amplifier-app-tui"));
-        #[cfg(target_os = "windows")]
-        {
-            assert!(WINDOWS_INSTALL_COMMAND.contains("michaeljabbour/amplifier-runtime"));
-            assert!(WINDOWS_INSTALL_COMMAND.contains(RUNTIME_INSTALL_REF));
-            assert!(!WINDOWS_INSTALL_COMMAND.contains("amplifier-app-tui"));
+        for file in ["install.sh", "install.ps1"] {
+            let url = install_script_url(file);
+            assert!(url.starts_with("https://"));
+            assert!(url.contains("michaeljabbour/amplifier-runtime"));
+            assert!(url.contains(RUNTIME_INSTALL_REF));
+            assert!(!url.contains("amplifier-app-tui"));
         }
+    }
+
+    /// The bootstrap script must come from an immutable commit, never a branch. A branch URL is
+    /// remote code execution on every install the moment that branch changes.
+    #[test]
+    fn installer_urls_never_reference_a_mutable_branch() {
+        for file in ["install.sh", "install.ps1"] {
+            let url = install_script_url(file);
+            for branch in ["/main/", "/master/", "/HEAD/", "/refs/heads/"] {
+                assert!(
+                    !url.contains(branch),
+                    "{url} resolves through mutable {branch}"
+                );
+            }
+        }
+        assert_eq!(RUNTIME_INSTALL_REF.len(), 40);
+        assert!(RUNTIME_INSTALL_REF.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn installer_digests_are_full_sha256_values() {
+        let digests = [
+            INSTALL_SCRIPT_SHA256,
+            #[cfg(target_os = "windows")]
+            WINDOWS_INSTALL_SCRIPT_SHA256,
+        ];
+        for digest in digests {
+            assert_eq!(digest.len(), 64, "{digest} is not a SHA-256 hex digest");
+            assert!(digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+        }
+    }
+
+    #[test]
+    fn hex_digest_matches_known_sha256_vectors() {
+        assert_eq!(
+            hex_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            hex_digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

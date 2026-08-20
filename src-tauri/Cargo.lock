@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "amplifier-studio"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -66,6 +66,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "tauri",
  "tauri-build",

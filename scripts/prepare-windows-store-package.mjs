@@ -17,7 +17,15 @@ export function windowsStorePackageVersion(marketingVersion, buildNumber) {
   if (segments.some((segment) => segment > 65_535)) {
     throw new Error(`Windows Store version segments must not exceed 65535; found ${marketingVersion}`);
   }
-  return `${marketingVersion}.${buildNumber}`;
+  // Partner Center reserves the fourth (revision) field of Package/Identity/Version for Store
+  // use and rejects any submission where it is non-zero, so the monotonic mobile build number
+  // goes in the third field and the revision is pinned to 0. `0.1.45.33` -- marketing version
+  // plus build -- was rejected on upload. The marketing patch is deliberately not encoded here:
+  // packing it in (e.g. patch * 1000 + build) overflows the 65535 segment ceiling at patch 66,
+  // which would block a future release with no way out. The build number alone is monotonic
+  // across every submission, which is all Partner Center needs for ordering and uniqueness.
+  const [major, minor] = segments;
+  return `${major}.${minor}.${Number(buildNumber)}.0`;
 }
 
 export function renderWindowsStoreManifest({ identityName, publisherId, publisherDisplayName, packageVersion }) {

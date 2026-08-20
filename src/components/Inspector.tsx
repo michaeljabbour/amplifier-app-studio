@@ -381,9 +381,9 @@ function ContextPanel(props: Props) {
         </dl>
         <Show when={props.state.context.costBasis === "estimated"}>
           <p class="inspector-empty">
-            Estimated from {usage().toLocaleString()} blended tokens using the $600k annual RunPod allocation
+            Estimated from {usage().toLocaleString()} blended tokens using Studio's built-in RunPod planning rate
             {props.state.context.estimateRatePerMillion === undefined ? "" : ` at $${props.state.context.estimateRatePerMillion}/1M`}.
-            This is infrastructure allocation, not provider-reported request spend.
+            This is a local capacity estimate, not provider-reported request spend.
           </p>
         </Show>
         <Show when={props.state.context.costBasis === "partial" || props.state.context.costBasis === "mixed"}>
