@@ -723,7 +723,7 @@ async fn output_download(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&media_type)
+        HeaderValue::from_str(media_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(

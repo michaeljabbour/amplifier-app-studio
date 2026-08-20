@@ -1,4 +1,4 @@
-import type { NewSessionInput, SessionViewState } from "./protocol";
+import type { NewSessionInput, SessionViewState, StoredSession } from "./protocol";
 import { usableSessionTitle } from "./reducer";
 
 const RESTORE_KEY = "amplifier-studio.update-restore.v1";
@@ -28,10 +28,22 @@ export function saveUpdateRestorePlan(
 ): boolean {
   const restorable = sessions.flatMap((session): UpdateRestoreEntry[] => {
     if (session.phase !== "ready" || !session.runtimeSessionId || !session.projectDir) return [];
+    const visibleHistoryMessages = session.blocks.filter(
+      (block) => block.kind === "user" || block.kind === "answer",
+    ).length;
     return [{
       projectDir: session.projectDir,
+      hostId: session.hostId,
+      hostName: session.hostName,
+      hostUrl: session.hostUrl,
+      bundle: session.requestedBundle,
+      model: session.requestedModel,
+      provider: session.requestedProvider,
+      mode: session.mode,
       resumeId: session.runtimeSessionId,
       resumeName: usableSessionTitle(session.title),
+      expectedHistoryMessages: session.expectedHistoryMessages
+        ?? (visibleHistoryMessages > 0 ? visibleHistoryMessages : undefined),
       active: session.guiId === activeId,
     }];
   });
@@ -72,4 +84,32 @@ export function takeUpdateRestorePlan(
 
 export function clearUpdateRestorePlan(storage: StorageLike): void {
   storage.removeItem(RESTORE_KEY);
+}
+
+/** Older Studio versions saved only projectDir + resumeId. Hydrate those
+ * entries from federated durable history so the first update to the fixed
+ * build returns remote sessions to their owning compute instead of treating
+ * them as an unauthenticated global bridge. Ambiguous matches fail closed. */
+export function hydrateLegacyUpdateRestoreEntry(
+  entry: UpdateRestoreEntry,
+  storedSessions: StoredSession[],
+): UpdateRestoreEntry {
+  if (entry.hostId || entry.hostUrl) return entry;
+  const candidates = storedSessions.filter((session) => session.sessionId === entry.resumeId
+    && (!session.projectDir || sameProject(session.projectDir, entry.projectDir)));
+  if (candidates.length !== 1) return entry;
+  const match = candidates[0];
+  return {
+    ...entry,
+    projectDir: match.projectDir || entry.projectDir,
+    hostId: match.hostId,
+    hostName: match.hostName,
+    hostUrl: match.hostUrl,
+    expectedHistoryMessages: match.messageCount,
+  };
+}
+
+function sameProject(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/[\\/]+$/, "");
+  return normalize(left) === normalize(right);
 }

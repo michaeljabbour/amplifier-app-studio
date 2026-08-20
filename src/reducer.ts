@@ -43,6 +43,7 @@ export function createSessionState(
     mode?: string;
     resumeId?: string;
     resumeName?: string;
+    expectedHistoryMessages?: number;
     capabilityId?: string;
     capabilityName?: string;
   },
@@ -59,6 +60,7 @@ export function createSessionState(
     requestedModel: input.model,
     requestedProvider: input.provider,
     resumeId: input.resumeId,
+    expectedHistoryMessages: input.expectedHistoryMessages,
     title: usableSessionTitle(input.resumeName)
       || input.capabilityName
       || (input.resumeId ? "Restoring saved work" : "New session"),
@@ -74,18 +76,9 @@ export function createSessionState(
     autopilotPending: false,
     activity: "Starting turn",
     replaying: Boolean(input.resumeId),
+    replayedTranscriptMessageIds: {},
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
-    context: {
-      tokens: 0,
-      window: 0,
-      percent: 0,
-      costUsd: "0",
-      costBasis: "unavailable",
-      inputTokens: 0,
-      outputTokens: 0,
-      unpricedTokens: 0,
-      usageResponses: 0,
-    },
+    context: emptyContext(),
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
     blocks: [],
     lanes: {},
@@ -287,11 +280,51 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         replaying: true,
+        restoreSource: record.source === "transcript" ? "transcript" : "ui-events",
         phase: next.restoreProgress && next.phase !== "degraded" ? "starting" : next.phase,
         bootLabel: "Replaying durable history",
       };
-    case "history.end":
-      return markRestoreProgress(next, "history");
+    case "transcript.message": {
+      const text = stringValue(record.text).trim();
+      if (!text || record.replay !== true) return next;
+      const messageId = stringValue(record.message_id).trim();
+      if (messageId && next.replayedTranscriptMessageIds?.[messageId]) return next;
+      const replayedTranscriptMessageIds = messageId
+        ? { ...next.replayedTranscriptMessageIds, [messageId]: true as const }
+        : next.replayedTranscriptMessageIds;
+      if (record.role === "user") {
+        return appendBlock({ ...next, replayedTranscriptMessageIds }, { kind: "user", text, mode: next.mode });
+      }
+      if (record.role === "assistant") {
+        return appendBlock({ ...next, replayedTranscriptMessageIds }, { kind: "answer", text, final: true });
+      }
+      return next;
+    }
+    case "history.end": {
+      const expectedMessages = Math.max(0, next.expectedHistoryMessages || 0);
+      const replayedEvents = Math.max(0, numberValue(record.count));
+      const replayedTranscript = Math.max(0, numberValue(record.transcript_count));
+      const hasVisibleConversation = next.blocks.some((block) => block.kind === "user" || block.kind === "answer");
+      if (
+        next.restoreProgress
+        && expectedMessages > 0
+        && replayedEvents === 0
+        && replayedTranscript === 0
+        && !hasVisibleConversation
+      ) {
+        return markRestoreDegraded(
+          next,
+          `Amplifier found ${expectedMessages} saved transcript record${expectedMessages === 1 ? "" : "s"}, but the active session owner returned no replayable history. It may still be running an older runtime. Restart the Studio window or runtime that owns this session, then retry the restore.`,
+        );
+      }
+      return markRestoreProgress({
+        ...next,
+        restoreSource: record.source === "transcript" ? "transcript" : next.restoreSource || "ui-events",
+        restoredTranscriptMessages: record.source === "transcript"
+          ? Math.max(0, numberValue(record.transcript_count))
+          : next.restoredTranscriptMessages,
+      }, "history");
+    }
     case "steer.deferred": {
       const count = Math.max(1, numberValue(record.count, 1));
       return appendBlock({ ...next, busy: true, activity: "Continuing with your course correction" }, {
@@ -545,13 +578,17 @@ export function markRestoreDegraded(state: SessionViewState, message: string): S
 export function retryRestore(state: SessionViewState): SessionViewState {
   if (!state.restoreProgress) return state;
   const retryHistory = !state.restoreProgress.history;
+  const restoreProgress = retryHistory
+    ? { history: false, status: false }
+    : state.restoreProgress;
   return {
     ...state,
+    restoreProgress,
     phase: "starting",
     bootLabel: retryHistory ? "Retrying conversation history" : "Retrying session status",
     replaying: retryHistory,
     restoreIssue: {
-      missing: (["history", "status"] as const).filter((step) => !state.restoreProgress?.[step]),
+      missing: (["history", "status"] as const).filter((step) => !restoreProgress[step]),
       message: "Retrying restoration",
       attempt: (state.restoreIssue?.attempt || 1) + 1,
     },
@@ -562,6 +599,14 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       plans: {},
       pipeline: undefined,
       outputs: [],
+      alerts: [],
+      context: emptyContext(),
+      turnLoop: emptyTurnLoop(),
+      pendingApproval: undefined,
+      pendingDecision: undefined,
+      restoreSource: undefined,
+      restoredTranscriptMessages: undefined,
+      replayedTranscriptMessageIds: {},
       liveTail: undefined,
       openThinkingId: undefined,
       nextBlock: 1,
@@ -1007,6 +1052,20 @@ function emptyTurnLoop(): TurnLoopState {
     activeDelegates: {},
     transitions: [],
     appliedEvents: {},
+  };
+}
+
+function emptyContext(): SessionViewState["context"] {
+  return {
+    tokens: 0,
+    window: 0,
+    percent: 0,
+    costUsd: "0",
+    costBasis: "unavailable",
+    inputTokens: 0,
+    outputTokens: 0,
+    unpricedTokens: 0,
+    usageResponses: 0,
   };
 }
 

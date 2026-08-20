@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionViewState } from "./protocol";
-import { saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
+import { hydrateLegacyUpdateRestoreEntry, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -75,10 +75,106 @@ describe("update restart continuity", () => {
     const storage = memoryStorage();
     expect(saveUpdateRestorePlan(storage, [session("active", "runtime-a"), session("other", "runtime-b")], "active", 10)).toBe(true);
     expect(takeUpdateRestorePlan(storage, 20)).toEqual([
-      { projectDir: "/projects/other", resumeId: "runtime-b", resumeName: undefined, active: false },
-      { projectDir: "/projects/active", resumeId: "runtime-a", resumeName: undefined, active: true },
+      { projectDir: "/projects/other", mode: "auto", resumeId: "runtime-b", active: false },
+      { projectDir: "/projects/active", mode: "auto", resumeId: "runtime-a", active: true },
     ]);
     expect(takeUpdateRestorePlan(storage, 20)).toEqual([]);
+  });
+
+  it("preserves the owning compute and resume expectations across an app restart", () => {
+    const storage = memoryStorage();
+    const remote = {
+      ...session("remote", "runtime-remote"),
+      hostId: "spark-288f",
+      hostName: "Spark 288f",
+      hostUrl: "http://127.0.0.1:4318/",
+      requestedBundle: "anchors",
+      requestedModel: "anthropic/claude-opus-5",
+      requestedProvider: "anthropic",
+      expectedHistoryMessages: 101,
+    };
+
+    expect(saveUpdateRestorePlan(storage, [remote], "remote", 10)).toBe(true);
+    expect(takeUpdateRestorePlan(storage, 20)).toEqual([{
+      projectDir: "/projects/remote",
+      hostId: "spark-288f",
+      hostName: "Spark 288f",
+      hostUrl: "http://127.0.0.1:4318/",
+      bundle: "anchors",
+      model: "anthropic/claude-opus-5",
+      provider: "anthropic",
+      mode: "auto",
+      resumeId: "runtime-remote",
+      expectedHistoryMessages: 101,
+      active: true,
+    }]);
+  });
+
+  it("hydrates a legacy restore plan from one unambiguous federated session", () => {
+    const legacy = {
+      projectDir: "/home/mjabbour/dev/project/",
+      resumeId: "runtime-remote",
+      active: true,
+    };
+    const hydrated = hydrateLegacyUpdateRestoreEntry(legacy, [{
+      sessionId: "runtime-remote",
+      hostId: "spark-288f",
+      hostName: "Spark 288f",
+      hostUrl: "http://127.0.0.1:4318/",
+      name: "Remote session",
+      bundle: "anchors",
+      tags: [],
+      messageCount: 101,
+      mtimeMs: 1,
+      projectSlug: "project",
+      projectDir: "/home/mjabbour/dev/project",
+      state: "ok",
+      summary: "Saved work",
+    }]);
+
+    expect(hydrated).toMatchObject({
+      hostId: "spark-288f",
+      hostName: "Spark 288f",
+      hostUrl: "http://127.0.0.1:4318/",
+      expectedHistoryMessages: 101,
+    });
+  });
+
+  it("does not guess when a legacy durable id matches more than one compute", () => {
+    const legacy = { projectDir: "/project", resumeId: "shared", active: true };
+    const candidate = {
+      sessionId: "shared",
+      name: "Shared",
+      bundle: "anchors",
+      tags: [],
+      messageCount: 2,
+      mtimeMs: 1,
+      projectSlug: "project",
+      projectDir: "/project",
+      state: "ok" as const,
+      summary: "Saved work",
+    };
+
+    expect(hydrateLegacyUpdateRestoreEntry(legacy, [
+      { ...candidate, hostId: "spark-a", hostName: "Spark A" },
+      { ...candidate, hostId: "spark-b", hostName: "Spark B" },
+    ])).toEqual(legacy);
+  });
+
+  it("derives a non-empty resume expectation for sessions created in this app run", () => {
+    const storage = memoryStorage();
+    const created = {
+      ...session("created", "runtime-created"),
+      blocks: [
+        { id: "u1", kind: "user" as const, text: "Build it", mode: "auto" },
+        { id: "a1", kind: "answer" as const, text: "Done", final: true },
+      ],
+    };
+
+    expect(saveUpdateRestorePlan(storage, [created], "created", 10)).toBe(true);
+    expect(takeUpdateRestorePlan(storage, 20)).toEqual([
+      expect.objectContaining({ expectedHistoryMessages: 2 }),
+    ]);
   });
 
   it("ignores incomplete, non-ready, corrupt, and stale restore data", () => {

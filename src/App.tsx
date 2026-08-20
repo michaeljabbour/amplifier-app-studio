@@ -60,6 +60,7 @@ import {
   getTranscriptionStatus,
   openLocalOutput,
   probeRuntimeHost,
+  prepareSessionLaunch,
   installRuntime,
   importStoredSession,
   listenNativeAttachmentDrops,
@@ -87,10 +88,10 @@ import {
   type SessionConnection,
 } from "./transport";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
-import { clearUpdateRestorePlan, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
+import { clearUpdateRestorePlan, hydrateLegacyUpdateRestoreEntry, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 import { toolContractFailure } from "./providerSafety";
 import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } from "./theme";
-import { openGuiIdForStoredSession } from "./sessionSelection";
+import { openGuiIdForStoredSession, parallelSessionSummary } from "./sessionSelection";
 import { storedSessionLegacyBundleOverride, storedSessionResumeBlocker } from "./sessionAvailability";
 import { projectContextForHost } from "./settingsProjectContext";
 import { createLatestAsyncRunner } from "./latestAsync";
@@ -206,12 +207,10 @@ export default function App() {
       } else if (sessionHomeHostId() !== "local") {
         void refreshRuntime();
       }
-      void refreshStored();
       const home = hosts.find((host) => host.id === sessionHomeHostId()) || hosts[0];
       if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
     void refreshTranscription();
-    queueMicrotask(() => void refreshStored());
     queueMicrotask(() => void refreshCatalog());
     const checkForUpdates = () => {
       if (appUpdatesEnabled() && !updateInProgress()) void refreshAppUpdate(false);
@@ -289,6 +288,7 @@ export default function App() {
 
   const start = async (input: NewSessionInput, initialPrompt?: string, initialAttachments: ComposerAttachment[] = []) => {
     if (updateInProgress()) throw new Error("Finish the Amplifier Studio update before starting another run");
+    await prepareSessionLaunch(input);
     const guiId = createGuiId();
     const state = initialPrompt?.trim()
       ? markPromptSubmitted(
@@ -700,6 +700,7 @@ export default function App() {
       mode: session.mode,
       resumeId,
       resumeName: resumeId ? session.title : undefined,
+      expectedHistoryMessages: session.expectedHistoryMessages,
       capabilityId: session.capabilityId,
       capabilityName: session.capabilityName,
       hostId: session.hostId,
@@ -840,7 +841,7 @@ export default function App() {
           >
             <WorkspaceSidebar
               state={session()}
-              parallelCount={sessions().length}
+              parallelSummary={parallelSessionSummary(sessions())}
               lanes={lanes()}
               selectedLaneId={selectedLaneId()}
               onSelectLane={selectLane}
@@ -1200,6 +1201,7 @@ export default function App() {
       bundle: storedSessionLegacyBundleOverride(session),
       resumeId: session.sessionId,
       resumeName: session.name,
+      expectedHistoryMessages: session.messageCount,
     });
   }
 
@@ -1237,6 +1239,7 @@ export default function App() {
       ...sessionHostInput(destination),
       resumeId: copyId,
       resumeName: copyName,
+      expectedHistoryMessages: session.messageCount,
     });
   }
 
@@ -1257,12 +1260,20 @@ export default function App() {
     } catch {
       return;
     }
-    for (const session of restore) {
+    await refreshStored();
+    const failures: string[] = [];
+    for (const saved of restore) {
+      const session = hydrateLegacyUpdateRestoreEntry(saved, stored());
       try {
         await start(session);
-      } catch {
-        // start() keeps the failed tab visible with its actionable error.
+      } catch (error) {
+        // Preflight failures leave no dead tab; runtime failures keep the
+        // replacement tab visible with actionable diagnostics.
+        failures.push(`${session.resumeName || session.resumeId || "saved session"}: ${cleanError(error)}`);
       }
+    }
+    if (failures.length > 0) {
+      setRuntimeError(`Studio could not restore ${failures.length === 1 ? "a session" : `${failures.length} sessions`} after the update. ${failures.join(" ")}`);
     }
   }
 

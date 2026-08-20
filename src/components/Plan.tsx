@@ -68,8 +68,15 @@ export function PlanPanel(props: { state: SessionViewState }) {
       </div>
       <Show when={plans().length} fallback={
         <div class="plan-empty">
-          <strong>No Amplifier todo plan in this session</strong>
-          <p>Plans here come directly from the coordinator and child agents calling Amplifier’s mounted <code>todo</code> capability. Studio now asks project turns to publish concrete steps and keep their status current; it does not infer a plan from unrelated tool activity.</p>
+          <Show when={props.state.restoreSource === "transcript"} fallback={
+            <>
+              <strong>No Amplifier todo plan in this session</strong>
+              <p>Plans here come directly from the coordinator and child agents calling Amplifier’s mounted <code>todo</code> capability. Studio now asks project turns to publish concrete steps and keep their status current; it does not infer a plan from unrelated tool activity.</p>
+            </>
+          }>
+            <strong>Conversation restored from a legacy transcript</strong>
+            <p>This session predates Amplifier’s durable UI-event ledger. Studio restored {props.state.restoredTranscriptMessages || "the saved"} user and assistant messages, but no historical plan, tool, output, agent, or telemetry state was recorded to reconstruct here.</p>
+          </Show>
         </div>
       }>
         <div class="plan-owner-list">

@@ -4,6 +4,20 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.41 — 2026-08-19
+
+- Restored pre-ledger sessions from their durable user/assistant transcript,
+  with reconnect deduplication and an explicit stale-runtime diagnostic instead
+  of a falsely successful blank screen.
+- Preserved compute-host identity, credentials, launch overrides, and replay
+  expectations across in-app updates, including recovery of restore plans
+  written by older Studio builds.
+- Kept failed tabs retryable, distinguished active runtimes from stopped
+  diagnostics, and removed zero-message runtime attempts from resumable history.
+- Cleared the current npm and RustSec vulnerability findings, including the
+  XML parser and HTTP/2 dependency updates, while retaining entity-safe DOCX
+  text extraction coverage.
+
 ## 0.1.38 — 2026-08-18
 
 - Federated stored-session history across local and configured compute hosts,

@@ -337,6 +337,10 @@ export interface SessionViewState {
   requestedModel?: string;
   requestedProvider?: string;
   resumeId?: string;
+  /** Number of durable transcript messages Studio saw before launching the
+   * resume. Used only to detect an older live runtime owner that reports a
+   * successful but empty replay for a non-empty legacy session. */
+  expectedHistoryMessages?: number;
   title: string;
   bundle: string;
   model: string;
@@ -356,6 +360,14 @@ export interface SessionViewState {
   activity: string;
   turnStartedAtMs?: number;
   replaying: boolean;
+  /** Which durable source rebuilt the visible history on resume. UI events
+   * retain rich plan/tool/output state; legacy transcript snapshots carry
+   * only the user/assistant conversation that was actually persisted. */
+  restoreSource?: "ui-events" | "transcript";
+  restoredTranscriptMessages?: number;
+  /** Synthetic transcript message ids already folded into this view. Native
+   * retries do not pass through the bridge transport's replay deduplicator. */
+  replayedTranscriptMessageIds?: Record<string, true>;
   restoreProgress?: {
     history: boolean;
     status: boolean;
@@ -403,6 +415,9 @@ export interface NewSessionInput {
   mode?: string;
   resumeId?: string;
   resumeName?: string;
+  /** Studio-only resume expectation; deliberately omitted from runtime wire
+   * options because it describes the catalog entry, not runtime behavior. */
+  expectedHistoryMessages?: number;
   capabilityId?: string;
   capabilityName?: string;
 }

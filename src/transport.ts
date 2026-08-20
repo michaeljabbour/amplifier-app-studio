@@ -566,12 +566,12 @@ export async function launchSession(
   options: StartSessionOptions,
   handlers: SessionHandlers,
 ): Promise<SessionConnection> {
-  const bridge = options.hostId === "local" ? undefined : bridgeBaseUrl(options.hostUrl);
+  const bridge = sessionBridge(options);
   if (bridge) {
-    if (!configuredBridgeToken(bridge) && isDesktopRuntime() && options.hostId) {
-      const token = await invoke<string>("resolve_runtime_host_token", { id: options.hostId });
-      saveBridgeToken(token, bridge);
-    }
+    // Preserve the synchronous socket construction used by callers/tests once
+    // this bridge is already trusted; only credential resolution needs an
+    // async preflight.
+    if (!configuredBridgeToken(bridge)) await prepareSessionLaunch(options);
     return launchBridgeSession(bridge, options, handlers);
   }
 
@@ -591,6 +591,20 @@ export async function launchSession(
     throw error;
   }
   return { dispose: () => unlisten.forEach((stop) => stop()) };
+}
+
+/** Resolve remote credentials before App creates a tab. A failed preflight
+ * should leave the new/resume dialog actionable instead of manufacturing a
+ * stopped tab that is counted as a parallel runtime. */
+export async function prepareSessionLaunch(options: NewSessionInput): Promise<void> {
+  const bridge = sessionBridge(options);
+  if (!bridge) return;
+  await ensureBridgeToken(bridge, options.hostId);
+  requireBridgeToken(bridge);
+}
+
+function sessionBridge(options: Pick<NewSessionInput, "hostId" | "hostUrl">): string | undefined {
+  return options.hostId === "local" ? undefined : bridgeBaseUrl(options.hostUrl);
 }
 
 export async function sendOp(guiId: string, op: Record<string, unknown>): Promise<void> {
@@ -981,10 +995,14 @@ function deliverBridgeEnvelope(
         // Every id seen before/during the replay is now covered by the new
         // durable cursor. Buffered records beyond the replay snapshot become
         // the new post-cursor dedup set.
-        connection.seenEventIds.clear();
+        // A UI-event replay advances a durable cursor, so ids at/before that
+        // cursor can be forgotten. Legacy transcript replay deliberately keeps
+        // cursor 0; forgetting its synthetic message ids would append the full
+        // conversation again on the next reconnect.
+        if (record.source !== "transcript") connection.seenEventIds.clear();
         for (const pending of buffered) {
           if (pending.channel === "record" && isRecord(pending.payload)) {
-            const eventId = durableRuntimeEventId(pending.payload);
+            const eventId = durableReplayRecordId(pending.payload);
             if (eventId && connection.replayCoveredIds.has(eventId)) continue;
           }
           deliverBridgeEnvelope(connection, pending, handlers);
@@ -1036,7 +1054,7 @@ function deliverRecordOnce(
   handlers: SessionHandlers,
   replay: boolean,
 ): void {
-  const eventId = durableRuntimeEventId(record);
+  const eventId = durableReplayRecordId(record);
   if (eventId) {
     if (replay) connection.replayCoveredIds.add(eventId);
     if (connection.seenEventIds.has(eventId)) return;
@@ -1045,7 +1063,12 @@ function deliverRecordOnce(
   handlers.onRecord(record);
 }
 
-function durableRuntimeEventId(record: ProtocolRecord): string | undefined {
+function durableReplayRecordId(record: ProtocolRecord): string | undefined {
+  if (record.type === "transcript.message") {
+    return typeof record.message_id === "string" && record.message_id
+      ? record.message_id
+      : undefined;
+  }
   if (record.type !== "runtime.event" || !isRecord(record.event)) return undefined;
   if (typeof record.event.kind === "string" && NON_DURABLE_EVENT_KINDS.has(record.event.kind)) {
     return undefined;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredSession } from "./protocol";
-import { storedSessionCanDuplicate, storedSessionLegacyBundleOverride, storedSessionResumeBlocker, storedSessionWarning } from "./sessionAvailability";
+import { storedSessionCanDuplicate, storedSessionLegacyBundleOverride, storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "./sessionAvailability";
 
 function stored(overrides: Partial<StoredSession> = {}): StoredSession {
   return {
@@ -45,6 +45,12 @@ describe("stored session availability", () => {
     expect(storedSessionCanDuplicate(stored({ state: "indexing" }))).toBe(true);
     expect(storedSessionCanDuplicate(stored({ state: "empty", messageCount: 0 }))).toBe(false);
     expect(storedSessionCanDuplicate(stored({ state: "transcript_lost", messageCount: 0 }))).toBe(false);
+  });
+
+  it("keeps zero-message runtime attempts out of resumable history", () => {
+    expect(storedSessionShouldList(stored({ state: "empty", messageCount: 0 }))).toBe(false);
+    expect(storedSessionShouldList(stored({ state: "ok", messageCount: 1 }))).toBe(true);
+    expect(storedSessionShouldList(stored({ state: "transcript_lost", messageCount: 0 }))).toBe(true);
   });
 
   it("translates only legacy bundle discovery identifiers for resume", () => {

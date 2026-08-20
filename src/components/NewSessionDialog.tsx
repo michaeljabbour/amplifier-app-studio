@@ -66,6 +66,7 @@ export function NewSessionDialog(props: Props) {
         mode: mode() || undefined,
         resumeId: props.initial.resumeId,
         resumeName: props.initial.resumeName,
+        expectedHistoryMessages: props.initial.expectedHistoryMessages,
         capabilityId: props.initial.capabilityId,
         capabilityName: props.initial.capabilityName,
       });

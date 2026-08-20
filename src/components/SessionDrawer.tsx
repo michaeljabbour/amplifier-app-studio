@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Blocks, FolderKanban, History, MessageCircle, Plus, RadioTower, RefreshCw, Search, Settings, X } from "lucide-solid";
 import type { SessionViewState, StoredSession } from "../protocol";
-import { storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
+import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery } from "../storedSessions";
 
 interface Props {
@@ -28,9 +28,10 @@ export function SessionDrawer(props: Props) {
   const [limit, setLimit] = createSignal(500);
   const matching = createMemo(() => {
     const needle = query().trim();
+    const resumable = props.sessions.filter(storedSessionShouldList);
     return needle
-      ? props.sessions.filter((session) => storedSessionMatchesQuery(session, needle))
-      : props.sessions;
+      ? resumable.filter((session) => storedSessionMatchesQuery(session, needle))
+      : resumable;
   });
   const visible = createMemo(() => matching().slice(0, limit()));
   const revealMoreNearBottom = (event: Event) => {
@@ -153,7 +154,7 @@ export function SessionDrawer(props: Props) {
           </Show>
         </div>
         <div class="drawer-footer">
-          {props.sourceName} · showing {visible().length} of {matching().length} matches · search covers {props.sessions.length} sessions across compute
+          {props.sourceName} · showing {visible().length} of {matching().length} resumable matches across compute
         </div>
         <div class="mobile-drawer-footer">
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>

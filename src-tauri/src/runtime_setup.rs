@@ -8,13 +8,13 @@ use std::{
 use tokio::io::AsyncWriteExt;
 
 #[cfg(test)]
-const RUNTIME_INSTALL_REF: &str = "2f8c9a1b2b0ea7e0efb9e6345cc7f821dd743f2a";
-const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref 2f8c9a1b2b0ea7e0efb9e6345cc7f821dd743f2a --no-update-shell";
-const REQUIRED_RUNTIME_VERSION: &str = "0.1.7";
+const RUNTIME_INSTALL_REF: &str = "b9568a25287ddf83ff7aa321aaefdc8ecf30ca52";
+const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.sh | bash -s -- --ref b9568a25287ddf83ff7aa321aaefdc8ecf30ca52 --no-update-shell";
+const REQUIRED_RUNTIME_VERSION: &str = "0.1.8";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 #[cfg(target_os = "windows")]
-const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref '2f8c9a1b2b0ea7e0efb9e6345cc7f821dd743f2a' -NoUpdateShell";
+const WINDOWS_INSTALL_COMMAND: &str = "$ErrorActionPreference='Stop'; $script=Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/michaeljabbour/amplifier-runtime/main/scripts/install.ps1'; & ([scriptblock]::Create($script)) -Ref 'b9568a25287ddf83ff7aa321aaefdc8ecf30ca52' -NoUpdateShell";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn runtime_version_gate_accepts_required_and_newer_versions() {
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.7",
+            "amplifier-runtime, version 0.1.8",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(runtime_version_at_least(
@@ -467,7 +467,7 @@ mod tests {
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
-            "amplifier-runtime, version 0.1.6",
+            "amplifier-runtime, version 0.1.7",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
