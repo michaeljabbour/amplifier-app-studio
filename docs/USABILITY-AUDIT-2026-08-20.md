@@ -53,7 +53,7 @@ reviewed OS-keychain/keystore implementation and signed physical-device proof.
 | Mobile navigation | Hydrate the real compute-host ID before readiness checks and route Android Back through the topmost Studio surface | Cold start no longer falls back to a false local-runtime error, and Back dismisses UI before leaving the app |
 | Mobile setup | Replaced the dark-theme engine card and duplicate remote actions with one MADE surface and **Connect compute host** action | The setup blocker is legible and unambiguous on phone |
 | Reading scale | Raised MADE operational text and terminal scale while preserving the existing typography and palette | Dense controls remain legible without changing the product character |
-| PTY workbench | Added backend-neutral contracts, a coordinator, MUX Plex adapter boundary, native tmux adapter, and Studio-native work surface; bind IO to immutable pane IDs and key drafts by terminal | Local durable shells can be supervised without another tmux client redirecting a command |
+| PTY workbench | Added backend-neutral contracts, a coordinator, MUX Plex adapter boundary, native tmux adapter, and Studio-native work surface; bind IO to immutable pane IDs and key drafts by terminal; make the live pane consume the remaining workbench height | Local durable shells can be supervised without another tmux client redirecting a command, and the terminal reads as a first-class Studio workspace rather than an embedded utility |
 | Release security | Every Vite build mode and release check inspect loaded env files and reject `VITE_STUDIO_BRIDGE_TOKEN`; disposable QA builds require an explicit override | A bearer credential cannot be smuggled into a published client through a custom build mode or env file |
 
 ## PTY ownership and safety
@@ -104,6 +104,9 @@ Required acceptance before advertising durable mobile hosts:
   Android universal debug APK build passed. Physical-device credential
   persistence is explicitly not claimed.
 - Visual: reported screenshots and audit captures are preserved on the Figma
-  board. The final Mac accessibility/render controller had no visible windows
-  in the host session, so that attempt is an environment limitation rather than
-  a passed visual-interaction gate.
+  board. A rebuilt macOS QA app was then driven through the real Terminal
+  toggle, terminal creation, command submission, live output, Detach, and
+  Terminate surface. The same-viewport comparison exposed and fixed the empty
+  lower work area, duplicate desktop Agent action, and disabled-looking MADE
+  composer; the implemented before/after frame and decision note are on the
+  board.

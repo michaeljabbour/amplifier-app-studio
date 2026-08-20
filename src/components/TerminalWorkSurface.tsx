@@ -151,7 +151,7 @@ export function TerminalWorkSurface(props: Props) {
         </div>
         <div class="terminal-heading-actions">
           <Show when={props.onClose}>
-            <button type="button" class="terminal-back" onClick={() => props.onClose?.()}>
+            <button type="button" class="terminal-back terminal-mobile-back" onClick={() => props.onClose?.()}>
               <ArrowLeft aria-hidden="true" />
               <span>Agent</span>
             </button>
