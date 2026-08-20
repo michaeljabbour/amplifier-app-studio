@@ -577,14 +577,26 @@ impl SessionManager {
                 }
             };
 
-            // Dropping the final stdin handle prevents a stale writer after
-            // an unexpected process exit. Remove only this GUI id; ids are
-            // unique for the lifetime of the app.
-            sessions.lock().await.remove(&gui_id);
             let code = status.as_ref().and_then(std::process::ExitStatus::code);
-            deliver_exit_after_readers(&sink, &gui_id, readers, code).await;
+            deliver_exit_and_remove_session(&sessions, &sink, &gui_id, readers, code).await;
         });
     }
+}
+
+async fn deliver_exit_and_remove_session(
+    sessions: &Arc<Mutex<HashMap<String, SessionHandle>>>,
+    sink: &EventSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+) {
+    // Keep the handle and attachment lease available while the final reader
+    // tail drains. If the WebSocket is replaced in this interval, routed_sink
+    // can move the remaining records and exit event to the new subscriber.
+    deliver_exit_after_readers(sink, gui_id, readers, code).await;
+    // Remove only this GUI id after the terminal event was accepted; ids are
+    // unique for the lifetime of the app.
+    sessions.lock().await.remove(gui_id);
 }
 
 async fn deliver_exit_after_readers(
@@ -956,6 +968,75 @@ mod tests {
         let delivered = delivered.lock().unwrap();
         assert_eq!(delivered.len(), 2);
         assert_eq!(delivered[0].channel, "record");
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+    }
+
+    #[tokio::test]
+    async fn session_remains_attachable_until_the_reader_tail_and_exit_are_delivered() {
+        let manager = SessionManager::default();
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_sink = delivered.clone();
+        let sink: EventSink = Arc::new(move |event| {
+            delivered_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "ordered-session".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: Arc::new(RwLock::new(Some((1, sink.clone())))),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        let sessions_for_reader = manager.sessions.clone();
+        let reader_sink = sink.clone();
+        let attachable_during_drain = Arc::new(AtomicBool::new(false));
+        let attachable_for_reader = attachable_during_drain.clone();
+        let reader = tokio::spawn(async move {
+            attachable_for_reader.store(
+                sessions_for_reader
+                    .lock()
+                    .await
+                    .contains_key("ordered-session"),
+                Ordering::SeqCst,
+            );
+            deliver_value(
+                &reader_sink,
+                "ordered-session",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+
+        deliver_exit_and_remove_session(
+            &manager.sessions,
+            &sink,
+            "ordered-session",
+            vec![reader],
+            Some(0),
+        )
+        .await;
+
+        assert!(attachable_during_drain.load(Ordering::SeqCst));
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("ordered-session"));
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
         assert_eq!(delivered[0].payload["type"], "history.end");
         assert_eq!(delivered[1].channel, "exit");
     }
