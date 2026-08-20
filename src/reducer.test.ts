@@ -523,6 +523,123 @@ describe("session reducer", () => {
     expect(state.lanes).toEqual({});
   });
 
+  it("preserves a 25-turn compatibility replay and its trailing notices after status settles", () => {
+    let state = createSessionState("gui-compatibility-replay", {
+      projectDir: "/tmp/amplifier-runtime",
+      resumeId: "9b9e2e5a-2e63-4031-b982-7c4078f6505f",
+      resumeName: "Amplifier Agent vs Runtime Overlap",
+      expectedHistoryMessages: 25,
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.attached",
+      session_id: "9b9e2e5a-2e63-4031-b982-7c4078f6505f",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.begin",
+      since: 0,
+      source: "transcript",
+    });
+
+    const expectedConversation: Array<{ kind: "user" | "answer"; text: string }> = [];
+    let transcriptIndex = 0;
+    for (let turn = 1; turn <= 25; turn += 1) {
+      const userText = `User turn ${turn}`;
+      expectedConversation.push({ kind: "user", text: userText });
+      transcriptIndex += 1;
+      state = reduceRecord(state, {
+        schema_version: 1,
+        type: "transcript.message",
+        replay: true,
+        message_id: `runtime-1:transcript:${transcriptIndex}`,
+        role: "user",
+        text: userText,
+      });
+
+      if (turn < 25) {
+        const assistantText = `Assistant turn ${turn}`;
+        expectedConversation.push({ kind: "answer", text: assistantText });
+        transcriptIndex += 1;
+        state = reduceRecord(state, {
+          schema_version: 1,
+          type: "transcript.message",
+          replay: true,
+          message_id: `runtime-1:transcript:${transcriptIndex}`,
+          role: "assistant",
+          text: assistantText,
+        });
+      }
+    }
+
+    const trailingNotices = [
+      "Repaired an interrupted tool result while rebuilding the stored conversation.",
+      "Session stored under 'bundle:anchors' bundle · resumed under 'anchors' bundle (--bundle).",
+    ];
+    state = reduceRecord(state, runtime(8_627, {
+      kind: "notification",
+      level: "warning",
+      message: trailingNotices[0],
+    }, true));
+    state = reduceRecord(state, runtime(8_628, {
+      kind: "notification",
+      level: "info",
+      message: trailingNotices[1],
+    }, true));
+
+    const conversationBeforeCompletion = state.blocks
+      .filter((block) => block.kind === "user" || block.kind === "answer")
+      .map((block) => ({ kind: block.kind, text: block.text }));
+    expect(conversationBeforeCompletion).toEqual(expectedConversation);
+    expect(conversationBeforeCompletion.filter((block) => block.kind === "user")).toHaveLength(25);
+    expect(conversationBeforeCompletion.filter((block) => block.kind === "answer")).toHaveLength(24);
+    expect(state.blocks.slice(-2).map((block) => block.kind === "notice" ? block.text : "")).toEqual(trailingNotices);
+
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 8_628,
+      count: 8_628,
+      source: "transcript",
+      transcript_count: 49,
+    });
+
+    expect(state).toMatchObject({
+      phase: "starting",
+      replaying: false,
+      restoreSource: "transcript",
+      restoredTranscriptMessages: 49,
+      restoreProgress: { history: true, status: false },
+    });
+    expect(state.blocks
+      .filter((block) => block.kind === "user" || block.kind === "answer")
+      .map((block) => ({ kind: block.kind, text: block.text }))).toEqual(expectedConversation);
+    expect(state.blocks.slice(-2).map((block) => block.kind === "notice" ? block.text : "")).toEqual(trailingNotices);
+
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "idle",
+      turn: { active: false },
+      session: { bundle: "anchors", model: "claude-opus-5", effort: "max" },
+      context: { context_tokens: 22_000, context_window: 200_000, context_pct: 11, cost_usd: "3.75" },
+      pending: { decisions: [] },
+    });
+
+    expect(state).toMatchObject({
+      phase: "ready",
+      replaying: false,
+      bootLabel: "Session restored",
+      bundle: "anchors",
+      restoreProgress: { history: true, status: true },
+    });
+    expect(state.blocks).toHaveLength(51);
+    expect(state.blocks
+      .filter((block) => block.kind === "user" || block.kind === "answer")
+      .map((block) => ({ kind: block.kind, text: block.text }))).toEqual(expectedConversation);
+    expect(state.blocks.slice(-2).map((block) => block.kind === "notice" ? block.text : "")).toEqual(trailingNotices);
+  });
+
   it("deduplicates a legacy transcript when native restore retries overlap", () => {
     let state = createSessionState("gui-legacy-retry", {
       projectDir: "/tmp/project",
