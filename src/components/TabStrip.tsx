@@ -6,6 +6,7 @@ import type { AppUpdateState } from "../updater";
 import { startNativeWindowDrag } from "../windowDrag";
 import { PlanPresence } from "./Plan";
 import { ExecutionPresence } from "./ExecutionMap";
+import { workAttentionSummary } from "../mobileWork";
 
 interface Props {
   sessions: SessionViewState[];
@@ -27,6 +28,7 @@ interface Props {
 
 export function TabStrip(props: Props) {
   const active = () => props.sessions.find((session) => session.guiId === props.activeId);
+  const attention = () => workAttentionSummary(props.sessions);
   return (
     <header class="tab-strip" data-tauri-drag-region onMouseDown={startNativeWindowDrag}>
       <div class="mobile-topbar" onMouseDown={(event) => event.stopPropagation()}>
@@ -34,9 +36,22 @@ export function TabStrip(props: Props) {
           <Menu aria-hidden="true" />
         </button>
         <div class="mobile-agent-title">Amplifier Agent</div>
-        <button class="mobile-topbar-button mobile-runtime-button" aria-label="Runtime and Studio settings" onClick={props.onSettings}>
+        <button
+          class="mobile-topbar-button mobile-work-button"
+          classList={{ active: props.inspectorAvailable && props.inspectorOpen, attention: attention().count > 0 }}
+          aria-label={attention().count
+            ? `Open Work, ${attention().count} item${attention().count === 1 ? "" : "s"} need attention: ${attention().name}`
+            : props.inspectorAvailable ? "Open Work" : "Work is unavailable without an open session"}
+          aria-pressed={props.inspectorAvailable ? props.inspectorOpen : undefined}
+          disabled={!props.inspectorAvailable}
+          onClick={props.onToggleInspector}
+        >
           <Activity aria-hidden="true" />
+          <span class="mobile-work-label">Work</span>
           <span class={`mobile-runtime-dot phase-${active()?.phase || "idle"}`} aria-hidden="true" />
+          <Show when={attention().count > 0}>
+            <span class="mobile-work-attention-count" aria-hidden="true">{attention().count}</span>
+          </Show>
         </button>
       </div>
       <div class="traffic-light-space" data-tauri-drag-region />

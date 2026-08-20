@@ -640,10 +640,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .session-recovery button { border: 0; background: transparent; color: #a2865c; cursor: pointer; font-size: 8px; }
 
 .machine-inspector { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0,1fr); overflow: hidden; background: rgba(12, 19, 28, .92); }
-.inspector-heading { padding: 15px 15px 11px; border-bottom: 1px solid var(--line); }
+.inspector-heading { display: grid; grid-template-columns: minmax(0, 1fr); padding: 15px 15px 11px; border-bottom: 1px solid var(--line); }
+.inspector-heading-copy { min-width: 0; }
 .inspector-heading span, .inspector-heading strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-heading span { color: #536a80; font-size: 8px; font-weight: 850; letter-spacing: .15em; }
 .inspector-heading strong { margin-top: 6px; color: #c2cfdb; font-size: 11px; }
+.inspector-heading small, .mobile-work-back, .mobile-work-close, .mobile-work-attention { display: none; }
 .inspector-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
 .inspector-tabs button { position: relative; flex: 1; min-width: max-content; border: 0; padding: 10px 9px; background: transparent; color: #65788d; cursor: pointer; font-size: 8px; font-weight: 700; }
 .inspector-tabs button:hover { color: #acbdcc; }

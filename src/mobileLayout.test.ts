@@ -10,6 +10,8 @@ const settingsSource = readFileSync(new URL("./components/StudioSettingsDialog.t
 const mobileViewportSource = readFileSync(new URL("./mobileViewport.ts", import.meta.url), "utf8");
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
 const transcriptSource = readFileSync(new URL("./components/Transcript.tsx", import.meta.url), "utf8");
+const inspectorSource = readFileSync(new URL("./components/Inspector.tsx", import.meta.url), "utf8");
+const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
 
 describe("mobile layout contracts", () => {
   it("exposes iOS safe-area insets without disabling user zoom", () => {
@@ -65,6 +67,29 @@ describe("mobile layout contracts", () => {
     expect(tabStripSource).toContain("Amplifier Agent");
     expect(tabStripSource).not.toContain("mobile-mode-switch");
     expect(mobileCss).toContain("--mobile-header-height: 56px");
+  });
+
+  it("opens a full-screen Work hub from Activity with explicit return controls", () => {
+    expect(tabStripSource).toContain('class="mobile-topbar-button mobile-work-button"');
+    expect(tabStripSource).toContain('class="mobile-work-label">Work');
+    expect(tabStripSource).toContain("onClick={props.onToggleInspector}");
+    expect(inspectorSource).toContain('aria-label="Back to session"');
+    expect(inspectorSource).toContain('aria-label="Close Work"');
+    expect(inspectorSource).toContain("{props.state.title}");
+    expect(inspectorSource).toContain("{placement().host}");
+    expect(inspectorSource).toContain("{placement().project}");
+    for (const label of ["Run", "Loop", "Plan", "Setup", "Bundles", "Outputs", "Context"]) {
+      expect(inspectorSource).toContain(`>${label}</button>`);
+    }
+    expect(mobileCss).toMatch(/\.machine-inspector,[\s\S]*top:\s*0;[\s\S]*height:\s*100dvh;[\s\S]*display:\s*flex/);
+    expect(mobileCss).toMatch(/\.inspector-tabs button,[\s\S]*min-height:\s*48px/);
+  });
+
+  it("keeps open-session lifecycle actions explicit and touch sized", () => {
+    expect(drawerSource).toContain("props.onDetachOpen(session.guiId)");
+    expect(drawerSource).toContain("props.onStopOpen(session.guiId)");
+    expect(mobileCss).toMatch(/\.mobile-open-session-more\s*\{[\s\S]*width:\s*48px;[\s\S]*height:\s*52px/);
+    expect(mobileCss).toMatch(/\.mobile-open-session-menu > button\s*\{[\s\S]*min-height:\s*52px/);
   });
 
   it("gives the transcript its own touch scroll surface and keeps jump outside it", () => {

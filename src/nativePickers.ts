@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { appendAttachmentFiles } from "./attachments";
 import type { ComposerAttachment } from "./protocol";
-import { isDesktopRuntime, isTauriRuntime, type NativeAttachment } from "./transport";
+import { isDesktopRuntime, isMobileRuntime, isTauriRuntime, type NativeAttachment } from "./transport";
 
 const ATTACHMENT_FILTER = {
   name: "Images and documents",
@@ -15,7 +15,11 @@ const ATTACHMENT_FILTER = {
 };
 
 export function nativeProjectPickerAvailable(): boolean {
-  return isTauriRuntime();
+  return projectPickerAvailableForRuntime(isTauriRuntime(), isMobileRuntime());
+}
+
+export function projectPickerAvailableForRuntime(tauri: boolean, mobile: boolean): boolean {
+  return tauri && !mobile;
 }
 
 export async function pickProjectDirectory(defaultPath?: string): Promise<string | undefined> {

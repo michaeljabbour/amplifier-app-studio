@@ -368,6 +368,18 @@ export default function App() {
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
   };
 
+  const detach = (guiId: string) => {
+    connections.get(guiId)?.dispose();
+    connections.delete(guiId);
+    initialized.delete(guiId);
+    pendingInitialPrompts.delete(guiId);
+    clearStatusPolling(guiId);
+    clearRestoreTimeout(guiId);
+    const remaining = sessions().filter((item) => item.guiId !== guiId);
+    setSessions(remaining);
+    if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
+  };
+
   const submit = async (text: string, attachments: ComposerAttachment[] = []) => {
     const session = active();
     if (!session) return false;
@@ -917,6 +929,7 @@ export default function App() {
                   update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
                 }
               }}
+              onClose={() => setRightOpen(false)}
             />
           </div>
         )}
@@ -956,6 +969,8 @@ export default function App() {
           onRefresh={() => void refreshStored()}
           onResume={requestStoredResume}
           onSelectOpen={setActiveId}
+          onDetachOpen={detach}
+          onStopOpen={(id) => void close(id)}
           onNew={openNew}
           onCapabilities={() => setCapabilitiesOpen(true)}
           onSettings={() => setSettingsOpen(true)}

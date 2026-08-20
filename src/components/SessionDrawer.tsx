@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { Blocks, FolderKanban, History, MessageCircle, Plus, RadioTower, RefreshCw, Search, Settings, X } from "lucide-solid";
+import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, RadioTower, RefreshCw, Search, Settings, Square, Unplug, X } from "lucide-solid";
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery } from "../storedSessions";
@@ -17,6 +17,8 @@ interface Props {
   onRefresh: () => void;
   onResume: (session: StoredSession) => void | Promise<void>;
   onSelectOpen: (id: string) => void;
+  onDetachOpen: (id: string) => void | Promise<void>;
+  onStopOpen: (id: string) => void | Promise<void>;
   onNew: () => void;
   onCapabilities: () => void;
   onSettings: () => void;
@@ -25,6 +27,7 @@ interface Props {
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [openSessionMenu, setOpenSessionMenu] = createSignal<string>();
   const [limit, setLimit] = createSignal(500);
   const matching = createMemo(() => {
     const needle = query().trim();
@@ -84,15 +87,34 @@ export function SessionDrawer(props: Props) {
             <section class="mobile-open-sessions" aria-labelledby="mobile-open-heading">
               <h3 id="mobile-open-heading">Open</h3>
               <For each={props.openSessions}>{(session) => (
-                <button
-                  type="button"
-                  classList={{ active: session.guiId === props.activeId }}
-                  onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}
-                >
-                  <MessageCircle aria-hidden="true" />
-                  <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
-                  <i class={`phase-${session.phase}`} aria-hidden="true" />
-                </button>
+                <div class="mobile-open-session" classList={{ active: session.guiId === props.activeId }}>
+                  <button
+                    type="button"
+                    class="mobile-open-session-select"
+                    onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}
+                  >
+                    <MessageCircle aria-hidden="true" />
+                    <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
+                    <i class={`phase-${session.phase}`} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="mobile-open-session-more"
+                    aria-label={`Session actions for ${session.title}`}
+                    aria-expanded={openSessionMenu() === session.guiId}
+                    onClick={() => setOpenSessionMenu((open) => open === session.guiId ? undefined : session.guiId)}
+                  ><MoreHorizontal aria-hidden="true" /></button>
+                  <Show when={openSessionMenu() === session.guiId}>
+                    <div class="mobile-open-session-menu" role="menu" aria-label={`Actions for ${session.title}`}>
+                      <button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); void props.onDetachOpen(session.guiId); }}>
+                        <Unplug aria-hidden="true" /><span><strong>Detach</strong><small>Leave the runtime running</small></span>
+                      </button>
+                      <button type="button" role="menuitem" class="danger" onClick={() => { setOpenSessionMenu(undefined); void props.onStopOpen(session.guiId); }}>
+                        <Square aria-hidden="true" /><span><strong>Stop</strong><small>End the runtime and close</small></span>
+                      </button>
+                    </div>
+                  </Show>
+                </div>
               )}</For>
             </section>
           </Show>
