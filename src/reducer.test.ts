@@ -661,7 +661,49 @@ describe("session reducer", () => {
     expect(state.blocks).toEqual([
       expect.objectContaining({ kind: "user", text: "Review the interop dossier" }),
     ]);
-    expect(state.replayedTranscriptMessageIds).toEqual({ "runtime-1:transcript:1": true });
+    expect([...(state.replayedTranscriptMessageIds ?? [])]).toEqual(["runtime-1:transcript:1"]);
+  });
+
+  // Regression: replayedTranscriptMessageIds used to be rebuilt with `{ ...ids, [id]: true }` on
+  // every replayed message, making a full-history resume quadratic. Measured on this machine:
+  // 1k msgs 46 ms, 3k 528 ms, 10k 6,958 ms of blocked main thread -- 3-5x worse on iOS. With a
+  // Set the same 10k replay is under a millisecond of bookkeeping. The budget below is loose on
+  // purpose (the fixed path is ~50 ms end to end) but far under the old cost.
+  it("replays a full history without quadratic bookkeeping", () => {
+    let state = createSessionState("gui-big-replay", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-big",
+    });
+
+    const total = 10_000;
+    const started = Date.now();
+    for (let index = 0; index < total; index += 1) {
+      state = reduceRecord(state, {
+        schema_version: 1,
+        type: "transcript.message",
+        replay: true,
+        message_id: `runtime-1:transcript:${index}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        text: `replayed message ${index}`,
+      });
+    }
+    const elapsed = Date.now() - started;
+
+    expect(state.replayedTranscriptMessageIds?.size).toBe(total);
+    expect(state.acceptedReplayTranscriptMessages).toBe(total);
+    expect(elapsed).toBeLessThan(2_000);
+
+    // Dedupe still holds at scale: replaying the same ids adds nothing.
+    const blocksAfterFirstPass = state.blocks.length;
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:9999",
+      role: "assistant",
+      text: "replayed message 9999",
+    });
+    expect(state.blocks.length).toBe(blocksAfterFirstPass);
   });
 
   it("allows a clean legacy transcript rebuild after an incomplete restore retry", () => {
@@ -698,7 +740,7 @@ describe("session reducer", () => {
     expect(state.blocks).toEqual([
       expect.objectContaining({ kind: "user", text: "Review the interop dossier" }),
     ]);
-    expect(state.replayedTranscriptMessageIds).toEqual({ "runtime-1:transcript:1": true });
+    expect([...(state.replayedTranscriptMessageIds ?? [])]).toEqual(["runtime-1:transcript:1"]);
   });
 
   it("does not call an empty replay successful when the stored transcript is non-empty", () => {
@@ -1084,6 +1126,27 @@ describe("session reducer", () => {
     expect(state.busy).toBe(false);
     expect(state.replaying).toBe(false);
     expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("sequence gap"))).toBe(false);
+  });
+
+  // Regression: a replay does not advance the live wire-order counter, so the first live record
+  // after a reconnect jumped past `lastSequence` and produced "Protocol sequence gap: expected 2,
+  // received 44" -- blaming the runtime for Studio's own reconnect, with nothing the user could
+  // do about it. Gap detection must resume from the new baseline, not be disabled.
+  it("does not fabricate a sequence gap on the first live record after a replay", () => {
+    let state = started();
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, runtime(42, { kind: "notification", message: "replayed" }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 43 });
+
+    state = reduceRecord(state, runtime(44, { kind: "notification", message: "first live record" }));
+
+    const notices = state.blocks.filter((block) => block.kind === "notice");
+    expect(notices.map((block) => block.text).join(" ")).not.toContain("sequence gap");
+    expect(state.lastSequence).toBe(44);
+
+    // A genuine gap after the re-baseline is still reported.
+    state = reduceRecord(state, runtime(99, { kind: "notification", message: "after a real gap" }));
+    expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("Protocol sequence gap: expected 45, received 99"))).toBe(true);
   });
 
   it("surfaces sequence gaps without dropping the record", () => {

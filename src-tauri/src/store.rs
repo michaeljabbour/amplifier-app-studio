@@ -150,10 +150,14 @@ fn list_stored_sessions_from(
             ));
         }
     }
-    let mut sessions = tasks
+    let mut scanned = tasks
         .into_par_iter()
         .map(
             |(session_dir, session_id, project_slug, project_dir_hint)| {
+                // Sampled BEFORE the directory is read, and carried through to the cache write.
+                // Re-sampling it at write time paired a post-read signature with a pre-read
+                // summary, so an append that landed mid-scan was recorded as already-seen and
+                // the stale summary then satisfied every later listing, permanently.
                 let signature = session_signature(&session_dir);
                 let key = session_cache_key(&project_slug, &session_id);
                 if let Some(cached) = cache
@@ -165,20 +169,21 @@ fn list_stored_sessions_from(
                     if session.project_dir.is_none() {
                         session.project_dir = project_dir_hint;
                     }
-                    return session;
+                    return (key, signature, session);
                 }
-                summarize(
+                let session = summarize(
                     &session_dir,
                     session_id,
                     project_slug,
                     project_dir_hint.as_deref(),
-                )
+                );
+                (key, signature, session)
             },
         )
         .collect::<Vec<_>>();
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
-    write_session_index_cache(projects, &cache, &sessions);
-    sessions
+    scanned.sort_by_key(|(_, _, session)| std::cmp::Reverse(session.mtime_ms));
+    write_session_index_cache(projects, &scanned);
+    scanned.into_iter().map(|(_, _, session)| session).collect()
 }
 
 fn slug_is_within_root(project_slug: &str, root_slug: &str) -> bool {
@@ -256,26 +261,24 @@ fn read_session_index_cache(projects: &Path) -> SessionIndexCache {
     }
 }
 
-fn write_session_index_cache(
-    projects: &Path,
-    existing: &SessionIndexCache,
-    sessions: &[StoredSession],
-) {
-    let mut entries = existing.entries.clone();
-    for session in sessions {
-        entries.insert(
-            session_cache_key(&session.project_slug, &session.session_id),
-            CachedStoredSession {
-                signature: session_signature(
-                    &projects
-                        .join(&session.project_slug)
-                        .join("sessions")
-                        .join(&session.session_id),
-                ),
-                session: session.clone(),
-            },
-        );
-    }
+/// Rebuilds the listing cache from the scan that just ran.
+///
+/// Deliberately NOT merged into the previous cache: the scan enumerates every session under
+/// `projects`, so anything absent from it no longer exists. Merging meant deleted sessions were
+/// never evicted, and the file grew without bound while being rewritten in full on every listing.
+fn write_session_index_cache(projects: &Path, scanned: &[(String, u64, StoredSession)]) {
+    let entries = scanned
+        .iter()
+        .map(|(key, signature, session)| {
+            (
+                key.clone(),
+                CachedStoredSession {
+                    signature: *signature,
+                    session: session.clone(),
+                },
+            )
+        })
+        .collect();
     let cache = SessionIndexCache {
         version: SESSION_INDEX_CACHE_VERSION,
         entries,

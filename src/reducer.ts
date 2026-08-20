@@ -76,7 +76,7 @@ export function createSessionState(
     autopilotPending: false,
     activity: "Starting turn",
     replaying: Boolean(input.resumeId),
-    replayedTranscriptMessageIds: {},
+    replayedTranscriptMessageIds: new Set(),
     acceptedReplayTranscriptMessages: 0,
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
     context: emptyContext(),
@@ -290,10 +290,11 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       const text = stringValue(record.text).trim();
       if (!text || record.replay !== true) return next;
       const messageId = stringValue(record.message_id).trim();
-      if (messageId && next.replayedTranscriptMessageIds?.[messageId]) return next;
-      const replayedTranscriptMessageIds = messageId
-        ? { ...next.replayedTranscriptMessageIds, [messageId]: true as const }
-        : next.replayedTranscriptMessageIds;
+      if (messageId && next.replayedTranscriptMessageIds?.has(messageId)) return next;
+      // Carried by reference and mutated rather than rebuilt: see the note on the field. The
+      // enclosing state object is still replaced, so reactivity is unaffected.
+      const replayedTranscriptMessageIds = next.replayedTranscriptMessageIds ?? new Set<string>();
+      if (messageId) replayedTranscriptMessageIds.add(messageId);
       const acceptedReplayTranscriptMessages = (next.acceptedReplayTranscriptMessages || 0) + 1;
       if (record.role === "user") {
         return appendBlock({ ...next, replayedTranscriptMessageIds, acceptedReplayTranscriptMessages }, { kind: "user", text, mode: next.mode });
@@ -304,6 +305,8 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return next;
     }
     case "history.end": {
+      // The next live record will not follow the pre-replay sequence; re-baseline on it.
+      next = { ...next, sequenceResyncPending: true };
       const expectedMessages = Math.max(0, next.expectedHistoryMessages || 0);
       const replayedEvents = Math.max(0, numberValue(record.count));
       const replayedTranscript = Math.max(0, numberValue(record.transcript_count));
@@ -621,7 +624,7 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       pendingDecision: undefined,
       restoreSource: undefined,
       restoredTranscriptMessages: undefined,
-      replayedTranscriptMessageIds: {},
+      replayedTranscriptMessageIds: new Set(),
       acceptedReplayTranscriptMessages: 0,
       liveTail: undefined,
       openThinkingId: undefined,
@@ -670,6 +673,12 @@ function checkEnvelope(state: SessionViewState, record: ProtocolRecord): Session
     });
   }
   if (record.replay === true || typeof record.sequence !== "number") return next;
+  // A replay does not advance the live wire-order counter, so the first live record after one
+  // legitimately jumps. Warning about that gap blamed the runtime for Studio's own reconnect and
+  // gave the user nothing to act on. Re-baseline silently once, then resume gap detection.
+  if (next.sequenceResyncPending) {
+    return { ...next, lastSequence: record.sequence, sequenceResyncPending: undefined };
+  }
   if (next.lastSequence !== undefined && record.sequence !== next.lastSequence + 1) {
     next = appendBlock(next, {
       kind: "notice",

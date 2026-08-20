@@ -373,7 +373,15 @@ export interface SessionViewState {
   restoredTranscriptMessages?: number;
   /** Synthetic transcript message ids already folded into this view. Native
    * retries do not pass through the bridge transport's replay deduplicator. */
-  replayedTranscriptMessageIds?: Record<string, true>;
+  /**
+   * Message ids already accepted from a durable replay.
+   *
+   * A mutable Set, deliberately: it is a monotonic dedupe accumulator that is never rendered and
+   * never persisted, and the previous shape -- a plain object rebuilt with `{ ...ids, [id]: true }`
+   * per replayed message -- made a full-history resume quadratic. Measured: 10k messages took
+   * 6,958 ms of main-thread copying versus 0.86 ms with a Set.
+   */
+  replayedTranscriptMessageIds?: Set<string>;
   /** User/assistant transcript records accepted since the latest
    * history.begin. This is compared with history.end.transcript_count while
    * the initial restore gate is active; reported delivery counts alone are
@@ -408,6 +416,8 @@ export interface SessionViewState {
   alerts: SessionAlert[];
   outputs: SessionOutput[];
   lastSequence?: number;
+  /** Set when a replay ends: the next live record re-baselines `lastSequence` without a gap warning. */
+  sequenceResyncPending?: boolean;
   queuedSteers: number;
   nextBlock: number;
   logs: string[];
@@ -496,10 +506,25 @@ export function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+/**
+ * Largest tool payload Studio will keep pretty-printed in a transcript block.
+ *
+ * Tool results are arbitrary agent-controlled data -- a file read or an HTTP body can be
+ * megabytes -- and every one was retained in state and in the DOM at full size, indented.
+ * Truncating keeps the block readable and bounds memory; the untruncated result is still on
+ * disk in the durable session.
+ */
+export const MAX_TOOL_PAYLOAD_CHARS = 32 * 1024;
+
 export function safeJson(value: unknown): string {
+  let rendered: string;
   try {
-    return JSON.stringify(value, null, 2);
+    rendered = JSON.stringify(value, null, 2);
   } catch {
-    return String(value);
+    rendered = String(value);
   }
+  if (rendered === undefined) return "";
+  if (rendered.length <= MAX_TOOL_PAYLOAD_CHARS) return rendered;
+  const omitted = rendered.length - MAX_TOOL_PAYLOAD_CHARS;
+  return `${rendered.slice(0, MAX_TOOL_PAYLOAD_CHARS)}\n… ${omitted.toLocaleString()} more characters truncated by Studio; the full payload is in the durable session.`;
 }

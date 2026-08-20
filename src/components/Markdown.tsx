@@ -101,6 +101,18 @@ export function renderMarkdown(source: string): string {
   });
   const template = document.createElement("template");
   template.innerHTML = sanitized;
+  // Agent output is untrusted: a model that reads a hostile repo can be prompt-injected. Keeping
+  // `class`/`role` let it reuse Studio's own chrome classes (fatal-card, user-avatar, ...) and
+  // render convincing fake UI inside the transcript. Only syntax-highlight hooks survive.
+  template.content.querySelectorAll("[class], [role]").forEach((element) => {
+    const className = element.getAttribute("class");
+    const preserved = (className || "")
+      .split(/\s+/)
+      .filter((name) => /^language-[\w+-]+$/.test(name));
+    if (preserved.length > 0) element.setAttribute("class", preserved.join(" "));
+    else element.removeAttribute("class");
+    element.removeAttribute("role");
+  });
   template.content.querySelectorAll("img").forEach((image) => {
     const reference = document.createElement("span");
     reference.className = "markdown-image-reference";

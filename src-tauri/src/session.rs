@@ -36,6 +36,10 @@ const EVENT_REATTACH_GRACE: Duration = EVENT_REATTACH_GRACE_PRODUCTION;
 #[cfg(test)]
 const EVENT_REATTACH_GRACE: Duration = Duration::from_millis(200);
 pub const DUPLICATE_RESUME_ERROR: &str = "That stored session is already open in Amplifier Studio";
+/// Distinct from DUPLICATE_RESUME_ERROR: nothing is attached, rather than something else being
+/// attached. The two were conflated, so "already open" was shown when nothing was open at all.
+pub const NO_RESUMABLE_RUNTIME_ERROR: &str =
+    "No live runtime is attached to that stored session. Resume it to start a new runtime.";
 
 /// Returns `true` when the event was accepted (or no subscriber remains) and
 /// `false` when a bounded transport needs the runtime reader to apply
@@ -219,16 +223,22 @@ impl SessionManager {
             .kill_on_drop(!detached_owner);
         let durable_stderr = if detached_owner {
             let path = detached_runtime_log_path(&options.gui_id)?;
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .map_err(|error| {
-                    format!(
-                        "Could not open durable runtime log {}: {error}",
-                        path.display()
-                    )
-                })?;
+            // Runtime stderr carries prompts, paths and occasionally provider errors that echo
+            // request context, so it is owner-only. It was previously created at the process
+            // umask (0644) under a 0755 directory.
+            let mut options_builder = OpenOptions::new();
+            options_builder.create(true).append(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options_builder.mode(0o600);
+            }
+            let file = options_builder.open(&path).map_err(|error| {
+                format!(
+                    "Could not open durable runtime log {}: {error}",
+                    path.display()
+                )
+            })?;
             command.stderr(Stdio::from(file));
             Some(path)
         } else {
@@ -374,7 +384,10 @@ impl SessionManager {
                         project == &canonical_project && session == resume_id
                     })
             })
-            .ok_or_else(|| DUPLICATE_RESUME_ERROR.to_owned())?;
+            // A missing handle means nothing is attached to this durable session, which is the
+            // opposite of DUPLICATE_RESUME_ERROR ("already open in another tab"). Reporting the
+            // duplicate error here sent users hunting for a tab that did not exist.
+            .ok_or_else(|| NO_RESUMABLE_RUNTIME_ERROR.to_owned())?;
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
         replace_sink(&handle.sink, Some((attachment_id, sink))).await?;
         Ok((gui_id.clone(), attachment_id))

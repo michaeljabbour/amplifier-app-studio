@@ -4,6 +4,34 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.49 — 2026-08-20
+
+- Fixed an update deadlock found while driving the live app: a session whose
+  restore stalled sits in `degraded` waiting for the user, and that counted as
+  work-in-flight, so the Update button went permanently disabled while its
+  tooltip asked the user to finish active turns that did not exist.
+- Made full-history replay linear instead of quadratic. The replayed-message id
+  set was rebuilt on every message; measured, 10,000 messages cost 6,958 ms of
+  blocked main thread against 0.86 ms with a Set, and the same replay through
+  the reducer now runs in 54 ms.
+- Throttled markdown re-rendering of the streaming answer. Measured, a 30 KB
+  answer arriving in ~30-char deltas cost 2,242 ms of parse-and-sanitize across
+  1,000 renders against 4.4 ms for one render of the finished text.
+- Stopped the first live record after a replay from fabricating a "Protocol
+  sequence gap" warning, while keeping genuine gap detection.
+- Capped pretty-printed tool payloads at 32 KB in the transcript; agent tool
+  results are unbounded and were retained in full in state and in the DOM.
+- Stripped `class` and `role` from agent-authored HTML, which could otherwise
+  reuse Studio's own chrome classes to render convincing fake UI.
+- macOS Keychain writes now go through the Security framework instead of
+  `security add-generic-password -w`, which published the bearer token in argv.
+- Runtime stderr logs are created 0600 rather than at the process umask.
+- Reattaching to a stored session with no live runtime now says so, instead of
+  reporting that it is already open somewhere else.
+- The stored-session index cache no longer pairs a post-scan signature with a
+  pre-scan summary (which cached stale summaries permanently) and is rebuilt
+  from the current scan rather than grown forever.
+
 ## 0.1.48 — 2026-08-20
 
 - Fixed the release gate that verifies the macOS microphone entitlement. The

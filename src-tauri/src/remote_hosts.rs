@@ -3,6 +3,10 @@ use std::{env, fs, path::PathBuf};
 
 const REGISTRY_VERSION: u16 = 1;
 
+/// Keychain service name for Amplifier Host bearer tokens.
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "amplifier-host";
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeHost {
@@ -84,19 +88,12 @@ pub fn resolve_token(id: &str) -> Result<String, String> {
     }
     #[cfg(target_os = "macos")]
     if let Some(account) = host.token_ref.strip_prefix("keychain:") {
-        let output = std::process::Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "amplifier-host",
-                "-a",
-                account,
-                "-w",
-            ])
-            .output()
-            .map_err(|error| format!("Could not read macOS Keychain: {error}"))?;
-        if output.status.success() {
-            let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        // Reads never leaked through argv, but going through the same API as the write keeps one
+        // definition of the keychain item and avoids spawning a process on a hot path.
+        if let Ok(secret) =
+            security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, account)
+        {
+            let token = String::from_utf8_lossy(&secret).trim().to_owned();
             if (32..=4096).contains(&token.len()) {
                 return Ok(token);
             }
@@ -128,23 +125,17 @@ pub fn store_token(id: &str, token: &str) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     if let Some(account) = host.token_ref.strip_prefix("keychain:") {
-        let output = std::process::Command::new("security")
-            .args([
-                "add-generic-password",
-                "-U",
-                "-s",
-                "amplifier-host",
-                "-a",
-                account,
-                "-w",
-                token,
-            ])
-            .output()
-            .map_err(|error| format!("Could not write macOS Keychain: {error}"))?;
-        if output.status.success() {
-            return Ok(());
-        }
-        return Err("macOS Keychain rejected the Amplifier Host token".to_owned());
+        // Written through the Security framework rather than `security add-generic-password -w`.
+        // A process argument list is world-readable via `ps` for the lifetime of the call and is
+        // routinely captured by EDR and audit tooling, so passing the bearer token as argv
+        // published it to every other process on the machine. The Windows path below already
+        // used the native credential API; this brings macOS in line.
+        return security_framework::passwords::set_generic_password(
+            KEYCHAIN_SERVICE,
+            account,
+            token.as_bytes(),
+        )
+        .map_err(|error| format!("Could not write macOS Keychain: {error}"));
     }
     #[cfg(target_os = "windows")]
     if let Some(account) = host.token_ref.strip_prefix("keychain:") {

@@ -16,6 +16,42 @@ interface Props {
   onExport: () => void;
 }
 
+/**
+ * Minimum gap between markdown re-renders of the streaming answer.
+ *
+ * The live tail re-parses and re-sanitizes the ENTIRE accumulated answer on every delta, so the
+ * cost grows with answer length while the delta count grows too. Measured with the real marked +
+ * DOMPurify pipeline: a 30 KB answer arriving in ~30-char deltas cost 2,242 ms of main-thread
+ * work across 1,000 renders, against 4.4 ms for a single render of the finished text. Throttling
+ * bounds that to ~1 render per interval without changing what the reader eventually sees --
+ * the finalized answer is re-rendered as a normal block regardless.
+ */
+const LIVE_MARKDOWN_INTERVAL_MS = 80;
+
+/** Samples `value` at most once per `intervalMs`, always settling on the latest value. */
+function throttled(value: () => string, intervalMs: number): () => string {
+  const [sampled, setSampled] = createSignal(value());
+  let timer: number | undefined;
+  let latest = value();
+
+  createEffect(() => {
+    latest = value();
+    if (timer !== undefined) return;
+    setSampled(latest);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      // Settle on whatever arrived while the window was closed.
+      setSampled(latest);
+    }, intervalMs);
+  });
+
+  onCleanup(() => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  });
+
+  return sampled;
+}
+
 export function Transcript(props: Props) {
   let scroller: HTMLDivElement | undefined;
   let latestAnchor: HTMLDivElement | undefined;
@@ -28,6 +64,7 @@ export function Transcript(props: Props) {
   // back to the bottom. The memo only notifies the effect when visible
   // transcript content actually changes.
   const contentMarker = createMemo(() => transcriptScrollMarker(props.state));
+  const liveTailText = throttled(() => props.state.liveTail?.text || "", LIVE_MARKDOWN_INTERVAL_MS);
 
   onMount(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -218,7 +255,7 @@ export function Transcript(props: Props) {
               fallback={
                 <details class="live-reasoning" open>
                   <summary><span>Reasoning</span><small>live</small></summary>
-                  <div><Markdown text={tail.text} class="thinking-text-live" /><span class="stream-caret" /></div>
+                  <div><Markdown text={liveTailText() || tail.text} class="thinking-text-live" /><span class="stream-caret" /></div>
                 </details>
               }
             >
@@ -226,7 +263,7 @@ export function Transcript(props: Props) {
                 <div class="block-gutter"><span class="live-spark">✦</span></div>
                 <div class="block-body">
                   <div class="block-label">AMPLIFIER · LIVE</div>
-                  <div class="answer-text live-markdown"><Markdown text={tail.text} /><span class="stream-caret" /></div>
+                  <div class="answer-text live-markdown"><Markdown text={liveTailText() || tail.text} /><span class="stream-caret" /></div>
                 </div>
               </article>
             </Show>
