@@ -32,7 +32,7 @@ use std::{
 use subtle::ConstantTimeEq;
 use tokio::{
     net::TcpListener,
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, oneshot},
     time::{timeout, Duration},
 };
 use tower_http::{
@@ -833,29 +833,35 @@ impl ClientMessage {
 
 #[derive(Clone)]
 struct Outbound {
-    sender: mpsc::Sender<Value>,
+    sender: mpsc::Sender<OutboundEvent>,
     control_sender: mpsc::Sender<Value>,
 }
 
+struct OutboundEvent {
+    value: Value,
+    delivered: oneshot::Sender<bool>,
+}
+
 impl Outbound {
-    /// Queue one value without dropping it. A full bounded queue reports
-    /// backpressure to the runtime stdout reader, which pauses and retries;
-    /// a closed socket accepts-and-drops because replay will restart on the
-    /// next attachment.
-    fn send_event(&self, event: &SessionEvent) -> bool {
-        match self.sender.try_reserve() {
-            Ok(permit) => {
-                permit.send(json!({
-                    "version": API_VERSION,
-                    "type": "event",
-                    "channel": event.channel,
-                    "payload": event.payload.clone(),
-                }));
-                true
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => true,
-            Err(mpsc::error::TrySendError::Full(_)) => false,
-        }
+    /// Reserve bounded capacity, queue one cloned value, and resolve only
+    /// after the WebSocket writer confirms the frame was sent. A failed or
+    /// closed writer rejects delivery so the session reader can retry against
+    /// the next attachment without losing an accepted-but-unflushed tail.
+    async fn send_event(&self, event: &SessionEvent) -> bool {
+        let Ok(permit) = self.sender.reserve().await else {
+            return false;
+        };
+        let (delivered, confirmed) = oneshot::channel();
+        permit.send(OutboundEvent {
+            value: json!({
+                "version": API_VERSION,
+                "type": "event",
+                "channel": event.channel,
+                "payload": event.payload.clone(),
+            }),
+            delivered,
+        });
+        matches!(confirmed.await, Ok(true))
     }
 
     async fn control(&self, mut value: Value) -> bool {
@@ -876,21 +882,21 @@ impl Outbound {
 
 async fn next_outbound_value(
     control_rx: &mut mpsc::Receiver<Value>,
-    event_rx: &mut mpsc::Receiver<Value>,
+    event_rx: &mut mpsc::Receiver<OutboundEvent>,
     ready_sent: &mut bool,
-) -> Option<Value> {
+) -> Option<(Value, Option<oneshot::Sender<bool>>)> {
     if !*ready_sent {
         let value = control_rx.recv().await?;
         if value.get("type").and_then(Value::as_str) == Some("ready") {
             *ready_sent = true;
         }
-        return Some(value);
+        return Some((value, None));
     }
 
     tokio::select! {
         biased;
-        Some(value) = control_rx.recv() => Some(value),
-        Some(value) = event_rx.recv() => Some(value),
+        Some(value) = control_rx.recv() => Some((value, None)),
+        Some(event) = event_rx.recv() => Some((event.value, Some(event.delivered))),
         else => None,
     }
 }
@@ -909,7 +915,7 @@ async fn acknowledge_stop_result(outbound: &Outbound, stopped: bool) {
 async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
     let mut shutdown = state.shutdown.subscribe();
     let (mut socket_tx, mut socket_rx) = socket.split();
-    let (event_tx, mut event_rx) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+    let (event_tx, mut event_rx) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
     let (control_tx, mut control_rx) = mpsc::channel::<Value>(CONTROL_CAPACITY);
     let outbound = Outbound {
         sender: event_tx,
@@ -917,22 +923,29 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
     };
     let mut writer = tokio::spawn(async move {
         let mut ready_sent = false;
-        while let Some(value) =
+        while let Some((value, delivered)) =
             next_outbound_value(&mut control_rx, &mut event_rx, &mut ready_sent).await
         {
             let terminal = value.get("type").and_then(Value::as_str) == Some("event")
                 && value.get("channel").and_then(Value::as_str) == Some("exit");
             let Ok(encoded) = serde_json::to_string(&value) else {
+                if let Some(delivered) = delivered {
+                    let _ = delivered.send(false);
+                }
                 continue;
             };
-            if !matches!(
+            let sent = matches!(
                 timeout(
                     WS_SEND_TIMEOUT,
                     socket_tx.send(Message::Text(encoded.into())),
                 )
                 .await,
                 Ok(Ok(()))
-            ) {
+            );
+            if let Some(delivered) = delivered {
+                let _ = delivered.send(sent);
+            }
+            if !sent {
                 break;
             }
             if terminal {
@@ -1027,14 +1040,17 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 {
                     Ok((result, id)) => {
                         attachment = Some((result.gui_id.clone(), id));
-                        let _ = outbound
+                        if !outbound
                             .control(json!({
                                 "type": "ready",
                                 "guiId": result.gui_id,
                                 "projectDir": result.project_dir,
                                 "attached": false,
                             }))
-                            .await;
+                            .await
+                        {
+                            break;
+                        }
                     }
                     Err(error) if error == DUPLICATE_RESUME_ERROR && resume_identity.is_some() => {
                         let (project_dir, resume_id) = resume_identity.expect("checked above");
@@ -1045,7 +1061,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                         {
                             Ok((live_gui_id, id)) => {
                                 attachment = Some((live_gui_id.clone(), id));
-                                let _ = outbound
+                                if !outbound
                                     .control(json!({
                                         "type": "ready",
                                         "guiId": live_gui_id.clone(),
@@ -1053,7 +1069,10 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                                         "attached": true,
                                         "since": 0,
                                     }))
-                                    .await;
+                                    .await
+                                {
+                                    break;
+                                }
                                 if let Err(error) = state
                                     .manager
                                     .send(
@@ -1086,14 +1105,17 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 match state.manager.attach(&gui_id, sink).await {
                     Ok(id) => {
                         attachment = Some((gui_id.clone(), id));
-                        let _ = outbound
+                        if !outbound
                             .control(json!({
                                 "type": "ready",
                                 "guiId": gui_id,
                                 "attached": true,
                                 "since": since.unwrap_or(0),
                             }))
-                            .await;
+                            .await
+                        {
+                            break;
+                        }
                         if let Err(error) = state
                             .manager
                             .send(
@@ -1175,7 +1197,10 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
 }
 
 fn socket_sink(outbound: Outbound) -> EventSink {
-    Arc::new(move |event: &SessionEvent| outbound.send_event(event))
+    Arc::new(move |event: &SessionEvent| {
+        let outbound = outbound.clone();
+        Box::pin(async move { outbound.send_event(event).await })
+    })
 }
 
 fn request_authenticated(headers: &HeaderMap, expected: &[u8]) -> bool {
@@ -1356,6 +1381,18 @@ mod tests {
     use super::*;
     use std::{fs, io::Write};
 
+    async fn receive_and_ack(receiver: &mut mpsc::Receiver<OutboundEvent>) -> Value {
+        let event = receiver.recv().await.expect("outbound event");
+        let value = event.value;
+        let _ = event.delivered.send(true);
+        value
+    }
+
+    fn pending_event(value: Value) -> OutboundEvent {
+        let (delivered, _confirmed) = oneshot::channel();
+        OutboundEvent { value, delivered }
+    }
+
     fn token_file(directory: &Path) -> PathBuf {
         let path = directory.join("token");
         let mut file = fs::File::create(&path).unwrap();
@@ -1528,7 +1565,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_larger_than_the_websocket_queue_preserves_its_tail() {
-        let (sender, mut receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
         let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
         let sink = socket_sink(Outbound {
             sender,
@@ -1545,7 +1582,7 @@ mod tests {
                         "sequence": sequence,
                     }),
                 };
-                while !sink(&event) {
+                while !sink(&event).await {
                     tokio::task::yield_now().await;
                 }
             }
@@ -1558,7 +1595,7 @@ mod tests {
 
         let mut sequences = Vec::with_capacity(total);
         while sequences.len() < total {
-            let value = receiver.recv().await.expect("outbound replay record");
+            let value = receive_and_ack(&mut receiver).await;
             sequences.push(value["payload"]["sequence"].as_u64().unwrap() as usize);
         }
         producer.await.unwrap();
@@ -1569,18 +1606,22 @@ mod tests {
 
     #[tokio::test]
     async fn ready_precedes_a_saturated_history_queue() {
-        let (sender, mut receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
         let (control_sender, mut control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
         let outbound = Outbound {
             sender,
             control_sender,
         };
         for sequence in 1..=OUTBOUND_CAPACITY {
-            assert!(outbound.send_event(&SessionEvent {
-                gui_id: "restored-session".to_owned(),
-                channel: "record",
-                payload: json!({ "sequence": sequence }),
-            }));
+            outbound
+                .sender
+                .try_send(pending_event(json!({
+                    "version": API_VERSION,
+                    "type": "event",
+                    "channel": "record",
+                    "payload": { "sequence": sequence },
+                })))
+                .unwrap();
         }
         let startup_sink = socket_sink(outbound.clone());
         let startup_log = tokio::spawn(async move {
@@ -1589,7 +1630,7 @@ mod tests {
                 channel: "log",
                 payload: json!({ "stream": "host", "message": "diagnostics ready" }),
             };
-            while !startup_sink(&event) {
+            while !startup_sink(&event).await {
                 tokio::task::yield_now().await;
             }
         });
@@ -1606,16 +1647,33 @@ mod tests {
         );
 
         let mut ready_sent = false;
-        let first = next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
-            .await
-            .expect("ready control frame");
+        let (first, first_delivery) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("ready control frame");
         assert_eq!(first["type"], "ready");
+        assert!(first_delivery.is_none());
         assert!(ready_sent);
 
-        let second = next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
-            .await
-            .expect("first history frame");
+        let (second, second_delivery) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("first history frame");
         assert_eq!(second["payload"]["sequence"], 1);
+        let _ = second_delivery.expect("event acknowledgement").send(true);
+        for _ in 1..OUTBOUND_CAPACITY {
+            let (_, delivered) =
+                next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                    .await
+                    .expect("queued history frame");
+            let _ = delivered.expect("event acknowledgement").send(true);
+        }
+        let (startup, delivered) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("startup log");
+        assert_eq!(startup["payload"]["stream"], "host");
+        let _ = delivered.expect("event acknowledgement").send(true);
         tokio::time::timeout(Duration::from_secs(1), startup_log)
             .await
             .expect("startup log unblocked after event drain")
@@ -1624,7 +1682,7 @@ mod tests {
 
     #[tokio::test]
     async fn saturated_control_queue_cannot_block_shutdown_forever() {
-        let (sender, _receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
         let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
         let outbound = Outbound {
             sender,
@@ -1648,7 +1706,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_stop_waits_for_the_ordered_exit_event() {
-        let (sender, _receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
         let (control_sender, mut control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
         let outbound = Outbound {
             sender,
@@ -1668,20 +1726,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_event_queue_reuses_a_large_payload_until_capacity_is_available() {
-        let (sender, mut receiver) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+    async fn large_event_waits_for_capacity_and_confirmed_writer_delivery() {
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(1);
         let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
         let outbound = Outbound {
             sender,
             control_sender,
         };
-        for sequence in 0..OUTBOUND_CAPACITY {
-            assert!(outbound.send_event(&SessionEvent {
-                gui_id: "restored-session".to_owned(),
-                channel: "record",
-                payload: json!({ "sequence": sequence }),
-            }));
-        }
+        outbound
+            .sender
+            .try_send(pending_event(json!({ "payload": { "sequence": 0 } })))
+            .unwrap();
         let large_body = "x".repeat(1024 * 1024);
         let large_event = SessionEvent {
             gui_id: "restored-session".to_owned(),
@@ -1689,32 +1744,57 @@ mod tests {
             payload: json!({ "body": large_body }),
         };
 
-        // `send_event` reserves capacity before it clones or encodes the
-        // borrowed event, so repeated full-queue retries preserve one payload
-        // allocation instead of cloning and discarding a megabyte each time.
-        for _ in 0..1_000 {
-            assert!(!outbound.send_event(&large_event));
-        }
+        let outbound_for_large = outbound.clone();
+        let delivery =
+            tokio::spawn(async move { outbound_for_large.send_event(&large_event).await });
+        tokio::task::yield_now().await;
+        assert!(!delivery.is_finished());
+
+        let queued = receiver.recv().await.expect("one queue slot");
+        let _ = queued.delivered.send(true);
+        let large = receiver.recv().await.expect("large event");
+        assert!(!delivery.is_finished());
         assert_eq!(
-            large_event.payload["body"].as_str().unwrap().len(),
+            large.value["payload"]["body"].as_str().unwrap().len(),
             1024 * 1024
         );
+        let _ = large.delivered.send(true);
+        assert!(delivery.await.unwrap());
+    }
 
-        receiver.recv().await.expect("one queue slot");
-        assert!(outbound.send_event(&large_event));
-        let mut final_value = None;
-        while let Some(value) = receiver.recv().await {
-            if value["payload"].get("body").is_some() {
-                final_value = Some(value);
-                break;
-            }
-        }
-        assert_eq!(
-            final_value.unwrap()["payload"]["body"]
-                .as_str()
-                .unwrap()
-                .len(),
-            1024 * 1024
+    #[tokio::test]
+    async fn closed_writer_rejects_event_delivery_for_reattach() {
+        let (sender, receiver) = mpsc::channel::<OutboundEvent>(1);
+        let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        drop(receiver);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        assert!(
+            !outbound
+                .send_event(&SessionEvent {
+                    gui_id: "restored-session".to_owned(),
+                    channel: "record",
+                    payload: json!({ "type": "history.end", "count": 300 }),
+                })
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_control_lane_rejects_ready_before_event_delivery() {
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(1);
+        let (control_sender, control_receiver) = mpsc::channel::<Value>(1);
+        drop(control_receiver);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        assert!(
+            !outbound
+                .control(json!({ "type": "ready", "guiId": "restored-session" }))
+                .await
         );
     }
 
