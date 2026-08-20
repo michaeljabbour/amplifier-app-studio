@@ -23,4 +23,13 @@ describe("desktop navigation and history contracts", () => {
     expect(appSource).toContain("await listRuntimeHosts().catch(() => runtimeHosts())");
     expect(appSource).toContain("loadStoredSessionsAcrossHosts(hosts");
   });
+
+  it("shows session setup before invoking the native folder picker", () => {
+    const openNewDialog = appSource.slice(
+      appSource.indexOf("const openNewDialog"),
+      appSource.indexOf("const openSibling", appSource.indexOf("const openNewDialog")),
+    );
+    expect(openNewDialog).toContain("setDialog({ projectDir: remembered");
+    expect(openNewDialog).not.toContain("selectProjectFolder(");
+  });
 });
