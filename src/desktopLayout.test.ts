@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
+const terminalSurfaceSource = readFileSync(new URL("./components/TerminalWorkSurface.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("desktop navigation and history contracts", () => {
@@ -31,5 +32,15 @@ describe("desktop navigation and history contracts", () => {
     );
     expect(openNewDialog).toContain("setDialog({ projectDir: remembered");
     expect(openNewDialog).not.toContain("selectProjectFolder(");
+  });
+
+  it("opens native local terminal sessions inside the Studio workbench", () => {
+    expect(appSource).toContain("new NativeTmuxAdapter");
+    expect(appSource).toContain("isDesktopRuntime()");
+    expect(appSource).toContain("<TerminalWorkSurface");
+    expect(tabStripSource).toContain('<SquareTerminal aria-hidden="true" />');
+    expect(tabStripSource).toContain("aria-pressed={props.terminalOpen}");
+    expect(terminalSurfaceSource).toContain("project: props.project");
+    expect(terminalSurfaceSource).toContain('class="terminal-back"');
   });
 });

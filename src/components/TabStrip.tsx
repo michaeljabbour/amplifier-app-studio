@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js";
-import { Activity, Menu, Settings2 } from "lucide-solid";
+import { Activity, Menu, Settings2, SquareTerminal } from "lucide-solid";
 import { appUpdateButtonTitle } from "../appUpdateCopy";
 import { adjacentTabIndex, ordinaryTabCloseIntent } from "../sessionLifecycle";
 import type { SessionViewState } from "../protocol";
@@ -22,6 +22,9 @@ interface Props {
   onToggleInspector: () => void;
   onOpenPlan: () => void;
   onOpenExecution: () => void;
+  terminalAvailable: boolean;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
   update: AppUpdateState;
   updateBlocked: boolean;
   onUpdate: () => void;
@@ -111,6 +114,20 @@ export function TabStrip(props: Props) {
         +
       </button>
       <div class="top-workbench-actions">
+        <Show when={props.terminalAvailable}>
+          <button
+            type="button"
+            class="terminal-toggle"
+            classList={{ active: props.terminalOpen }}
+            onClick={props.onToggleTerminal}
+            aria-label={props.terminalOpen ? "Return to Amplifier Agent" : "Open terminal sessions"}
+            aria-pressed={props.terminalOpen}
+            title={props.terminalOpen ? "Return to Amplifier Agent" : "Open durable local terminal sessions"}
+          >
+            <SquareTerminal aria-hidden="true" />
+            <span>{props.terminalOpen ? "Agent" : "Terminal"}</span>
+          </button>
+        </Show>
         <ExecutionPresence state={active()} onOpen={props.onOpenExecution} />
         <PlanPresence state={active()} onOpen={props.onOpenPlan} />
         <button

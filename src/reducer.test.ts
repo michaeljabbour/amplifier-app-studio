@@ -722,7 +722,7 @@ describe("session reducer", () => {
   });
 
   it("rejects a replay that reports saved records but delivers no visible conversation", () => {
-    let state = createSessionState("gui-dishonest-owner", {
+    let state = createSessionState("gui-incomplete-replay", {
       projectDir: "/tmp/project",
       resumeId: "stored-session-1",
       expectedHistoryMessages: 25,

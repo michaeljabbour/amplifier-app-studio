@@ -13,6 +13,7 @@ import { SessionLifecycleDialog } from "./components/SessionLifecycleDialog";
 import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
 import { StoredSessionDialog } from "./components/StoredSessionDialog";
 import { TabStrip } from "./components/TabStrip";
+import { TerminalWorkSurface } from "./components/TerminalWorkSurface";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, type StudioCapability } from "./capabilities";
@@ -79,6 +80,7 @@ import {
   transportLabel,
   transcribeAudio,
   usesWebBridge,
+  isDesktopRuntime,
   isTauriRuntime,
   isMobileRuntime,
   type RuntimeStatus,
@@ -94,9 +96,11 @@ import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } 
 import { openGuiIdForStoredSession, parallelSessionSummary } from "./sessionSelection";
 import { storedSessionLegacyBundleOverride, storedSessionResumeBlocker } from "./sessionAvailability";
 import { projectContextForHost } from "./settingsProjectContext";
+import { projectDisplayName } from "./projectDisplayName";
 import { createLatestAsyncRunner } from "./latestAsync";
 import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, type FederatedStoredSessions } from "./storedSessions";
 import { attemptRuntimeStop, ordinaryTabCloseIntent, sessionHasLiveRuntime } from "./sessionLifecycle";
+import { NativeTmuxAdapter, TerminalCoordinator, type TerminalProjectIdentity } from "./terminal";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
@@ -135,6 +139,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
+  const [workbenchSurface, setWorkbenchSurface] = createSignal<"agent" | "terminal">("agent");
   const [workspaceAttachmentDrag, setWorkspaceAttachmentDrag] = createSignal(false);
   const [homeAttachments, setHomeAttachments] = createSignal<ComposerAttachment[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
@@ -160,6 +165,11 @@ export default function App() {
   const pendingInitialPrompts = new Map<string, { runtimeText: string; attachments: ComposerAttachment[] }>();
   const runLatestRuntimeRefresh = createLatestAsyncRunner<RuntimeStatus>();
   const runLatestStoredRefresh = createLatestAsyncRunner<FederatedStoredSessions>();
+  const terminalCoordinator = isDesktopRuntime()
+    ? new TerminalCoordinator(new NativeTmuxAdapter({
+      host: { id: "local", label: "This computer", kind: "local", transport: "native" },
+    }))
+    : undefined;
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
@@ -178,6 +188,14 @@ export default function App() {
   const settingsProjectDir = createMemo(() => {
     const host = sessionHomeHost();
     return projectContextForHost(active(), host, knownHostProjectRoot(host));
+  });
+  const nativeTerminalProject = createMemo<TerminalProjectIdentity | undefined>(() => {
+    const session = active();
+    const root = session && (!session.hostUrl || session.hostId === "local")
+      ? session.projectDir.trim()
+      : knownHostProjectRoot(runtimeHosts().find((host) => host.id === "local")).trim();
+    if (!root) return undefined;
+    return { id: root, label: projectDisplayName(root), root };
   });
 
   const refreshHostProjectRoot = async (host: RuntimeHost): Promise<string> => {
@@ -249,6 +267,7 @@ export default function App() {
   });
 
   onCleanup(() => {
+    terminalCoordinator?.dispose();
     connections.forEach((connection) => connection.dispose());
     statusPollers.forEach((timer) => window.clearInterval(timer));
     restoreTimers.forEach((timer) => window.clearTimeout(timer));
@@ -805,16 +824,22 @@ export default function App() {
       <TabStrip
         sessions={sessions()}
         activeId={activeId()}
-        onSelect={setActiveId}
+        onSelect={(id) => {
+          setActiveId(id);
+          setWorkbenchSurface("agent");
+        }}
         onClose={requestTabClose}
         onNew={openNew}
         onDrawer={openDrawer}
         onSettings={() => setSettingsOpen(true)}
-        inspectorOpen={rightOpen()}
-        inspectorAvailable={Boolean(active())}
+        inspectorOpen={workbenchSurface() === "agent" && rightOpen()}
+        inspectorAvailable={workbenchSurface() === "agent" && Boolean(active())}
         onToggleInspector={() => setRightOpen((value) => !value)}
         onOpenExecution={() => openInspector("map")}
         onOpenPlan={() => openInspector("plan")}
+        terminalAvailable={Boolean(terminalCoordinator)}
+        terminalOpen={workbenchSurface() === "terminal"}
+        onToggleTerminal={() => setWorkbenchSurface((surface) => surface === "terminal" ? "agent" : "terminal")}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
         onUpdate={() => void applyAppUpdate()}
@@ -822,9 +847,10 @@ export default function App() {
 
       <Show when={workspaceAttachmentDrag()}><div class="native-drop-target">Drop files to attach</div></Show>
 
-      <Show
-        when={active()}
-        fallback={
+      <Show when={workbenchSurface() === "terminal" && terminalCoordinator} fallback={
+        <Show
+          when={active()}
+          fallback={
           <CoordinatorHome
             sessions={stored()}
             loading={storedLoading()}
@@ -850,8 +876,8 @@ export default function App() {
             transcription={transcription()}
             onTranscribe={transcribeAudio}
           />
-        }
-      >
+          }
+        >
         {(session) => (
           <div
             class="workspace"
@@ -970,8 +996,15 @@ export default function App() {
               onClose={() => setRightOpen(false)}
             />
           </div>
-        )}
-      </Show>
+          )}
+        </Show>
+      } keyed>{(coordinator) => (
+        <TerminalWorkSurface
+          coordinator={coordinator}
+          project={nativeTerminalProject()}
+          onClose={() => setWorkbenchSurface("agent")}
+        />
+      )}</Show>
 
       <Show when={dialog()} keyed>
         {(initial) => <NewSessionDialog

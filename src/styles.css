@@ -621,6 +621,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .execution-presence.active > strong { color: var(--blue); }
 .execution-presence.failed > strong, .execution-presence.failed > small { color: var(--red); }
 .inspector-toggle { display: flex; align-items: center; justify-content: center; gap: 7px; }.inspector-toggle-glyph { display: grid; gap: 2px; width: 12px; }.inspector-toggle-glyph i { display: block; height: 1px; background: currentColor; }.inspector-toggle-glyph i:nth-child(2) { width: 8px; }.inspector-toggle-glyph i:nth-child(3) { width: 10px; }
+.terminal-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.terminal-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; }
 
 .workspace { display: grid; grid-template-columns: 252px minmax(420px, 1fr) 330px; overflow: hidden; }
 .workspace:not(.left-open) { grid-template-columns: minmax(420px, 1fr) 330px; }

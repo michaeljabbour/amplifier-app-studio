@@ -24,6 +24,8 @@
 .terminal-work-heading p { margin: 6px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .terminal-heading-actions,
 .terminal-session-actions { display: flex; align-items: center; gap: 7px; }
+.terminal-heading-actions .terminal-back { display: inline-flex; align-items: center; gap: 6px; }
+.terminal-heading-actions .terminal-back svg { width: 13px; height: 13px; }
 .terminal-work-surface button { border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 9px; }
 .terminal-work-surface button:hover:not(:disabled) { border-color: var(--line-strong); color: var(--text); }
 .terminal-work-surface button.primary { border-color: rgba(79,183,255,.32); background: rgba(79,183,255,.09); color: #b9e4ff; }

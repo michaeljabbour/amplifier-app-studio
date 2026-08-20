@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { terminalPlainText } from "./TerminalWorkSurface";
+import { terminalPlainText } from "../terminalPlainText";
 
 describe("terminal work surface", () => {
   it("renders terminal output as text without ANSI control sequences", () => {

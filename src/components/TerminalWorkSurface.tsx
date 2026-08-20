@@ -1,15 +1,20 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { ArrowLeft } from "lucide-solid";
 import type {
   TerminalCoordinatorContract,
   TerminalCoordinatorSnapshot,
   TerminalInputRequest,
+  TerminalProjectIdentity,
   TerminalSession,
 } from "../terminal";
+import { terminalPlainText } from "../terminalPlainText";
 import "./TerminalWorkSurface.css";
 
 interface Props {
   coordinator: TerminalCoordinatorContract;
   title?: string;
+  project?: TerminalProjectIdentity;
+  onClose?: () => void;
   confirmTerminate?: (terminal: TerminalSession) => boolean | Promise<boolean>;
 }
 
@@ -81,7 +86,7 @@ export function TerminalWorkSurface(props: Props) {
     const name = createName().trim();
     if (!name) return;
     await run("create", async () => {
-      const terminal = await props.coordinator.create({ name });
+      const terminal = await props.coordinator.create({ name, project: props.project });
       setCreateName("");
       setCreating(false);
       await props.coordinator.attach(terminal.id);
@@ -134,6 +139,12 @@ export function TerminalWorkSurface(props: Props) {
           <p>Run and supervise durable PTY work without leaving Amplifier Studio.</p>
         </div>
         <div class="terminal-heading-actions">
+          <Show when={props.onClose}>
+            <button type="button" class="terminal-back" onClick={() => props.onClose?.()}>
+              <ArrowLeft aria-hidden="true" />
+              <span>Agent</span>
+            </button>
+          </Show>
           <button type="button" onClick={() => void run("refresh", () => props.coordinator.refresh())} disabled={state().refreshing || Boolean(working())}>
             {state().refreshing ? "Refreshing…" : "Refresh"}
           </button>
@@ -271,15 +282,6 @@ export function TerminalWorkSurface(props: Props) {
       </div>
     </section>
   );
-}
-
-export function terminalPlainText(value: string): string {
-  return value
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b[@-_]/g, "")
-    .replace(/\r(?!\n)/g, "\n")
-    .replace(/[\u0000\u0007\u0008]/g, "");
 }
 
 function connectionLabel(terminal: TerminalSession): string {
