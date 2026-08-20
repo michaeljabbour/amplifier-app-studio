@@ -35,7 +35,8 @@ use std::{
 use subtle::ConstantTimeEq;
 use tokio::{
     net::TcpListener,
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, oneshot},
+    time::{timeout, Duration},
 };
 use tower_http::{
     cors::CorsLayer,
@@ -56,6 +57,9 @@ const LEGACY_TOKEN_ENV: &str = "AMPLIFIER_STUDIO_BRIDGE_TOKEN";
 const LEGACY_ORIGINS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_ORIGINS";
 const LEGACY_ROOTS_ENV: &str = "AMPLIFIER_STUDIO_ALLOWED_PROJECT_ROOTS";
 const OUTBOUND_CAPACITY: usize = 256;
+const CONTROL_CAPACITY: usize = 16;
+const CONTROL_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(250);
+const WS_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 const WS_PROTOCOL: &str = "amplifier-host.v1";
 const LEGACY_WS_PROTOCOL: &str = "amplifier-studio";
 const WS_BEARER_PREFIX: &str = "amplifier-host.bearer.";
@@ -832,73 +836,193 @@ impl ClientMessage {
 
 #[derive(Clone)]
 struct Outbound {
-    sender: mpsc::Sender<Value>,
-    overflowed: Arc<AtomicBool>,
+    sender: mpsc::Sender<OutboundEvent>,
+    control_sender: mpsc::Sender<Value>,
+}
+
+struct OutboundEvent {
+    value: Value,
+    delivered: oneshot::Sender<bool>,
 }
 
 impl Outbound {
-    fn send(&self, mut value: Value) {
+    /// Reserve bounded capacity, queue one cloned value, and resolve only
+    /// after the WebSocket writer confirms the frame was sent. A failed or
+    /// closed writer rejects delivery so the session reader can retry against
+    /// the next attachment without losing an accepted-but-unflushed tail.
+    async fn send_event(&self, event: &SessionEvent) -> bool {
+        let Ok(permit) = self.sender.reserve().await else {
+            return false;
+        };
+        let (delivered, confirmed) = oneshot::channel();
+        permit.send(OutboundEvent {
+            value: json!({
+                "version": API_VERSION,
+                "type": "event",
+                "channel": event.channel,
+                "payload": event.payload.clone(),
+            }),
+            delivered,
+        });
+        matches!(confirmed.await, Ok(true))
+    }
+
+    async fn control(&self, mut value: Value) -> bool {
         if let Some(object) = value.as_object_mut() {
             object.insert("version".to_owned(), Value::from(API_VERSION));
         }
-        match self.sender.try_send(value) {
-            Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                self.overflowed.store(true, Ordering::Release);
-            }
-        }
+        matches!(
+            timeout(CONTROL_ENQUEUE_TIMEOUT, self.control_sender.send(value),).await,
+            Ok(Ok(()))
+        )
     }
 
-    fn error(&self, message: impl Into<String>) {
-        self.send(json!({ "type": "error", "message": message.into() }));
+    async fn error(&self, message: impl Into<String>) -> bool {
+        self.control(json!({ "type": "error", "message": message.into() }))
+            .await
     }
+}
+
+async fn next_outbound_value(
+    control_rx: &mut mpsc::Receiver<Value>,
+    event_rx: &mut mpsc::Receiver<OutboundEvent>,
+    ready_sent: &mut bool,
+) -> Option<(Value, Option<oneshot::Sender<bool>>)> {
+    if !*ready_sent {
+        let value = control_rx.recv().await?;
+        if value.get("type").and_then(Value::as_str) == Some("ready") {
+            *ready_sent = true;
+        }
+        return Some((value, None));
+    }
+
+    tokio::select! {
+        biased;
+        Some(value) = control_rx.recv() => Some((value, None)),
+        Some(event) = event_rx.recv() => Some((event.value, Some(event.delivered))),
+        else => None,
+    }
+}
+
+async fn acknowledge_stop_result(outbound: &Outbound, stopped: bool) {
+    if !stopped {
+        let _ = outbound
+            .control(json!({ "type": "stopped", "stopped": false }))
+            .await;
+    }
+    // A successful stop is acknowledged by the ordered exit event. The exit
+    // monitor waits for stdout/stderr readers, so using a priority control
+    // frame here would let Studio discard the view before final records drain.
+}
+
+fn socket_attachment_requires_detach(terminal_exit_delivered: bool) -> bool {
+    !terminal_exit_delivered
+}
+
+async fn cleanup_socket_attachment(
+    manager: &SessionManager,
+    attachment: Option<(String, AttachmentId)>,
+    terminal_exit_delivered: bool,
+) {
+    if socket_attachment_requires_detach(terminal_exit_delivered) {
+        if let Some((attached_gui_id, id)) = attachment {
+            let _ = manager.detach(&attached_gui_id, id).await;
+        }
+    }
+}
+
+pub(crate) async fn finish_socket_attachment(
+    manager: &SessionManager,
+    attachment: Option<(String, AttachmentId)>,
+    terminal_exit_delivered: &AtomicBool,
+    writer: &mut tokio::task::JoinHandle<()>,
+    writer_finished: bool,
+) {
+    // A peer close can race the terminal send. Quiesce the writer before
+    // loading its marker so the cleanup decision has a hard happens-before
+    // boundary: either exit was confirmed and published, or it can no longer
+    // become confirmed after this point.
+    if !writer_finished {
+        writer.abort();
+        let _ = (&mut *writer).await;
+    }
+    cleanup_socket_attachment(
+        manager,
+        attachment,
+        terminal_exit_delivered.load(Ordering::Acquire),
+    )
+    .await;
 }
 
 async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
     let mut shutdown = state.shutdown.subscribe();
     let (mut socket_tx, mut socket_rx) = socket.split();
-    let (event_tx, mut event_rx) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
-    let overflowed = Arc::new(AtomicBool::new(false));
+    let (event_tx, mut event_rx) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
+    let (control_tx, mut control_rx) = mpsc::channel::<Value>(CONTROL_CAPACITY);
     let outbound = Outbound {
         sender: event_tx,
-        overflowed: overflowed.clone(),
+        control_sender: control_tx,
     };
-    let writer = tokio::spawn(async move {
-        while let Some(value) = event_rx.recv().await {
+    let terminal_exit_delivered = Arc::new(AtomicBool::new(false));
+    let writer_terminal_exit_delivered = terminal_exit_delivered.clone();
+    let mut writer = tokio::spawn(async move {
+        let mut ready_sent = false;
+        while let Some((value, delivered)) =
+            next_outbound_value(&mut control_rx, &mut event_rx, &mut ready_sent).await
+        {
             let terminal = value.get("type").and_then(Value::as_str) == Some("event")
                 && value.get("channel").and_then(Value::as_str) == Some("exit");
             let Ok(encoded) = serde_json::to_string(&value) else {
+                if let Some(delivered) = delivered {
+                    let _ = delivered.send(false);
+                }
                 continue;
             };
-            if socket_tx.send(Message::Text(encoded.into())).await.is_err() {
+            let sent = matches!(
+                timeout(
+                    WS_SEND_TIMEOUT,
+                    socket_tx.send(Message::Text(encoded.into())),
+                )
+                .await,
+                Ok(Ok(()))
+            );
+            // Publish terminal delivery before waking the exit finalizer. The
+            // reader half may observe the peer's close response before this
+            // writer task is joined, but confirmed exit must never be treated
+            // as an ordinary disconnect and detached out from under cleanup.
+            if sent && terminal {
+                writer_terminal_exit_delivered.store(true, Ordering::Release);
+            }
+            if let Some(delivered) = delivered {
+                let _ = delivered.send(sent);
+            }
+            if !sent {
                 break;
             }
             if terminal {
-                let _ = socket_tx
-                    .send(Message::Close(Some(CloseFrame {
+                let _ = timeout(
+                    WS_SEND_TIMEOUT,
+                    socket_tx.send(Message::Close(Some(CloseFrame {
                         code: 1000,
                         reason: "runtime exited".into(),
-                    })))
-                    .await;
-                break;
-            }
-            if overflowed.swap(false, Ordering::AcqRel) {
-                let _ = socket_tx
-                    .send(Message::Close(Some(CloseFrame {
-                        code: 1013,
-                        reason: "client fell behind; reconnect to replay".into(),
-                    })))
-                    .await;
+                    }))),
+                )
+                .await;
                 break;
             }
         }
     });
 
     let mut attachment: Option<(String, AttachmentId)> = None;
+    let mut writer_finished = false;
     loop {
         let next = tokio::select! {
             message = socket_rx.next() => message,
             _ = shutdown.recv() => break,
+            _ = &mut writer => {
+                writer_finished = true;
+                break;
+            },
         };
         let Some(message) = next else {
             break;
@@ -915,22 +1039,28 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         let request = match serde_json::from_str::<ClientMessage>(&text) {
             Ok(request) => request,
             Err(error) => {
-                outbound.error(format!("Invalid bridge message: {error}"));
+                let _ = outbound
+                    .error(format!("Invalid bridge message: {error}"))
+                    .await;
                 continue;
             }
         };
         if request.version() != API_VERSION {
-            outbound.error(format!(
-                "Unsupported Amplifier Host protocol version {}; this host requires version {API_VERSION}",
-                request.version()
-            ));
+            let _ = outbound
+                .error(format!(
+                    "Unsupported Amplifier Host protocol version {}; this host requires version {API_VERSION}",
+                    request.version()
+                ))
+                .await;
             continue;
         }
 
         match request {
             ClientMessage::Start { mut options, .. } if attachment.is_none() => {
                 if options.gui_id != gui_id {
-                    outbound.error("WebSocket path and options.guiId do not match");
+                    let _ = outbound
+                        .error("WebSocket path and options.guiId do not match")
+                        .await;
                     continue;
                 }
                 let project = match authorize_project_dir(
@@ -939,7 +1069,7 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 ) {
                     Ok(project) => project,
                     Err(error) => {
-                        outbound.error(error);
+                        let _ = outbound.error(error).await;
                         continue;
                     }
                 };
@@ -961,12 +1091,17 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 {
                     Ok((result, id)) => {
                         attachment = Some((result.gui_id.clone(), id));
-                        outbound.send(json!({
-                            "type": "ready",
-                            "guiId": result.gui_id,
-                            "projectDir": result.project_dir,
-                            "attached": false,
-                        }));
+                        if !outbound
+                            .control(json!({
+                                "type": "ready",
+                                "guiId": result.gui_id,
+                                "projectDir": result.project_dir,
+                                "attached": false,
+                            }))
+                            .await
+                        {
+                            break;
+                        }
                     }
                     Err(error) if error == DUPLICATE_RESUME_ERROR && resume_identity.is_some() => {
                         let (project_dir, resume_id) = resume_identity.expect("checked above");
@@ -977,13 +1112,18 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                         {
                             Ok((live_gui_id, id)) => {
                                 attachment = Some((live_gui_id.clone(), id));
-                                outbound.send(json!({
-                                    "type": "ready",
-                                    "guiId": live_gui_id.clone(),
-                                    "projectDir": project_dir,
-                                    "attached": true,
-                                    "since": 0,
-                                }));
+                                if !outbound
+                                    .control(json!({
+                                        "type": "ready",
+                                        "guiId": live_gui_id.clone(),
+                                        "projectDir": project_dir,
+                                        "attached": true,
+                                        "since": 0,
+                                    }))
+                                    .await
+                                {
+                                    break;
+                                }
                                 if let Err(error) = state
                                     .manager
                                     .send(
@@ -992,19 +1132,23 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                                     )
                                     .await
                                 {
-                                    outbound.error(error);
+                                    let _ = outbound.error(error).await;
                                 } else if let Err(error) = state
                                     .manager
                                     .send(&live_gui_id, json!({ "op": "session.status" }))
                                     .await
                                 {
-                                    outbound.error(error);
+                                    let _ = outbound.error(error).await;
                                 }
                             }
-                            Err(attach_error) => outbound.error(attach_error),
+                            Err(attach_error) => {
+                                let _ = outbound.error(attach_error).await;
+                            }
                         }
                     }
-                    Err(error) => outbound.error(error),
+                    Err(error) => {
+                        let _ = outbound.error(error).await;
+                    }
                 }
             }
             ClientMessage::Attach { since, .. } if attachment.is_none() => {
@@ -1012,12 +1156,17 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                 match state.manager.attach(&gui_id, sink).await {
                     Ok(id) => {
                         attachment = Some((gui_id.clone(), id));
-                        outbound.send(json!({
-                            "type": "ready",
-                            "guiId": gui_id,
-                            "attached": true,
-                            "since": since.unwrap_or(0),
-                        }));
+                        if !outbound
+                            .control(json!({
+                                "type": "ready",
+                                "guiId": gui_id,
+                                "attached": true,
+                                "since": since.unwrap_or(0),
+                            }))
+                            .await
+                        {
+                            break;
+                        }
                         if let Err(error) = state
                             .manager
                             .send(
@@ -1026,20 +1175,24 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                             )
                             .await
                         {
-                            outbound.error(error);
+                            let _ = outbound.error(error).await;
                         } else if let Err(error) = state
                             .manager
                             .send(&gui_id, json!({ "op": "session.status" }))
                             .await
                         {
-                            outbound.error(error);
+                            let _ = outbound.error(error).await;
                         }
                     }
-                    Err(error) => outbound.error(error),
+                    Err(error) => {
+                        let _ = outbound.error(error).await;
+                    }
                 }
             }
             ClientMessage::Start { .. } | ClientMessage::Attach { .. } => {
-                outbound.error("This WebSocket is already attached to a session");
+                let _ = outbound
+                    .error("This WebSocket is already attached to a session")
+                    .await;
             }
             ClientMessage::Op { op, .. } if attachment.is_some() => {
                 let (attached_gui_id, attachment_id) = attachment.as_ref().expect("checked above");
@@ -1049,9 +1202,11 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                     .await
                     .unwrap_or(false);
                 if !current {
-                    outbound.error("This connection was replaced by a newer session attachment");
+                    let _ = outbound
+                        .error("This connection was replaced by a newer session attachment")
+                        .await;
                 } else if let Err(error) = state.manager.send(attached_gui_id, op).await {
-                    outbound.error(error);
+                    let _ = outbound.error(error).await;
                 }
             }
             ClientMessage::Stop { .. } if attachment.is_some() => {
@@ -1062,33 +1217,42 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
                     .await
                     .unwrap_or(false);
                 if !current {
-                    outbound.error("This connection was replaced by a newer session attachment");
+                    let _ = outbound
+                        .error("This connection was replaced by a newer session attachment")
+                        .await;
                 } else {
                     match state.manager.stop(attached_gui_id).await {
                         Ok(stopped) => {
-                            outbound.send(json!({ "type": "stopped", "stopped": stopped }));
+                            acknowledge_stop_result(&outbound, stopped).await;
                         }
-                        Err(error) => outbound.error(error),
+                        Err(error) => {
+                            let _ = outbound.error(error).await;
+                        }
                     }
                 }
             }
-            _ => outbound.error("Send a start or attach message before session operations"),
+            _ => {
+                let _ = outbound
+                    .error("Send a start or attach message before session operations")
+                    .await;
+            }
         }
     }
 
-    if let Some((attached_gui_id, id)) = attachment {
-        let _ = state.manager.detach(&attached_gui_id, id).await;
-    }
-    writer.abort();
+    finish_socket_attachment(
+        &state.manager,
+        attachment,
+        &terminal_exit_delivered,
+        &mut writer,
+        writer_finished,
+    )
+    .await;
 }
 
 fn socket_sink(outbound: Outbound) -> EventSink {
-    Arc::new(move |event: SessionEvent| {
-        outbound.send(json!({
-            "type": "event",
-            "channel": event.channel,
-            "payload": event.payload,
-        }));
+    Arc::new(move |event: &SessionEvent| {
+        let outbound = outbound.clone();
+        Box::pin(async move { outbound.send_event(event).await })
     })
 }
 
@@ -1270,6 +1434,18 @@ mod tests {
     use super::*;
     use std::{fs, io::Write};
 
+    async fn receive_and_ack(receiver: &mut mpsc::Receiver<OutboundEvent>) -> Value {
+        let event = receiver.recv().await.expect("outbound event");
+        let value = event.value;
+        let _ = event.delivered.send(true);
+        value
+    }
+
+    fn pending_event(value: Value) -> OutboundEvent {
+        let (delivered, _confirmed) = oneshot::channel();
+        OutboundEvent { value, delivered }
+    }
+
     fn token_file(directory: &Path) -> PathBuf {
         let path = directory.join("token");
         let mut file = fs::File::create(&path).unwrap();
@@ -1437,6 +1613,251 @@ mod tests {
         assert!(
             authorize_project_dir(outside.to_str().unwrap(), &[temp.path().join("projects")])
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_larger_than_the_websocket_queue_preserves_its_tail() {
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
+        let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let sink = socket_sink(Outbound {
+            sender,
+            control_sender,
+        });
+        let total = OUTBOUND_CAPACITY + 44;
+        let producer = tokio::spawn(async move {
+            for sequence in 1..=total {
+                let event = SessionEvent {
+                    gui_id: "restored-session".to_owned(),
+                    channel: "record",
+                    payload: json!({
+                        "type": if sequence == total { "history.end" } else { "runtime.event" },
+                        "sequence": sequence,
+                    }),
+                };
+                while !sink(&event).await {
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+
+        // Let the producer hit the 256-record ceiling observed in the live
+        // restore before the simulated WebSocket starts draining.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(!producer.is_finished());
+
+        let mut sequences = Vec::with_capacity(total);
+        while sequences.len() < total {
+            let value = receive_and_ack(&mut receiver).await;
+            sequences.push(value["payload"]["sequence"].as_u64().unwrap() as usize);
+        }
+        producer.await.unwrap();
+
+        assert_eq!(sequences, (1..=total).collect::<Vec<_>>());
+        assert_eq!(sequences.last(), Some(&total));
+    }
+
+    #[tokio::test]
+    async fn ready_precedes_a_saturated_history_queue() {
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
+        let (control_sender, mut control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        for sequence in 1..=OUTBOUND_CAPACITY {
+            outbound
+                .sender
+                .try_send(pending_event(json!({
+                    "version": API_VERSION,
+                    "type": "event",
+                    "channel": "record",
+                    "payload": { "sequence": sequence },
+                })))
+                .unwrap();
+        }
+        let startup_sink = socket_sink(outbound.clone());
+        let startup_log = tokio::spawn(async move {
+            let event = SessionEvent {
+                gui_id: "restored-session".to_owned(),
+                channel: "log",
+                payload: json!({ "stream": "host", "message": "diagnostics ready" }),
+            };
+            while !startup_sink(&event).await {
+                tokio::task::yield_now().await;
+            }
+        });
+        tokio::task::yield_now().await;
+        assert!(!startup_log.is_finished());
+
+        // Startup must not await the event-lane host log. It can reliably
+        // queue ready through the separate control lane, which opens the
+        // writer gate and lets the saturated replay continue draining.
+        assert!(
+            outbound
+                .control(json!({ "type": "ready", "guiId": "restored-session" }))
+                .await
+        );
+
+        let mut ready_sent = false;
+        let (first, first_delivery) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("ready control frame");
+        assert_eq!(first["type"], "ready");
+        assert!(first_delivery.is_none());
+        assert!(ready_sent);
+
+        let (second, second_delivery) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("first history frame");
+        assert_eq!(second["payload"]["sequence"], 1);
+        let _ = second_delivery.expect("event acknowledgement").send(true);
+        for _ in 1..OUTBOUND_CAPACITY {
+            let (_, delivered) =
+                next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                    .await
+                    .expect("queued history frame");
+            let _ = delivered.expect("event acknowledgement").send(true);
+        }
+        let (startup, delivered) =
+            next_outbound_value(&mut control_receiver, &mut receiver, &mut ready_sent)
+                .await
+                .expect("startup log");
+        assert_eq!(startup["payload"]["stream"], "host");
+        let _ = delivered.expect("event acknowledgement").send(true);
+        tokio::time::timeout(Duration::from_secs(1), startup_log)
+            .await
+            .expect("startup log unblocked after event drain")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn saturated_control_queue_cannot_block_shutdown_forever() {
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
+        let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        for sequence in 0..CONTROL_CAPACITY {
+            outbound
+                .control_sender
+                .try_send(json!({ "type": "error", "sequence": sequence }))
+                .unwrap();
+        }
+
+        let accepted = tokio::time::timeout(
+            Duration::from_secs(1),
+            outbound.control(json!({ "type": "stopped" })),
+        )
+        .await
+        .expect("control enqueue is time-bounded");
+        assert!(!accepted);
+    }
+
+    #[tokio::test]
+    async fn successful_stop_waits_for_the_ordered_exit_event() {
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(OUTBOUND_CAPACITY);
+        let (control_sender, mut control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+
+        acknowledge_stop_result(&outbound, true).await;
+        assert!(matches!(
+            control_receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        acknowledge_stop_result(&outbound, false).await;
+        let failed = control_receiver.recv().await.expect("failed stop response");
+        assert_eq!(failed["type"], "stopped");
+        assert_eq!(failed["stopped"], false);
+    }
+
+    #[test]
+    fn confirmed_terminal_exit_suppresses_disconnect_detach() {
+        assert!(socket_attachment_requires_detach(false));
+
+        // The writer publishes this marker before it acknowledges exit to the
+        // finalizer, so either writer completion or a peer close sees the same
+        // terminal cleanup decision.
+        assert!(!socket_attachment_requires_detach(true));
+    }
+
+    #[tokio::test]
+    async fn large_event_waits_for_capacity_and_confirmed_writer_delivery() {
+        let (sender, mut receiver) = mpsc::channel::<OutboundEvent>(1);
+        let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        outbound
+            .sender
+            .try_send(pending_event(json!({ "payload": { "sequence": 0 } })))
+            .unwrap();
+        let large_body = "x".repeat(1024 * 1024);
+        let large_event = SessionEvent {
+            gui_id: "restored-session".to_owned(),
+            channel: "record",
+            payload: json!({ "body": large_body }),
+        };
+
+        let outbound_for_large = outbound.clone();
+        let delivery =
+            tokio::spawn(async move { outbound_for_large.send_event(&large_event).await });
+        tokio::task::yield_now().await;
+        assert!(!delivery.is_finished());
+
+        let queued = receiver.recv().await.expect("one queue slot");
+        let _ = queued.delivered.send(true);
+        let large = receiver.recv().await.expect("large event");
+        assert!(!delivery.is_finished());
+        assert_eq!(
+            large.value["payload"]["body"].as_str().unwrap().len(),
+            1024 * 1024
+        );
+        let _ = large.delivered.send(true);
+        assert!(delivery.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn closed_writer_rejects_event_delivery_for_reattach() {
+        let (sender, receiver) = mpsc::channel::<OutboundEvent>(1);
+        let (control_sender, _control_receiver) = mpsc::channel::<Value>(CONTROL_CAPACITY);
+        drop(receiver);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        assert!(
+            !outbound
+                .send_event(&SessionEvent {
+                    gui_id: "restored-session".to_owned(),
+                    channel: "record",
+                    payload: json!({ "type": "history.end", "count": 300 }),
+                })
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_control_lane_rejects_ready_before_event_delivery() {
+        let (sender, _receiver) = mpsc::channel::<OutboundEvent>(1);
+        let (control_sender, control_receiver) = mpsc::channel::<Value>(1);
+        drop(control_receiver);
+        let outbound = Outbound {
+            sender,
+            control_sender,
+        };
+        assert!(
+            !outbound
+                .control(json!({ "type": "ready", "guiId": "restored-session" }))
+                .await
         );
     }
 

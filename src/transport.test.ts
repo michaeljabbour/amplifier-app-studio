@@ -348,9 +348,10 @@ describe("bridge trust storage", () => {
     vi.stubGlobal("WebSocket", TestWebSocket);
     saveBridgeUrl("http://127.0.0.1:9555");
     saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
     const pending = launchSession(
       { guiId: "gui-stop", projectDir: "/project" },
-      { onRecord: vi.fn(), onLog: vi.fn(), onExit: vi.fn() },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn() },
     );
     sockets[0].open();
     sockets[0].message({ type: "ready", guiId: "gui-stop", attached: false });
@@ -363,6 +364,21 @@ describe("bridge trust storage", () => {
     });
     expect(sockets[0].messages().at(-1)).toEqual({ type: "stop", version: 1 });
     await Promise.resolve();
+    expect(confirmed).toBe(false);
+
+    sockets[0].message({
+      type: "event",
+      channel: "record",
+      payload: {
+        type: "transcript.message",
+        role: "assistant",
+        text: "The final response survives the stop drain",
+      },
+    });
+    expect(onRecord).toHaveBeenCalledWith(expect.objectContaining({
+      type: "transcript.message",
+      text: "The final response survives the stop drain",
+    }));
     expect(confirmed).toBe(false);
 
     sockets[0].message({

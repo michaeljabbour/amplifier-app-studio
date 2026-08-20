@@ -6,27 +6,46 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
-    sync::Mutex,
+    sync::{watch, Mutex, RwLock},
     time::{sleep, timeout, Instant},
 };
 
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
+const SINK_BACKPRESSURE_RETRY: Duration = Duration::from_millis(2);
+// Must remain above Studio's maximum WebSocket reconnect backoff (8 seconds
+// in src/transport.ts) so an ended runtime survives until the next retry.
+const EVENT_REATTACH_GRACE_PRODUCTION: Duration = Duration::from_secs(10);
+#[cfg(not(test))]
+const EVENT_REATTACH_GRACE: Duration = EVENT_REATTACH_GRACE_PRODUCTION;
+#[cfg(test)]
+const EVENT_REATTACH_GRACE: Duration = Duration::from_millis(200);
 pub const DUPLICATE_RESUME_ERROR: &str = "That stored session is already open in Amplifier Studio";
 
-pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync + 'static>;
+/// Returns `true` when the event was accepted (or no subscriber remains) and
+/// `false` when a bounded transport needs the runtime reader to apply
+/// backpressure and retry. This keeps a durable history burst larger than the
+/// WebSocket queue from silently losing its tail.
+pub type EventSink = Arc<
+    dyn for<'event> Fn(&'event SessionEvent) -> Pin<Box<dyn Future<Output = bool> + Send + 'event>>
+        + Send
+        + Sync
+        + 'static,
+>;
 pub type AttachmentId = u64;
 
 #[derive(Debug, Clone)]
@@ -36,7 +55,24 @@ pub struct NetworkPrincipal {
     pub permissions: &'static str,
 }
 
-type AttachedSink = Arc<RwLock<Option<(AttachmentId, EventSink)>>>;
+type AttachedSink = Arc<AttachmentSlot>;
+
+struct AttachmentSlot {
+    current: RwLock<Option<(AttachmentId, EventSink)>>,
+    detached_reconnect_deadline: Mutex<Option<Instant>>,
+    changes: watch::Sender<u64>,
+    released: AtomicBool,
+}
+
+fn attached_sink(initial: Option<(AttachmentId, EventSink)>) -> AttachedSink {
+    let (changes, _) = watch::channel(0);
+    Arc::new(AttachmentSlot {
+        current: RwLock::new(initial),
+        detached_reconnect_deadline: Mutex::new(None),
+        changes,
+        released: AtomicBool::new(false),
+    })
+}
 
 #[derive(Clone)]
 struct SessionHandle {
@@ -244,7 +280,7 @@ impl SessionManager {
             .ok_or_else(|| "The Amplifier runtime did not expose stdout".to_owned())?;
         let stderr = child.stderr.take();
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
-        let attached_sink = Arc::new(RwLock::new(Some((attachment_id, sink))));
+        let attached_sink = attached_sink(Some((attachment_id, sink)));
         let handle = SessionHandle {
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(Mutex::new(Some(stdin))),
@@ -258,19 +294,38 @@ impl SessionManager {
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
 
-        let routed_sink = routed_sink(attached_sink);
-        spawn_stdout_reader(routed_sink.clone(), options.gui_id.clone(), stdout);
+        let routed_sink = routed_sink(attached_sink.clone());
+        let mut readers = vec![spawn_stdout_reader(
+            routed_sink.clone(),
+            options.gui_id.clone(),
+            stdout,
+        )];
         if let Some(stderr) = stderr {
-            spawn_stderr_reader(routed_sink.clone(), options.gui_id.clone(), stderr);
+            readers.push(spawn_stderr_reader(
+                routed_sink.clone(),
+                options.gui_id.clone(),
+                stderr,
+            ));
         } else if let Some(path) = durable_stderr {
-            emit_log(
-                &routed_sink,
-                &options.gui_id,
-                "host",
-                format!("Detached runtime diagnostics: {}", path.display()),
-            );
+            let log_sink = routed_sink.clone();
+            let log_gui_id = options.gui_id.clone();
+            readers.push(tokio::spawn(async move {
+                deliver_log(
+                    &log_sink,
+                    &log_gui_id,
+                    "host",
+                    format!("Detached runtime diagnostics: {}", path.display()),
+                )
+                .await;
+            }));
         }
-        self.spawn_exit_monitor(routed_sink, options.gui_id.clone(), handle.child.clone());
+        self.spawn_exit_monitor(
+            routed_sink,
+            attached_sink,
+            options.gui_id.clone(),
+            handle.child.clone(),
+            readers,
+        );
 
         Ok((
             StartSessionResult {
@@ -283,15 +338,15 @@ impl SessionManager {
 
     /// Replace the current event subscriber without changing the runtime.
     pub async fn attach(&self, gui_id: &str, sink: EventSink) -> Result<AttachmentId, String> {
-        let handle = self
-            .sessions
-            .lock()
-            .await
+        // Hold the session map lock through sink replacement. Final exit uses
+        // the same lock to capture the last subscriber and remove the handle,
+        // so attach either wins and receives exit or fails before `ready`.
+        let sessions = self.sessions.lock().await;
+        let handle = sessions
             .get(gui_id)
-            .cloned()
             .ok_or_else(|| format!("live session '{gui_id}' was not found"))?;
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
-        replace_sink(&handle.sink, Some((attachment_id, sink)))?;
+        replace_sink(&handle.sink, Some((attachment_id, sink))).await?;
         Ok(attachment_id)
     }
 
@@ -307,10 +362,8 @@ impl SessionManager {
         let canonical_project = canonical_project_dir(project_dir)?
             .to_string_lossy()
             .into_owned();
-        let (gui_id, handle) = self
-            .sessions
-            .lock()
-            .await
+        let sessions = self.sessions.lock().await;
+        let (gui_id, handle) = sessions
             .iter()
             .find(|(_, handle)| {
                 handle
@@ -320,29 +373,32 @@ impl SessionManager {
                         project == &canonical_project && session == resume_id
                     })
             })
-            .map(|(gui_id, handle)| (gui_id.clone(), handle.clone()))
             .ok_or_else(|| DUPLICATE_RESUME_ERROR.to_owned())?;
         let attachment_id = self.next_attachment.fetch_add(1, Ordering::Relaxed);
-        replace_sink(&handle.sink, Some((attachment_id, sink)))?;
-        Ok((gui_id, attachment_id))
+        replace_sink(&handle.sink, Some((attachment_id, sink))).await?;
+        Ok((gui_id.clone(), attachment_id))
     }
 
     /// Remove a subscriber only if it still owns the current attachment lease.
     /// The child process, stdin, and durable session remain alive.
     pub async fn detach(&self, gui_id: &str, attachment_id: AttachmentId) -> Result<bool, String> {
-        let handle = match self.sessions.lock().await.get(gui_id).cloned() {
+        let sessions = self.sessions.lock().await;
+        let handle = match sessions.get(gui_id) {
             Some(handle) => handle,
             None => return Ok(false),
         };
-        let mut slot = handle
-            .sink
-            .write()
-            .map_err(|_| "session event subscriber is unavailable".to_owned())?;
+        let mut slot = handle.sink.current.write().await;
         if slot
             .as_ref()
             .is_some_and(|(current_id, _)| *current_id == attachment_id)
         {
+            *handle.sink.detached_reconnect_deadline.lock().await =
+                Some(Instant::now() + EVENT_REATTACH_GRACE);
             *slot = None;
+            handle
+                .sink
+                .changes
+                .send_modify(|generation| *generation += 1);
             Ok(true)
         } else {
             Ok(false)
@@ -357,14 +413,12 @@ impl SessionManager {
         gui_id: &str,
         attachment_id: AttachmentId,
     ) -> Result<bool, String> {
-        let handle = match self.sessions.lock().await.get(gui_id).cloned() {
+        let sessions = self.sessions.lock().await;
+        let handle = match sessions.get(gui_id) {
             Some(handle) => handle,
             None => return Ok(false),
         };
-        let slot = handle
-            .sink
-            .read()
-            .map_err(|_| "session event subscriber is unavailable".to_owned())?;
+        let slot = handle.sink.current.read().await;
         Ok(slot
             .as_ref()
             .is_some_and(|(current_id, _)| *current_id == attachment_id))
@@ -508,7 +562,7 @@ impl SessionManager {
         };
         for handle in handles {
             handle.stdin.lock().await.take();
-            replace_sink(&handle.sink, None)?;
+            release_sink(&handle.sink).await;
         }
         Ok(())
     }
@@ -524,7 +578,14 @@ impl SessionManager {
         self.accepting.store(true, Ordering::SeqCst);
     }
 
-    fn spawn_exit_monitor(&self, sink: EventSink, gui_id: String, child: Arc<Mutex<Child>>) {
+    fn spawn_exit_monitor(
+        &self,
+        sink: EventSink,
+        attached_sink: AttachedSink,
+        gui_id: String,
+        child: Arc<Mutex<Child>>,
+        readers: Vec<tokio::task::JoinHandle<()>>,
+    ) {
         let sessions = self.sessions.clone();
         tokio::spawn(async move {
             let status = loop {
@@ -536,29 +597,206 @@ impl SessionManager {
                     Ok(Some(status)) => break Some(status),
                     Ok(None) => sleep(EXIT_POLL).await,
                     Err(error) => {
-                        emit_log(
+                        deliver_log(
                             &sink,
                             &gui_id,
                             "bridge",
                             format!("process monitor failed: {error}"),
-                        );
+                        )
+                        .await;
                         break None;
                     }
                 }
             };
 
-            // Dropping the final stdin handle prevents a stale writer after
-            // an unexpected process exit. Remove only this GUI id; ids are
-            // unique for the lifetime of the app.
-            sessions.lock().await.remove(&gui_id);
             let code = status.as_ref().and_then(std::process::ExitStatus::code);
-            let payload = ProcessExit {
-                code,
-                message: exit_message(code),
-            };
-            emit_serialized(&sink, &gui_id, "exit", payload);
+            deliver_exit_and_remove_session(&sessions, &attached_sink, &gui_id, readers, code)
+                .await;
         });
     }
+}
+
+async fn deliver_exit_and_remove_session(
+    sessions: &Arc<Mutex<HashMap<String, SessionHandle>>>,
+    attached_sink: &AttachedSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+) {
+    deliver_exit_and_remove_session_with_grace(
+        sessions,
+        attached_sink,
+        gui_id,
+        readers,
+        code,
+        EVENT_REATTACH_GRACE,
+    )
+    .await;
+}
+
+async fn deliver_exit_and_remove_session_with_grace(
+    sessions: &Arc<Mutex<HashMap<String, SessionHandle>>>,
+    attached_sink: &AttachedSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+    reattach_grace: Duration,
+) {
+    // Keep the handle and attachment lease available while the final reader
+    // tail drains. If the WebSocket is replaced in this interval, routed_sink
+    // can move the remaining records to the new subscriber.
+    for reader in readers {
+        let _ = reader.await;
+    }
+
+    let exit = SessionEvent {
+        gui_id: gui_id.to_owned(),
+        channel: "exit",
+        payload: serde_json::to_value(ProcessExit {
+            code,
+            message: exit_message(code),
+        })
+        .unwrap_or_else(|error| {
+            serde_json::json!({
+                "code": code,
+                "message": format!("Could not serialize runtime exit: {error}"),
+            })
+        }),
+    };
+
+    let mut changes = attached_sink.changes.subscribe();
+    let mut reconnect_deadline: Option<Instant> = None;
+    loop {
+        // Snapshot the current attachment without holding either lock across
+        // a potentially backpressured WebSocket write.
+        let candidate = {
+            let sessions = sessions.lock().await;
+            let Some(handle) = sessions.get(gui_id) else {
+                return;
+            };
+            if !Arc::ptr_eq(&handle.sink, attached_sink) {
+                return;
+            }
+            let candidate = attached_sink.current.read().await.clone();
+            candidate
+        };
+
+        let Some((attachment_id, sink)) = candidate else {
+            // A clean WebSocket detach leaves no failed writer from which to
+            // establish a reconnect deadline. Keep the ended handle available
+            // for the same bounded grace so Studio's scheduled reattach can
+            // still claim the lease and receive the terminal exit.
+            let deadline =
+                *reconnect_deadline.get_or_insert_with(|| Instant::now() + reattach_grace);
+            if timeout(
+                deadline.saturating_duration_since(Instant::now()),
+                changes.changed(),
+            )
+            .await
+            .is_ok()
+            {
+                continue;
+            }
+            // No client remains. Serialize absence with attach: either this
+            // removes the ended session first, or a new attachment wins and
+            // the loop delivers exit to that exact lease.
+            let mut sessions = sessions.lock().await;
+            let remove = if let Some(handle) = sessions.get(gui_id) {
+                Arc::ptr_eq(&handle.sink, attached_sink)
+                    && attached_sink.current.read().await.is_none()
+            } else {
+                return;
+            };
+            if remove {
+                sessions.remove(gui_id);
+                return;
+            }
+            continue;
+        };
+
+        if !sink(&exit).await {
+            if attached_sink.released.load(Ordering::SeqCst) {
+                return;
+            }
+            let deadline = Instant::now() + reattach_grace;
+            reconnect_deadline = Some(deadline);
+            if timeout(
+                deadline.saturating_duration_since(Instant::now()),
+                changes.changed(),
+            )
+            .await
+            .is_err()
+            {
+                // No replacement arrived. The runtime has already durably
+                // recorded its tail, so release this ended handle rather than
+                // spin forever on a dead writer.
+                let mut sessions = sessions.lock().await;
+                let current_attachment = if let Some(handle) = sessions.get(gui_id) {
+                    if !Arc::ptr_eq(&handle.sink, attached_sink) {
+                        return;
+                    }
+                    attached_sink.current.read().await.clone()
+                } else {
+                    return;
+                };
+                if current_attachment
+                    .as_ref()
+                    .map_or(true, |(current_id, _)| *current_id == attachment_id)
+                {
+                    sessions.remove(gui_id);
+                    return;
+                }
+                // A replacement attachment won while the finalizer waited for
+                // the manager lock. Deliver exit to that exact lease before
+                // removing the ended session.
+                continue;
+            }
+            continue;
+        }
+
+        // Queue acceptance is insufficient: EventSink resolves true only
+        // after the WebSocket writer confirms the frame was sent. Remove the
+        // session iff the same attachment still owns the lease. If a newer
+        // attachment won during delivery, it must receive its own exit before
+        // Studio can acknowledge it as terminal.
+        let mut sessions = sessions.lock().await;
+        let remove = if let Some(handle) = sessions.get(gui_id) {
+            Arc::ptr_eq(&handle.sink, attached_sink)
+                && attached_sink
+                    .current
+                    .read()
+                    .await
+                    .as_ref()
+                    .is_some_and(|(current_id, _)| *current_id == attachment_id)
+        } else {
+            return;
+        };
+        if remove {
+            sessions.remove(gui_id);
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+async fn deliver_exit_after_readers(
+    sink: &EventSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+) {
+    // The process has exited, but BufReader may still hold the final
+    // stdout/stderr lines. Wait for both ordered readers to drain before
+    // publishing the terminal exit frame; the WebSocket writer closes after
+    // exit and must never overtake replay history.
+    for reader in readers {
+        let _ = reader.await;
+    }
+    let payload = ProcessExit {
+        code,
+        message: exit_message(code),
+    };
+    deliver_serialized(sink, gui_id, "exit", payload).await;
 }
 
 fn detached_runtime_log_path(gui_id: &str) -> Result<PathBuf, String> {
@@ -598,103 +836,209 @@ fn reject_known_incompatible_tool_route(
 
 fn routed_sink(slot: AttachedSink) -> EventSink {
     Arc::new(move |event| {
-        let sink = slot
-            .read()
-            .ok()
-            .and_then(|current| current.as_ref().map(|(_, sink)| sink.clone()));
-        if let Some(sink) = sink {
-            sink(event);
-        }
+        let slot = slot.clone();
+        Box::pin(async move {
+            let mut changes = slot.changes.subscribe();
+            let mut reconnect_deadline: Option<Instant> = None;
+            loop {
+                // Snapshot and release the lease before awaiting network I/O;
+                // attach must never hold the global manager lock behind a
+                // stalled WebSocket. If the attachment changes after a
+                // confirmed send, repeat the event for the new lease so the
+                // cutover may duplicate one record but can never lose it.
+                if slot.released.load(Ordering::SeqCst) {
+                    return true;
+                }
+                // Snapshot the attachment and its clean-detach deadline under
+                // the same lock order used by attach/detach. Otherwise attach
+                // could install a sink and clear the deadline between these
+                // reads, making this event miss the new lease.
+                let (candidate, detached_deadline) = {
+                    let current = slot.current.read().await;
+                    let deadline = if current.is_none() {
+                        *slot.detached_reconnect_deadline.lock().await
+                    } else {
+                        None
+                    };
+                    (current.clone(), deadline)
+                };
+                let Some((attachment_id, sink)) = candidate else {
+                    let Some(deadline) = reconnect_deadline.or(detached_deadline) else {
+                        return true;
+                    };
+                    reconnect_deadline = Some(deadline);
+                    if timeout(
+                        deadline.saturating_duration_since(Instant::now()),
+                        changes.changed(),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        let current = slot.current.read().await.clone();
+                        if current.is_some() {
+                            reconnect_deadline = None;
+                            continue;
+                        }
+                        return true;
+                    }
+                    continue;
+                };
+                if !sink(event).await {
+                    // This event was selected for a concrete client but the
+                    // writer did not flush it. Keep the reader parked across
+                    // detach until a replacement arrives; treating an empty
+                    // slot as success here would recreate the lost-tail bug.
+                    reconnect_deadline = Some(Instant::now() + EVENT_REATTACH_GRACE);
+                    let deadline = reconnect_deadline.expect("set above");
+                    if timeout(
+                        deadline.saturating_duration_since(Instant::now()),
+                        changes.changed(),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        let current = slot.current.read().await.clone();
+                        if current
+                            .as_ref()
+                            .is_some_and(|(current_id, _)| *current_id != attachment_id)
+                        {
+                            reconnect_deadline = None;
+                            continue;
+                        }
+                        return true;
+                    }
+                    continue;
+                }
+                let current = slot.current.read().await.clone();
+                match current {
+                    Some((current_id, _)) if current_id == attachment_id => return true,
+                    Some(_) => {
+                        reconnect_deadline = None;
+                    }
+                    // The exact client accepted the frame before detaching;
+                    // no duplicate is required until another lease exists.
+                    None => return true,
+                }
+            }
+        })
     })
 }
 
-fn replace_sink(
+async fn replace_sink(
     slot: &AttachedSink,
     next: Option<(AttachmentId, EventSink)>,
 ) -> Result<(), String> {
-    *slot
-        .write()
-        .map_err(|_| "session event subscriber is unavailable".to_owned())? = next;
+    let mut current = slot.current.write().await;
+    *slot.detached_reconnect_deadline.lock().await = if next.is_none() {
+        Some(Instant::now() + EVENT_REATTACH_GRACE)
+    } else {
+        None
+    };
+    *current = next;
+    drop(current);
+    slot.changes.send_modify(|generation| *generation += 1);
     Ok(())
 }
 
-fn spawn_stdout_reader(sink: EventSink, gui_id: String, stdout: tokio::process::ChildStdout) {
+async fn release_sink(slot: &AttachedSink) {
+    slot.released.store(true, Ordering::SeqCst);
+    *slot.current.write().await = None;
+    slot.changes.send_modify(|generation| *generation += 1);
+}
+
+fn spawn_stdout_reader(
+    sink: EventSink,
+    gui_id: String,
+    stdout: tokio::process::ChildStdout,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
                     Ok(record) if record.is_object() => {
-                        emit_value(&sink, &gui_id, "record", record);
+                        deliver_value(&sink, &gui_id, "record", record).await;
                     }
-                    _ => emit_log(&sink, &gui_id, "stdout", line),
+                    _ => deliver_log(&sink, &gui_id, "stdout", line).await,
                 },
                 Ok(None) => break,
                 Err(error) => {
-                    emit_log(
+                    deliver_log(
                         &sink,
                         &gui_id,
                         "bridge",
                         format!("stdout read failed: {error}"),
-                    );
+                    )
+                    .await;
                     break;
                 }
             }
         }
-    });
+    })
 }
 
-fn spawn_stderr_reader(sink: EventSink, gui_id: String, stderr: tokio::process::ChildStderr) {
+fn spawn_stderr_reader(
+    sink: EventSink,
+    gui_id: String,
+    stderr: tokio::process::ChildStderr,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         loop {
             match lines.next_line().await {
-                Ok(Some(line)) => emit_log(&sink, &gui_id, "stderr", line),
+                Ok(Some(line)) => deliver_log(&sink, &gui_id, "stderr", line).await,
                 Ok(None) => break,
                 Err(error) => {
-                    emit_log(
+                    deliver_log(
                         &sink,
                         &gui_id,
                         "bridge",
                         format!("stderr read failed: {error}"),
-                    );
+                    )
+                    .await;
                     break;
                 }
             }
         }
-    });
+    })
 }
 
-fn emit_log(sink: &EventSink, gui_id: &str, stream: &'static str, message: String) {
-    emit_serialized(sink, gui_id, "log", ProcessLog { stream, message });
+async fn deliver_log(sink: &EventSink, gui_id: &str, stream: &'static str, message: String) {
+    deliver_serialized(sink, gui_id, "log", ProcessLog { stream, message }).await;
 }
 
-fn emit_serialized<T: serde::Serialize>(
+async fn deliver_serialized<T: serde::Serialize>(
     sink: &EventSink,
     gui_id: &str,
     channel: &'static str,
     payload: T,
 ) {
     match serde_json::to_value(payload) {
-        Ok(payload) => emit_value(sink, gui_id, channel, payload),
-        Err(error) => emit_value(
-            sink,
-            gui_id,
-            "log",
-            serde_json::json!({
-                "stream": "bridge",
-                "message": format!("could not serialize bridge event: {error}"),
-            }),
-        ),
+        Ok(payload) => deliver_value(sink, gui_id, channel, payload).await,
+        Err(error) => {
+            deliver_value(
+                sink,
+                gui_id,
+                "log",
+                serde_json::json!({
+                    "stream": "bridge",
+                    "message": format!("could not serialize bridge event: {error}"),
+                }),
+            )
+            .await
+        }
     }
 }
 
-fn emit_value(sink: &EventSink, gui_id: &str, channel: &'static str, payload: Value) {
-    sink(SessionEvent {
+async fn deliver_value(sink: &EventSink, gui_id: &str, channel: &'static str, payload: Value) {
+    let event = SessionEvent {
         gui_id: gui_id.to_owned(),
         channel,
         payload,
-    });
+    };
+    while !sink(&event).await {
+        sleep(SINK_BACKPRESSURE_RETRY).await;
+    }
 }
 
 fn exit_message(code: Option<i32>) -> String {
@@ -746,11 +1090,28 @@ mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
 
+    fn sync_sink(deliver: impl Fn(&SessionEvent) -> bool + Send + Sync + 'static) -> EventSink {
+        let deliver = Arc::new(deliver);
+        Arc::new(move |event| {
+            let deliver = deliver.clone();
+            Box::pin(async move { deliver(event) })
+        })
+    }
+
     #[test]
     fn validates_event_safe_gui_ids() {
         assert!(validate_gui_id("7c833764-b757-44a8").is_ok());
         assert!(validate_gui_id("bad/id").is_err());
         assert!(validate_gui_id("").is_err());
+    }
+
+    #[test]
+    fn production_exit_grace_exceeds_studio_maximum_reconnect_backoff() {
+        const STUDIO_MAXIMUM_RECONNECT_BACKOFF: Duration = Duration::from_secs(8);
+        const TRANSPORT_SOURCE: &str = include_str!("../../src/transport.ts");
+
+        assert!(TRANSPORT_SOURCE.contains("Math.min(8_000, 300 *"));
+        assert!(EVENT_REATTACH_GRACE_PRODUCTION > STUDIO_MAXIMUM_RECONNECT_BACKOFF);
     }
 
     #[test]
@@ -793,7 +1154,7 @@ mod tests {
     async fn draining_manager_rejects_new_starts_and_operations() {
         let manager = SessionManager::default();
         manager.stop_all().await.unwrap();
-        let sink: EventSink = Arc::new(|_| {});
+        let sink = sync_sink(|_| true);
         let error = manager
             .start(
                 StartSessionOptions {
@@ -837,34 +1198,1218 @@ mod tests {
         assert!(!error.contains("shutting down"));
     }
 
-    #[test]
-    fn routed_sink_can_be_replaced_and_stale_detach_is_detectable() {
+    #[tokio::test]
+    async fn bounded_sink_backpressure_retries_the_same_event_until_accepted() {
+        use std::sync::atomic::AtomicUsize;
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(StdMutex::new(Vec::new()));
+        let attempts_for_sink = attempts.clone();
+        let accepted_for_sink = accepted.clone();
+        let sink = sync_sink(move |event| {
+            let attempt = attempts_for_sink.fetch_add(1, Ordering::SeqCst) + 1;
+            if attempt < 4 {
+                return false;
+            }
+            accepted_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+
+        deliver_value(
+            &sink,
+            "restored-session",
+            "record",
+            serde_json::json!({ "type": "history.end", "count": 298 }),
+        )
+        .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        let accepted = accepted.lock().unwrap();
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].payload["type"], "history.end");
+    }
+
+    #[tokio::test]
+    async fn exit_waits_for_the_final_reader_event() {
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_sink = delivered.clone();
+        let sink = sync_sink(move |event| {
+            delivered_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+        let reader_sink = sink.clone();
+        let reader = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            deliver_value(
+                &reader_sink,
+                "ordered-session",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+
+        deliver_exit_after_readers(&sink, "ordered-session", vec![reader], Some(0)).await;
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].channel, "record");
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+    }
+
+    #[tokio::test]
+    async fn session_remains_attachable_until_the_reader_tail_and_exit_are_delivered() {
+        let manager = SessionManager::default();
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_sink = delivered.clone();
+        let sink = sync_sink(move |event| {
+            delivered_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        let sink_slot = attached_sink(Some((1, sink.clone())));
+        manager.sessions.lock().await.insert(
+            "ordered-session".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        let sessions_for_reader = manager.sessions.clone();
+        let reader_sink = sink.clone();
+        let attachable_during_drain = Arc::new(AtomicBool::new(false));
+        let attachable_for_reader = attachable_during_drain.clone();
+        let reader = tokio::spawn(async move {
+            attachable_for_reader.store(
+                sessions_for_reader
+                    .lock()
+                    .await
+                    .contains_key("ordered-session"),
+                Ordering::SeqCst,
+            );
+            deliver_value(
+                &reader_sink,
+                "ordered-session",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+
+        deliver_exit_and_remove_session(
+            &manager.sessions,
+            &sink_slot,
+            "ordered-session",
+            vec![reader],
+            Some(0),
+        )
+        .await;
+
+        assert!(attachable_during_drain.load(Ordering::SeqCst));
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("ordered-session"));
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+    }
+
+    #[tokio::test]
+    async fn attach_during_reader_drain_receives_the_tail_and_exit() {
+        let manager = SessionManager::default();
+        let original_events = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = original_events.clone();
+        let original_sink = sync_sink(move |event| {
+            original_capture.lock().unwrap().push(event.clone());
+            true
+        });
+        let sink_slot = attached_sink(Some((1, original_sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "reattach-during-drain".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        let (reader_started_tx, reader_started_rx) = tokio::sync::oneshot::channel();
+        let (release_reader_tx, release_reader_rx) = tokio::sync::oneshot::channel();
+        let reader_sink = routed_sink(sink_slot.clone());
+        let reader = tokio::spawn(async move {
+            let _ = reader_started_tx.send(());
+            let _ = release_reader_rx.await;
+            deliver_value(
+                &reader_sink,
+                "reattach-during-drain",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+        let sessions = manager.sessions.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &sink_slot,
+                "reattach-during-drain",
+                vec![reader],
+                Some(0),
+            )
+            .await;
+        });
+        reader_started_rx.await.unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        let replacement_sink = sync_sink(move |event| {
+            replacement_capture.lock().unwrap().push(event.clone());
+            true
+        });
+        manager
+            .attach("reattach-during-drain", replacement_sink)
+            .await
+            .unwrap();
+        release_reader_tx.send(()).unwrap();
+        finalizer.await.unwrap();
+
+        assert!(original_events.lock().unwrap().is_empty());
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 2);
+        assert_eq!(replacement_events[0].payload["type"], "history.end");
+        assert_eq!(replacement_events[1].channel, "exit");
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("reattach-during-drain"));
+    }
+
+    #[tokio::test]
+    async fn clean_detach_before_exit_preserves_tail_and_exit_through_reattach() {
+        let manager = SessionManager::default();
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = delivered.clone();
+        let sink_slot = attached_sink(Some((
+            1,
+            sync_sink(move |event| {
+                original_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        )));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "clean-detach-before-exit".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        // The final reader tail was writer-confirmed immediately before the
+        // socket detached. Finalization must preserve that ordering while it
+        // gives Studio's replacement socket a bounded chance to receive exit.
+        deliver_value(
+            &routed_sink(sink_slot.clone()),
+            "clean-detach-before-exit",
+            "record",
+            serde_json::json!({ "type": "history.end", "count": 300 }),
+        )
+        .await;
+        assert!(manager.detach("clean-detach-before-exit", 1).await.unwrap());
+
+        // Hold the manager while the finalizer snapshots the empty attachment,
+        // then queue a lock gate directly behind that snapshot. On the old
+        // immediate-removal path the finalizer queues behind the gate before
+        // attach; with the bounded grace, attach is the only queued claimant.
+        // This makes the grace regression deterministic without wall-clock
+        // sleeps.
+        let sessions_guard = manager.sessions.lock().await;
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &finalizer_slot,
+                "clean-detach-before-exit",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        while sink_slot.changes.receiver_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        let gate_sessions = manager.sessions.clone();
+        let (gate_started_tx, gate_started_rx) = tokio::sync::oneshot::channel();
+        let (gate_acquired_tx, gate_acquired_rx) = tokio::sync::oneshot::channel();
+        let (release_gate_tx, release_gate_rx) = tokio::sync::oneshot::channel();
+        let gate = tokio::spawn(async move {
+            let _ = gate_started_tx.send(());
+            let guard = gate_sessions.lock().await;
+            let _ = gate_acquired_tx.send(());
+            let _ = release_gate_rx.await;
+            drop(guard);
+        });
+        gate_started_rx.await.unwrap();
+        drop(sessions_guard);
+        gate_acquired_rx.await.unwrap();
+
+        let replacement_capture = delivered.clone();
+        let attach_manager = manager.clone();
+        let (attach_started_tx, attach_started_rx) = tokio::sync::oneshot::channel();
+        let attach = tokio::spawn(async move {
+            let _ = attach_started_tx.send(());
+            attach_manager
+                .attach(
+                    "clean-detach-before-exit",
+                    sync_sink(move |event| {
+                        replacement_capture.lock().unwrap().push(event.clone());
+                        true
+                    }),
+                )
+                .await
+        });
+        attach_started_rx.await.unwrap();
+        let _ = release_gate_tx.send(());
+        gate.await.unwrap();
+        attach.await.unwrap().unwrap();
+        timeout(Duration::from_secs(1), finalizer)
+            .await
+            .expect("reattached client receives exit within grace")
+            .unwrap();
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+        drop(delivered);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("clean-detach-before-exit"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ended_session_survives_six_second_client_backoff() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let sink_slot = attached_sink(Some((1, sync_sink(|_| true))));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "six-second-reconnect".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-six-second".to_owned())),
+                detached_owner: true,
+            },
+        );
+        assert!(manager.detach("six-second-reconnect", 1).await.unwrap());
+
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session_with_grace(
+                &sessions,
+                &finalizer_slot,
+                "six-second-reconnect",
+                Vec::new(),
+                Some(0),
+                EVENT_REATTACH_GRACE_PRODUCTION,
+            )
+            .await;
+        });
+        while sink_slot.changes.receiver_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        tokio::time::advance(Duration::from_secs(6)).await;
+        assert!(manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("six-second-reconnect"));
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        let (gui_id, _) = manager
+            .attach_resume(
+                &project_path,
+                "durable-six-second",
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gui_id, "six-second-reconnect");
+        finalizer.await.unwrap();
+
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "exit");
+        drop(replacement_events);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("six-second-reconnect"));
+        assert!(manager
+            .attach_resume(&project_path, "durable-six-second", sync_sink(|_| true),)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn post_detach_tail_waits_for_reattach_and_precedes_exit() {
+        let manager = SessionManager::default();
+        let original_events = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = original_events.clone();
+        let sink_slot = attached_sink(Some((
+            1,
+            sync_sink(move |event| {
+                original_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        )));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "post-detach-tail".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+        assert!(manager.detach("post-detach-tail", 1).await.unwrap());
+
+        // Model stdout consuming history.end only after the socket cleanly
+        // detached. The reader must remain parked until the replacement lease
+        // arrives; the finalizer in turn cannot overtake that reader tail.
+        let reader_sink = routed_sink(sink_slot.clone());
+        let reader = tokio::spawn(async move {
+            deliver_value(
+                &reader_sink,
+                "post-detach-tail",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &finalizer_slot,
+                "post-detach-tail",
+                vec![reader],
+                Some(0),
+            )
+            .await;
+        });
+        timeout(Duration::from_secs(1), async {
+            while sink_slot.changes.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached tail waits for an attachment change");
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        manager
+            .attach(
+                "post-detach-tail",
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(1), finalizer)
+            .await
+            .expect("reattached client receives tail and exit")
+            .unwrap();
+
+        assert!(original_events.lock().unwrap().is_empty());
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 2);
+        assert_eq!(replacement_events[0].payload["type"], "history.end");
+        assert_eq!(replacement_events[1].channel, "exit");
+        drop(replacement_events);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("post-detach-tail"));
+    }
+
+    #[tokio::test]
+    async fn resume_attach_during_reader_drain_receives_the_tail_and_exit() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let original_sink = sync_sink(|_| true);
+        let sink_slot = attached_sink(Some((1, original_sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "resume-during-drain".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-restore".to_owned())),
+                detached_owner: true,
+            },
+        );
+
+        let (reader_started_tx, reader_started_rx) = tokio::sync::oneshot::channel();
+        let (release_reader_tx, release_reader_rx) = tokio::sync::oneshot::channel();
+        let reader_sink = routed_sink(sink_slot.clone());
+        let reader = tokio::spawn(async move {
+            let _ = reader_started_tx.send(());
+            let _ = release_reader_rx.await;
+            deliver_value(
+                &reader_sink,
+                "resume-during-drain",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+        let sessions = manager.sessions.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &sink_slot,
+                "resume-during-drain",
+                vec![reader],
+                Some(0),
+            )
+            .await;
+        });
+        reader_started_rx.await.unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        let replacement_sink = sync_sink(move |event| {
+            replacement_capture.lock().unwrap().push(event.clone());
+            true
+        });
+        let (gui_id, _) = manager
+            .attach_resume(&project_path, "durable-restore", replacement_sink)
+            .await
+            .unwrap();
+        assert_eq!(gui_id, "resume-during-drain");
+        release_reader_tx.send(()).unwrap();
+        finalizer.await.unwrap();
+
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 2);
+        assert_eq!(replacement_events[0].payload["type"], "history.end");
+        assert_eq!(replacement_events[1].channel, "exit");
+        assert!(manager
+            .attach_resume(&project_path, "durable-restore", sync_sink(|_| true))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn in_flight_tail_replays_to_attachment_that_wins_during_ack() {
+        use std::sync::Barrier;
+
+        let manager = SessionManager::default();
+        let original_events = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = original_events.clone();
+        let acceptance_gate = Arc::new(Barrier::new(2));
+        let acceptance_gate_for_sink = acceptance_gate.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let original_sink = sync_sink(move |event| {
+            entered_tx.send(()).unwrap();
+            acceptance_gate_for_sink.wait();
+            original_capture.lock().unwrap().push(event.clone());
+            true
+        });
+        let sink_slot = attached_sink(Some((0, original_sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "in-flight-cutover".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        let route = routed_sink(sink_slot.clone());
+        let route_task = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "in-flight-cutover".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        let replacement_sink = sync_sink(move |event| {
+            replacement_capture.lock().unwrap().push(event.clone());
+            true
+        });
+        let manager_for_attach = manager.clone();
+        let attach_task = tokio::spawn(async move {
+            manager_for_attach
+                .attach("in-flight-cutover", replacement_sink)
+                .await
+        });
+        timeout(Duration::from_secs(1), attach_task)
+            .await
+            .expect("reattach is not blocked by the old socket")
+            .unwrap()
+            .unwrap();
+
+        acceptance_gate.wait();
+        assert!(route_task.await.unwrap());
+
+        assert_eq!(original_events.lock().unwrap().len(), 1);
+        assert_eq!(replacement_events.lock().unwrap().len(), 1);
+        let next_route = routed_sink(sink_slot);
+        assert!(
+            next_route(&SessionEvent {
+                gui_id: "in-flight-cutover".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "session.status" }),
+            })
+            .await
+        );
+        assert_eq!(replacement_events.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_tail_delivery_waits_through_detach_for_replacement() {
+        let (failed_tx, failed_rx) = std::sync::mpsc::channel();
+        let failed_tx = Arc::new(StdMutex::new(Some(failed_tx)));
+        let failed_tx_for_sink = failed_tx.clone();
+        let failing_sink = sync_sink(move |_| {
+            if let Some(sender) = failed_tx_for_sink.lock().unwrap().take() {
+                sender.send(()).unwrap();
+            }
+            false
+        });
+        let slot = attached_sink(Some((1, failing_sink)));
+        let route = routed_sink(slot.clone());
+        let delivery = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "retry-tail".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        failed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        replace_sink(&slot, None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!delivery.is_finished());
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        replace_sink(
+            &slot,
+            Some((
+                2,
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert!(timeout(Duration::from_secs(1), delivery)
+            .await
+            .expect("replacement receives failed tail")
+            .unwrap());
+        assert_eq!(replacement_events.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_tail_delivery_expires_to_durable_replay_without_busy_waiting() {
+        let attempts = Arc::new(AtomicU64::new(0));
+        let attempts_for_sink = attempts.clone();
+        let slot = attached_sink(Some((
+            1,
+            sync_sink(move |_| {
+                attempts_for_sink.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+        )));
+        let route = routed_sink(slot.clone());
+        let delivery = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "durable-fallback".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        while attempts.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        replace_sink(&slot, None).await.unwrap();
+
+        assert!(timeout(Duration::from_secs(1), delivery)
+            .await
+            .expect("bounded reconnect grace expires")
+            .unwrap());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn expired_clean_detach_grace_is_not_restarted_per_event() {
+        let slot = attached_sink(Some((1, sync_sink(|_| true))));
+        replace_sink(&slot, None).await.unwrap();
+        *slot.detached_reconnect_deadline.lock().await =
+            Some(Instant::now() - Duration::from_millis(1));
+        let route = routed_sink(slot);
+
+        for count in [301, 302] {
+            assert!(timeout(
+                Duration::from_millis(50),
+                route(&SessionEvent {
+                    gui_id: "expired-detach-grace".to_owned(),
+                    channel: "record",
+                    payload: serde_json::json!({ "type": "history.end", "count": count }),
+                }),
+            )
+            .await
+            .expect("expired detach grace does not stall each later event"));
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_visible_at_tail_grace_expiry_receives_the_event() {
+        let (failed_tx, failed_rx) = tokio::sync::oneshot::channel();
+        let failed_tx = Arc::new(StdMutex::new(Some(failed_tx)));
+        let failed_tx_for_sink = failed_tx.clone();
+        let slot = attached_sink(Some((
+            1,
+            sync_sink(move |_| {
+                if let Some(sender) = failed_tx_for_sink.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                false
+            }),
+        )));
+        let route = routed_sink(slot.clone());
+        let delivery = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "tail-grace-boundary".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        failed_rx.await.unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        *slot.current.write().await = Some((
+            2,
+            sync_sink(move |event| {
+                replacement_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        ));
+        // Deliberately do not publish the generation. The timeout path must
+        // re-read the lease and observe an attachment installed at the exact
+        // grace boundary instead of treating the failed tail as delivered.
+        timeout(Duration::from_secs(1), delivery)
+            .await
+            .expect("replacement receives the grace-boundary tail")
+            .unwrap();
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "record");
+    }
+
+    #[tokio::test]
+    async fn release_wakes_a_failed_delivery_without_waiting_for_grace() {
+        let (failed_tx, failed_rx) = tokio::sync::oneshot::channel();
+        let failed_tx = Arc::new(StdMutex::new(Some(failed_tx)));
+        let failed_tx_for_sink = failed_tx.clone();
+        let slot = attached_sink(Some((
+            1,
+            sync_sink(move |_| {
+                if let Some(sender) = failed_tx_for_sink.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                false
+            }),
+        )));
+        let route = routed_sink(slot.clone());
+        let delivery = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "release-tail".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        failed_rx.await.unwrap();
+
+        release_sink(&slot).await;
+        assert!(timeout(Duration::from_millis(50), delivery)
+            .await
+            .expect("release wakes delivery waiter")
+            .unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reattach_during_final_exit_flush_receives_its_own_exit() {
+        use std::sync::Barrier;
+
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let exit_gate = Arc::new(Barrier::new(2));
+        let exit_gate_for_sink = exit_gate.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let sink = sync_sink(move |event| {
+            assert_eq!(event.channel, "exit");
+            entered_tx.send(()).unwrap();
+            exit_gate_for_sink.wait();
+            true
+        });
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        let sink_slot = attached_sink(Some((0, sink)));
+        manager.sessions.lock().await.insert(
+            "finalizer-wins".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-final".to_owned())),
+                detached_owner: true,
+            },
+        );
+
+        let sessions = manager.sessions.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &sink_slot,
+                "finalizer-wins",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        manager
+            .attach(
+                "finalizer-wins",
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+
+        exit_gate.wait();
+        finalizer.await.unwrap();
+
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "exit");
+        assert!(manager
+            .attach_resume(&project_path, "durable-final", sync_sink(|_| true))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn confirmed_terminal_cleanup_releases_gui_id_without_grace() {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let manager = SessionManager::default();
+        let (exit_entered_tx, exit_entered_rx) = tokio::sync::oneshot::channel();
+        let exit_entered_tx = Arc::new(StdMutex::new(Some(exit_entered_tx)));
+        let exit_entered_for_sink = exit_entered_tx.clone();
+        let (release_exit_tx, release_exit_rx) = tokio::sync::oneshot::channel();
+        let release_exit_rx = Arc::new(Mutex::new(Some(release_exit_rx)));
+        let release_exit_for_sink = release_exit_rx.clone();
+        let sink: EventSink = Arc::new(move |_| {
+            let entered = exit_entered_for_sink.lock().unwrap().take();
+            let release = release_exit_for_sink.clone();
+            Box::pin(async move {
+                if let Some(entered) = entered {
+                    let _ = entered.send(());
+                }
+                if let Some(release) = release.lock().await.take() {
+                    let _ = release.await;
+                }
+                true
+            })
+        });
+        let sink_slot = attached_sink(Some((1, sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "confirmed-terminal".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: Some((project_path.clone(), "durable-terminal".to_owned())),
+                detached_owner: true,
+            },
+        );
+
+        let sessions = manager.sessions.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &sink_slot,
+                "confirmed-terminal",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        exit_entered_rx.await.unwrap();
+
+        // Model the exact peer-close race: the reader sees a false marker,
+        // then the writer confirms exit before cleanup can acquire the session
+        // map. Cleanup must quiesce that writer and use the fresh marker.
+        let terminal_exit_delivered = Arc::new(AtomicBool::new(false));
+        let stale_peer_close_snapshot = terminal_exit_delivered.load(Ordering::Acquire);
+        assert!(!stale_peer_close_snapshot);
+        let sessions_guard = manager.sessions.lock().await;
+        let writer_terminal_exit = terminal_exit_delivered.clone();
+        let (writer_marked_tx, writer_marked_rx) = tokio::sync::oneshot::channel();
+        let mut writer = tokio::spawn(async move {
+            writer_terminal_exit.store(true, Ordering::Release);
+            let _ = release_exit_tx.send(());
+            let _ = writer_marked_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        writer_marked_rx.await.unwrap();
+
+        crate::web_server::finish_socket_attachment(
+            &manager,
+            Some(("confirmed-terminal".to_owned(), 1)),
+            &terminal_exit_delivered,
+            &mut writer,
+            false,
+        )
+        .await;
+        drop(sessions_guard);
+        timeout(EVENT_REATTACH_GRACE / 2, finalizer)
+            .await
+            .expect("confirmed exit removes the handle without reconnect grace")
+            .unwrap();
+
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("confirmed-terminal"));
+        assert!(manager
+            .attach_resume(&project_path, "durable-terminal", sync_sink(|_| true))
+            .await
+            .is_err());
+
+        let replacement_slot = attached_sink(Some((2, sync_sink(|_| true))));
+        #[cfg(windows)]
+        let replacement_child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let replacement_child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "confirmed-terminal".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(replacement_child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: replacement_slot,
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+        assert!(manager
+            .attach("confirmed-terminal", sync_sink(|_| true))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attachment_that_wins_at_exit_grace_expiry_receives_exit() {
+        let manager = SessionManager::default();
+        let (failed_tx, failed_rx) = tokio::sync::oneshot::channel();
+        let failed_tx = Arc::new(StdMutex::new(Some(failed_tx)));
+        let failed_tx_for_sink = failed_tx.clone();
+        let old_sink = sync_sink(move |_| {
+            if let Some(sender) = failed_tx_for_sink.lock().unwrap().take() {
+                let _ = sender.send(());
+            }
+            false
+        });
+        let sink_slot = attached_sink(Some((1, old_sink)));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "grace-boundary-attach".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &finalizer_slot,
+                "grace-boundary-attach",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        failed_rx.await.unwrap();
+
+        // Model attach's critical section precisely: it holds the manager lock
+        // while replacing the lease, then publishes the generation before it
+        // releases that lock. Let the finalizer's grace expire in between.
+        let sessions_guard = manager.sessions.lock().await;
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        *sink_slot.current.write().await = Some((
+            2,
+            sync_sink(move |event| {
+                replacement_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        ));
+        tokio::time::sleep(EVENT_REATTACH_GRACE + Duration::from_millis(20)).await;
+        sink_slot.changes.send_modify(|generation| *generation += 1);
+        drop(sessions_guard);
+
+        timeout(Duration::from_secs(1), finalizer)
+            .await
+            .expect("replacement receives exit after the grace-boundary race")
+            .unwrap();
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "exit");
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("grace-boundary-attach"));
+    }
+
+    #[tokio::test]
+    async fn old_finalizer_cannot_target_a_reused_gui_id() {
+        let manager = SessionManager::default();
+        let old_slot = attached_sink(Some((1, sync_sink(|_| true))));
+        let new_events = Arc::new(StdMutex::new(Vec::new()));
+        let new_capture = new_events.clone();
+        let new_slot = attached_sink(Some((
+            2,
+            sync_sink(move |event| {
+                new_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        )));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "reused-gui-id".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: new_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        deliver_exit_and_remove_session(
+            &manager.sessions,
+            &old_slot,
+            "reused-gui-id",
+            Vec::new(),
+            Some(0),
+        )
+        .await;
+
+        let sessions = manager.sessions.lock().await;
+        assert!(sessions
+            .get("reused-gui-id")
+            .is_some_and(|handle| Arc::ptr_eq(&handle.sink, &new_slot)));
+        assert!(new_events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn routed_sink_can_be_replaced_and_stale_detach_is_detectable() {
         let first_events = Arc::new(StdMutex::new(Vec::new()));
         let second_events = Arc::new(StdMutex::new(Vec::new()));
         let first_capture = first_events.clone();
         let second_capture = second_events.clone();
-        let first: EventSink =
-            Arc::new(move |event| first_capture.lock().unwrap().push(event.gui_id));
-        let second: EventSink =
-            Arc::new(move |event| second_capture.lock().unwrap().push(event.gui_id));
-        let slot = Arc::new(RwLock::new(Some((1, first))));
+        let first = sync_sink(move |event| {
+            first_capture.lock().unwrap().push(event.gui_id.clone());
+            true
+        });
+        let second = sync_sink(move |event| {
+            second_capture.lock().unwrap().push(event.gui_id.clone());
+            true
+        });
+        let slot = attached_sink(Some((1, first)));
         let route = routed_sink(slot.clone());
 
-        route(SessionEvent {
+        route(&SessionEvent {
             gui_id: "one".into(),
             channel: "record",
             payload: Value::Null,
-        });
-        replace_sink(&slot, Some((2, second))).unwrap();
-        route(SessionEvent {
+        })
+        .await;
+        replace_sink(&slot, Some((2, second))).await.unwrap();
+        route(&SessionEvent {
             gui_id: "two".into(),
             channel: "record",
             payload: Value::Null,
-        });
+        })
+        .await;
 
         assert_eq!(*first_events.lock().unwrap(), vec!["one"]);
         assert_eq!(*second_events.lock().unwrap(), vec!["two"]);
-        assert_eq!(slot.read().unwrap().as_ref().map(|(id, _)| *id), Some(2));
+        assert_eq!(
+            slot.current.read().await.as_ref().map(|(id, _)| *id),
+            Some(2)
+        );
     }
 
     #[tokio::test]
@@ -878,8 +2423,8 @@ mod tests {
             .into_owned();
         let manager = SessionManager::default();
         let child = Arc::new(Mutex::new(Command::new("sleep").arg("60").spawn().unwrap()));
-        let original_sink: EventSink = Arc::new(|_| {});
-        let sink_slot = Arc::new(RwLock::new(Some((1, original_sink))));
+        let original_sink = sync_sink(|_| true);
+        let sink_slot = attached_sink(Some((1, original_sink)));
         manager.sessions.lock().await.insert(
             "live-mobile-session".to_owned(),
             SessionHandle {
@@ -891,7 +2436,7 @@ mod tests {
             },
         );
 
-        let replacement_sink: EventSink = Arc::new(|_| {});
+        let replacement_sink = sync_sink(|_| true);
         let (gui_id, attachment_id) = manager
             .attach_resume(&project_path, "durable-123", replacement_sink)
             .await
