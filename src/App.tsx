@@ -916,9 +916,9 @@ export default function App() {
               onRefreshBundles={reloadCatalog}
               onCapabilities={() => setCapabilitiesOpen(true)}
               onRequestContext={() => void requestContextForActive()}
-              onOpenOutput={usesWebBridge() ? undefined : async (path) => {
+              onOpenOutput={async (path) => {
                 try {
-                  await openLocalOutput(session().projectDir, path);
+                  await openLocalOutput(session().projectDir, path, session().hostUrl, session().hostId);
                 } catch (error) {
                   update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
                 }

@@ -6,6 +6,7 @@ import {
   configuredBridgeUrl,
   durableRuntimeHostForSession,
   launchSession,
+  loadOutputPreview,
   listRuntimeHosts,
   probeRuntimeHost,
   prepareSessionLaunch,
@@ -179,6 +180,25 @@ describe("bridge trust storage", () => {
     expect(requested.origin).toBe("http://127.0.0.1:4319");
     expect(requested.pathname).toBe("/v1/api/runtime-settings");
     expect(requested.searchParams.get("projectDir")).toBe("/home/mjabbour/amplifier");
+  });
+
+  it("loads output previews from the session's owning host", async () => {
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4319");
+    const fetchMock = vi.fn(async (_input: URL | RequestInfo) => jsonResponse({ mediaType: "image/png", data: "cG5n" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadOutputPreview(
+      "/home/mjabbour/amplifier",
+      ".git/amplifier-studio/outputs/result.png",
+      "http://127.0.0.1:4319",
+      "spark-9602",
+    )).resolves.toEqual({ mediaType: "image/png", data: "cG5n" });
+
+    const requested = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requested.origin).toBe("http://127.0.0.1:4319");
+    expect(requested.pathname).toBe("/v1/api/output-preview");
+    expect(requested.searchParams.get("path")).toBe(".git/amplifier-studio/outputs/result.png");
   });
 
   it("turns a WebKit load failure into an actionable host connection error", async () => {

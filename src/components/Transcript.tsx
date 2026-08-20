@@ -184,7 +184,13 @@ export function Transcript(props: Props) {
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={visibleBlocks()}>{(block) => <BlockView block={block} projectDir={props.state.projectDir} onThinkingExpanded={props.onThinkingExpanded} />}</For>
+        <For each={visibleBlocks()}>{(block) => <BlockView
+          block={block}
+          projectDir={props.state.projectDir}
+          hostUrl={props.state.hostUrl}
+          hostId={props.state.hostId}
+          onThinkingExpanded={props.onThinkingExpanded}
+        />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
           {(tail) => (
@@ -388,13 +394,24 @@ function formatDuration(milliseconds: number): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinkingExpanded: (blockId: string, expanded: boolean) => void }) {
+function BlockView(props: {
+  block: TranscriptBlock;
+  projectDir: string;
+  hostUrl?: string;
+  hostId?: string;
+  onThinkingExpanded: (blockId: string, expanded: boolean) => void;
+}) {
   const block = () => props.block;
   return (
     <Show
       when={block().kind !== "tool" && block().kind !== "thinking" && block().kind !== "recipe" && block().kind !== "output"}
       fallback={block().kind === "output"
-        ? <OutputView block={block() as Extract<TranscriptBlock, { kind: "output" }>} projectDir={props.projectDir} />
+        ? <OutputView
+          block={block() as Extract<TranscriptBlock, { kind: "output" }>}
+          projectDir={props.projectDir}
+          hostUrl={props.hostUrl}
+          hostId={props.hostId}
+        />
         : block().kind === "tool"
         ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} />
         : block().kind === "recipe"
@@ -435,6 +452,8 @@ function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinki
 function OutputView(props: {
   block: Extract<TranscriptBlock, { kind: "output" }>;
   projectDir: string;
+  hostUrl?: string;
+  hostId?: string;
 }) {
   let card: HTMLDivElement | undefined;
   const [preview, setPreview] = createSignal<{ mediaType: string; data: string }>();
@@ -442,7 +461,7 @@ function OutputView(props: {
 
   onMount(() => {
     const load = () => {
-      void loadOutputPreview(props.projectDir, props.block.output.path)
+      void loadOutputPreview(props.projectDir, props.block.output.path, props.hostUrl, props.hostId)
         .then(setPreview)
         .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
     };
