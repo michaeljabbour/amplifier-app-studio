@@ -18,6 +18,29 @@ scrollback cursors, capabilities, and these operations:
 an older socket after a reconnect or session switch. Reconnect calls `attach`
 again and never calls `create`, so the durable tmux session is not respawned.
 
+## Native local tmux
+
+`NativeTmuxAdapter` is the zero-service backend for a desktop Studio running on
+the same machine as tmux. It polls bounded pane captures for attachment data;
+closing the poller detaches Studio and deliberately leaves tmux running.
+Reconnect starts a new poller and never invokes the create command.
+
+Seven desktop-only Tauri commands form the native boundary: list, create,
+capture, send, resize, rename, and terminate. Rust launches the local `tmux`
+binary with literal argv through `tokio::process::Command` and never invokes a
+shell. Session names use the tmux-stable exact subset
+`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`; every target is then addressed with tmux's
+exact `=name` syntax (`=name:` for the active pane). Input text is one literal
+argv item, named keys are allowlisted, working directories are canonical
+absolute directories, and payload/geometry/capture sizes are bounded in both
+TypeScript and Rust.
+
+Terminate is exactly `tmux kill-session -t =name`. Studio never calls
+`kill-server`, never clears a global selection, and never kills a session on
+detach, reconnect, app polling failure, or adapter disposal. Native create
+starts the user's default tmux shell; arbitrary shell-backed command templates
+and MuxPlex settings are intentionally outside this bridge.
+
 `MuxplexTerminalAdapter` implements the contract using MuxPlex's public API:
 
 | Studio operation | MuxPlex operation |
