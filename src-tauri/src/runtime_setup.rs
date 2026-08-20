@@ -37,7 +37,10 @@ fn install_script_url(file: &str) -> String {
 }
 
 /// Downloads a bootstrap script over HTTPS and returns it only if it matches `expected_sha256`.
-async fn fetch_verified_install_script(url: &str, expected_sha256: &str) -> Result<Vec<u8>, String> {
+async fn fetch_verified_install_script(
+    url: &str,
+    expected_sha256: &str,
+) -> Result<Vec<u8>, String> {
     let response = reqwest::Client::builder()
         .https_only(true)
         .build()
@@ -79,7 +82,9 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 /// Writes the verified script to a private temp file. Returned path is owner-only on Unix.
 fn stage_install_script(contents: &[u8], file_name: &str) -> Result<PathBuf, String> {
-    let path = env::temp_dir().join(format!("amplifier-runtime-{RUNTIME_INSTALL_REF}-{file_name}"));
+    let path = env::temp_dir().join(format!(
+        "amplifier-runtime-{RUNTIME_INSTALL_REF}-{file_name}"
+    ));
     std::fs::write(&path, contents)
         .map_err(|error| format!("Could not stage the Amplifier installer: {error}"))?;
     #[cfg(unix)]
@@ -637,7 +642,10 @@ mod tests {
         for file in ["install.sh", "install.ps1"] {
             let url = install_script_url(file);
             for branch in ["/main/", "/master/", "/HEAD/", "/refs/heads/"] {
-                assert!(!url.contains(branch), "{url} resolves through mutable {branch}");
+                assert!(
+                    !url.contains(branch),
+                    "{url} resolves through mutable {branch}"
+                );
             }
         }
         assert_eq!(RUNTIME_INSTALL_REF.len(), 40);
@@ -646,12 +654,16 @@ mod tests {
 
     #[test]
     fn installer_digests_are_full_sha256_values() {
-        let mut digests = vec![INSTALL_SCRIPT_SHA256];
-        #[cfg(target_os = "windows")]
-        digests.push(WINDOWS_INSTALL_SCRIPT_SHA256);
+        let digests = [
+            INSTALL_SCRIPT_SHA256,
+            #[cfg(target_os = "windows")]
+            WINDOWS_INSTALL_SCRIPT_SHA256,
+        ];
         for digest in digests {
             assert_eq!(digest.len(), 64, "{digest} is not a SHA-256 hex digest");
-            assert!(digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+            assert!(digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
         }
     }
 

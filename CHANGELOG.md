@@ -4,7 +4,7 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
-## Unreleased
+## 0.1.46 — 2026-08-20
 
 Production-hardening pass over 0.1.45. Every item below only reproduced in a
 packaged, signed, or remote build, which is why the green desktop test suite
