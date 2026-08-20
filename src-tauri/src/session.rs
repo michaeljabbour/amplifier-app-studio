@@ -56,6 +56,7 @@ type AttachedSink = Arc<AttachmentSlot>;
 
 struct AttachmentSlot {
     current: RwLock<Option<(AttachmentId, EventSink)>>,
+    detached_reconnect_deadline: Mutex<Option<Instant>>,
     changes: watch::Sender<u64>,
     released: AtomicBool,
 }
@@ -64,6 +65,7 @@ fn attached_sink(initial: Option<(AttachmentId, EventSink)>) -> AttachedSink {
     let (changes, _) = watch::channel(0);
     Arc::new(AttachmentSlot {
         current: RwLock::new(initial),
+        detached_reconnect_deadline: Mutex::new(None),
         changes,
         released: AtomicBool::new(false),
     })
@@ -387,7 +389,13 @@ impl SessionManager {
             .as_ref()
             .is_some_and(|(current_id, _)| *current_id == attachment_id)
         {
+            *handle.sink.detached_reconnect_deadline.lock().await =
+                Some(Instant::now() + EVENT_REATTACH_GRACE);
             *slot = None;
+            handle
+                .sink
+                .changes
+                .send_modify(|generation| *generation += 1);
             Ok(true)
         } else {
             Ok(false)
@@ -819,11 +827,24 @@ fn routed_sink(slot: AttachedSink) -> EventSink {
                 if slot.released.load(Ordering::SeqCst) {
                     return true;
                 }
-                let candidate = slot.current.read().await.clone();
+                // Snapshot the attachment and its clean-detach deadline under
+                // the same lock order used by attach/detach. Otherwise attach
+                // could install a sink and clear the deadline between these
+                // reads, making this event miss the new lease.
+                let (candidate, detached_deadline) = {
+                    let current = slot.current.read().await;
+                    let deadline = if current.is_none() {
+                        *slot.detached_reconnect_deadline.lock().await
+                    } else {
+                        None
+                    };
+                    (current.clone(), deadline)
+                };
                 let Some((attachment_id, sink)) = candidate else {
-                    let Some(deadline) = reconnect_deadline else {
+                    let Some(deadline) = reconnect_deadline.or(detached_deadline) else {
                         return true;
                     };
+                    reconnect_deadline = Some(deadline);
                     if timeout(
                         deadline.saturating_duration_since(Instant::now()),
                         changes.changed(),
@@ -885,7 +906,14 @@ async fn replace_sink(
     slot: &AttachedSink,
     next: Option<(AttachmentId, EventSink)>,
 ) -> Result<(), String> {
-    *slot.current.write().await = next;
+    let mut current = slot.current.write().await;
+    *slot.detached_reconnect_deadline.lock().await = if next.is_none() {
+        Some(Instant::now() + EVENT_REATTACH_GRACE)
+    } else {
+        None
+    };
+    *current = next;
+    drop(current);
     slot.changes.send_modify(|generation| *generation += 1);
     Ok(())
 }
@@ -1466,6 +1494,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_detach_tail_waits_for_reattach_and_precedes_exit() {
+        let manager = SessionManager::default();
+        let original_events = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = original_events.clone();
+        let sink_slot = attached_sink(Some((
+            1,
+            sync_sink(move |event| {
+                original_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        )));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "post-detach-tail".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+        assert!(manager.detach("post-detach-tail", 1).await.unwrap());
+
+        // Model stdout consuming history.end only after the socket cleanly
+        // detached. The reader must remain parked until the replacement lease
+        // arrives; the finalizer in turn cannot overtake that reader tail.
+        let reader_sink = routed_sink(sink_slot.clone());
+        let reader = tokio::spawn(async move {
+            deliver_value(
+                &reader_sink,
+                "post-detach-tail",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &finalizer_slot,
+                "post-detach-tail",
+                vec![reader],
+                Some(0),
+            )
+            .await;
+        });
+        timeout(Duration::from_secs(1), async {
+            while sink_slot.changes.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached tail waits for an attachment change");
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        manager
+            .attach(
+                "post-detach-tail",
+                sync_sink(move |event| {
+                    replacement_capture.lock().unwrap().push(event.clone());
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(1), finalizer)
+            .await
+            .expect("reattached client receives tail and exit")
+            .unwrap();
+
+        assert!(original_events.lock().unwrap().is_empty());
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 2);
+        assert_eq!(replacement_events[0].payload["type"], "history.end");
+        assert_eq!(replacement_events[1].channel, "exit");
+        drop(replacement_events);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("post-detach-tail"));
+    }
+
+    #[tokio::test]
     async fn resume_attach_during_reader_drain_receives_the_tail_and_exit() {
         let project = tempfile::tempdir().unwrap();
         let project_path = project
@@ -1706,6 +1828,28 @@ mod tests {
             .expect("bounded reconnect grace expires")
             .unwrap());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn expired_clean_detach_grace_is_not_restarted_per_event() {
+        let slot = attached_sink(Some((1, sync_sink(|_| true))));
+        replace_sink(&slot, None).await.unwrap();
+        *slot.detached_reconnect_deadline.lock().await =
+            Some(Instant::now() - Duration::from_millis(1));
+        let route = routed_sink(slot);
+
+        for count in [301, 302] {
+            assert!(timeout(
+                Duration::from_millis(50),
+                route(&SessionEvent {
+                    gui_id: "expired-detach-grace".to_owned(),
+                    channel: "record",
+                    payload: serde_json::json!({ "type": "history.end", "count": count }),
+                }),
+            )
+            .await
+            .expect("expired detach grace does not stall each later event"));
+        }
     }
 
     #[tokio::test]
