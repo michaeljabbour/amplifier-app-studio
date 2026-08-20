@@ -850,6 +850,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .composition-grid > div.wide { grid-column: 1 / -1; }
 .composition-grid dt { color: #53687b; font-size: 7px; }
 .composition-grid dd { overflow: hidden; margin: 4px 0 0; color: #9aafc1; font: 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.capability-boundary-card { display: grid; gap: 7px; border: 1px solid rgba(176,139,255,.24); border-radius: 8px; padding: 11px; background: rgba(176,139,255,.055); }
+.capability-boundary-card.mounted { border-color: rgba(99,217,154,.24); background: rgba(99,217,154,.05); }
+.capability-boundary-card strong { color: #bca5ec; font-size: 10px; }
+.capability-boundary-card.mounted strong { color: var(--green); }
+.capability-boundary-card p { margin: 0; color: #6f8194; font-size: 9px; line-height: 1.55; }
+.capability-boundary-card button { justify-self: start; margin-top: 2px; }
 .inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 11px 0 9px; }
 .inspector-actions .primary-button, .inspector-actions .secondary-button, .inspector-refresh { padding: 7px 9px; font-size: 8px; }
 .bundle-list { display: grid; gap: 6px; }

@@ -1,4 +1,4 @@
-import type { CapabilityCatalog, NewSessionInput } from "./protocol";
+import type { CapabilityCatalog, NewSessionInput, SessionViewState } from "./protocol";
 
 export type StudioCapabilityId =
   | "coordinator"
@@ -138,7 +138,17 @@ export function capabilityStatusLabel(readiness: CapabilityReadiness): string {
   if (readiness === "native") return "Included";
   if (readiness === "composition") return "Standard composition";
   if (readiness === "catalogued") return "Bundle found";
-  return "Not installed · fetch on launch";
+  return "Available on demand";
+}
+
+export function sessionUsesCapability(
+  capability: StudioCapability,
+  session: Pick<SessionViewState, "bundle" | "capabilityId">,
+): boolean {
+  if (session.capabilityId === capability.id) return true;
+  const bundle = session.bundle.trim().toLowerCase().replace(/^bundle:/, "");
+  return capability.catalogNames.some((name) => bundle === name.toLowerCase())
+    || Boolean(capability.bundle && bundle.includes(capability.bundle.toLowerCase()));
 }
 
 export function capabilitySessionInput(
