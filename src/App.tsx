@@ -54,6 +54,7 @@ import {
 import {
   createGuiId,
   addBundle,
+  cloneGithubRepository,
   configureProvider,
   configuredBridgeToken,
   defaultProjectDir,
@@ -63,6 +64,7 @@ import {
   openLocalOutput,
   probeRuntimeHost,
   prepareSessionLaunch,
+  runtimeHostConfig,
   installRuntime,
   importStoredSession,
   listenNativeAttachmentDrops,
@@ -121,6 +123,7 @@ export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
   const [activeId, setActiveId] = createSignal<string>();
   const [dialog, setDialog] = createSignal<NewSessionInput>();
+  const [dialogBusy, setDialogBusy] = createSignal(false);
   const [drawerOpen, setDrawerOpen] = createSignal(false);
   const [stored, setStored] = createSignal<StoredSession[]>([]);
   const [storedLoading, setStoredLoading] = createSignal(false);
@@ -153,6 +156,9 @@ export default function App() {
     isMobileRuntime() ? [] : [{ id: "local", name: "This computer", url: "", tokenRef: "local" }],
   );
   const [hostProjectRoots, setHostProjectRoots] = createSignal<Record<string, string>>({});
+  const [hostCapabilities, setHostCapabilities] = createSignal<Record<string, string[]>>({
+    local: isDesktopRuntime() ? ["githubRepositoryClone"] : [],
+  });
   const [sessionHomeHostId, setSessionHomeHostId] = createSignal(localStorage.getItem(SESSION_HOME_HOST_KEY) || defaultHostId);
   const [runtimeChecking, setRuntimeChecking] = createSignal(true);
   const [runtimeInstalling, setRuntimeInstalling] = createSignal(false);
@@ -221,7 +227,9 @@ export default function App() {
     else if (providerSetupOpen()) setProviderSetupOpen(false);
     else if (capabilitiesOpen()) setCapabilitiesOpen(false);
     else if (settingsOpen()) setSettingsOpen(false);
-    else if (dialog()) setDialog(undefined);
+    else if (dialog()) {
+      if (!dialogBusy()) setDialog(undefined);
+    }
     else if (rightOpen()) setRightOpen(false);
     else if (drawerOpen()) setDrawerOpen(false);
   };
@@ -242,7 +250,9 @@ export default function App() {
 
   const refreshHostProjectRoot = async (host: RuntimeHost): Promise<string> => {
     if (!host.url) return knownHostProjectRoot(host);
-    const configured = (await defaultProjectDir(host.url, host.id)).trim();
+    const config = await runtimeHostConfig(host.url, host.id);
+    const configured = config.defaultProjectDir.trim();
+    setHostCapabilities((current) => ({ ...current, [host.id]: config.capabilities }));
     const projectRoot = remoteProjectDefault(host, configured);
     if (projectRoot) setHostProjectRoots((current) => ({ ...current, [host.id]: projectRoot }));
     return projectRoot;
@@ -1080,8 +1090,23 @@ export default function App() {
           catalogError={catalogError()}
           hosts={runtimeHosts()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
-          onCancel={() => setDialog(undefined)}
+          onCancel={() => {
+            if (!dialogBusy()) setDialog(undefined);
+          }}
+          onBusyChange={setDialogBusy}
           onPickProjectDir={pickProjectDirectory}
+          canCloneRepository={(host) => host.url
+            ? hostCapabilities()[host.id]?.includes("githubRepositoryClone") === true
+            : nativeProjectPickerAvailable()}
+          onCloneRepository={async (repositoryUrl, host) => {
+            const result = await cloneGithubRepository(
+              repositoryUrl,
+              host.url || undefined,
+              host.id,
+            );
+            await refreshCatalog(result.path, host.url || undefined, host.id);
+            return result;
+          }}
           onHostChange={async (host) => {
             const projectRoot = host.url ? await refreshHostProjectRoot(host) : knownHostProjectRoot(host);
             await refreshCatalog(projectRoot, host.url || undefined, host.id);
@@ -1166,6 +1191,7 @@ export default function App() {
               hostUrl: cleanedUrl,
             }, runtimeHosts());
             if (!host) throw new Error("Studio could not create a durable record for this compute host");
+            setHostCapabilities((current) => ({ ...current, [host.id]: probe.capabilities }));
             const wasSaved = runtimeHosts().some((candidate) => candidate.id === host.id && candidate.tokenRef !== "session");
             try {
               await saveRuntimeHost(host);

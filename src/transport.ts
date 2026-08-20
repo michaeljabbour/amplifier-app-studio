@@ -55,6 +55,12 @@ export interface RuntimeHost {
 export interface RuntimeHostProbe {
   status: RuntimeStatus;
   defaultProjectDir: string;
+  capabilities: string[];
+}
+
+export interface RuntimeHostConfig {
+  defaultProjectDir: string;
+  capabilities: string[];
 }
 
 export interface HostDirectoryListing {
@@ -63,6 +69,11 @@ export interface HostDirectoryListing {
   parent?: string;
   roots: string[];
   directories: Array<{ name: string; path: string }>;
+}
+
+export interface CloneRepositoryResult {
+  path: string;
+  repository: string;
 }
 
 export interface TranscriptionStatus {
@@ -452,6 +463,40 @@ export async function createHostDirectory(
   }, bridge);
 }
 
+/** Clone one credential-free GitHub URL into the selected compute's dev
+ * workspace. The Rust host owns URL, destination, and process validation. */
+export async function cloneGithubRepository(
+  repositoryUrl: string,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<CloneRepositoryResult> {
+  const bridge = hostId === "local"
+    ? undefined
+    : hostUrl
+      ? normalizedBridgeUrl(hostUrl)
+      : (!isDesktopRuntime() ? bridgeBaseUrl() : undefined);
+  if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
+    try {
+      return await fetchJson<CloneRepositoryResult>(hostApiUrl(bridge, "/repositories/clone"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repositoryUrl: repositoryUrl.trim() }),
+      }, bridge);
+    } catch (error) {
+      const message = String(error).replace(/^Error:\s*/, "").trim();
+      if (/\b404\b/.test(message) || /^not found$/i.test(message)) {
+        throw new Error("Update Amplifier Host on this compute before cloning repositories from Studio.");
+      }
+      throw error;
+    }
+  }
+  requireDesktop();
+  return invoke<CloneRepositoryResult>("clone_github_repository", {
+    repositoryUrl: repositoryUrl.trim(),
+  });
+}
+
 export function transportLabel(): string {
   if (isMobileRuntime()) return usesWebBridge() ? "Mobile · remote Rust bridge" : "Mobile · no bridge configured";
   if (usesWebBridge()) return isTauriRuntime() ? "Native desktop · remote Rust bridge" : "Web · Rust bridge";
@@ -744,6 +789,10 @@ export async function addBundle(input: { projectDir?: string; uri: string; name?
 }
 
 export async function defaultProjectDir(hostUrl?: string, hostId?: string): Promise<string> {
+  return (await runtimeHostConfig(hostUrl, hostId)).defaultProjectDir;
+}
+
+export async function runtimeHostConfig(hostUrl?: string, hostId?: string): Promise<RuntimeHostConfig> {
   const bridge = hostId === "local"
     ? undefined
     : hostUrl
@@ -751,11 +800,19 @@ export async function defaultProjectDir(hostUrl?: string, hostId?: string): Prom
       : bridgeBaseUrl();
   if (bridge) {
     await ensureBridgeToken(bridge, hostId);
-    const config = await fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"), undefined, bridge);
-    return config.defaultProjectDir || "";
+    const config = await fetchJson<{ defaultProjectDir?: string; capabilities?: unknown }>(hostApiUrl(bridge, "/config"), undefined, bridge);
+    return {
+      defaultProjectDir: config.defaultProjectDir || "",
+      capabilities: Array.isArray(config.capabilities)
+        ? config.capabilities.filter((item): item is string => typeof item === "string")
+        : [],
+    };
   }
-  if (!isTauriRuntime()) return "";
-  return invoke<string>("default_project_dir");
+  if (!isTauriRuntime()) return { defaultProjectDir: "", capabilities: [] };
+  return {
+    defaultProjectDir: await invoke<string>("default_project_dir"),
+    capabilities: isDesktopRuntime() ? ["githubRepositoryClone"] : [],
+  };
 }
 
 export async function getRuntimeStatus(hostUrl?: string, hostId?: string): Promise<RuntimeStatus> {
@@ -774,12 +831,18 @@ export async function probeRuntimeHost(hostUrl: string, hostId?: string): Promis
   await ensureBridgeToken(bridge, hostId);
   const [status, config] = await Promise.all([
     fetchJson<RuntimeStatus>(hostApiUrl(bridge, "/runtime"), undefined, bridge),
-    fetchJson<{ defaultProjectDir?: string }>(hostApiUrl(bridge, "/config"), undefined, bridge),
+    fetchJson<{ defaultProjectDir?: string; capabilities?: unknown }>(hostApiUrl(bridge, "/config"), undefined, bridge),
   ]);
   if (!status.installed) {
     throw new Error(status.message || "Amplifier Runtime is not installed on this compute host");
   }
-  return { status, defaultProjectDir: config.defaultProjectDir?.trim() || "" };
+  return {
+    status,
+    defaultProjectDir: config.defaultProjectDir?.trim() || "",
+    capabilities: Array.isArray(config.capabilities)
+      ? config.capabilities.filter((item): item is string => typeof item === "string")
+      : [],
+  };
 }
 
 export async function installRuntime(): Promise<RuntimeStatus> {

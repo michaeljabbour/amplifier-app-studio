@@ -27,9 +27,10 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
 const SINK_BACKPRESSURE_RETRY: Duration = Duration::from_millis(2);
-// Must remain above Studio's maximum WebSocket reconnect backoff (8 seconds
-// in src/transport.ts) so an ended runtime survives until the next retry.
-const EVENT_REATTACH_GRACE_PRODUCTION: Duration = Duration::from_secs(10);
+// Must remain above Studio's maximum WebSocket reconnect backoff plus its full
+// open/ready acknowledgement timeout (8 + 15 seconds in src/transport.ts) so
+// a slow remote or mobile attachment can still claim an ended runtime.
+const EVENT_REATTACH_GRACE_PRODUCTION: Duration = Duration::from_secs(30);
 #[cfg(not(test))]
 const EVENT_REATTACH_GRACE: Duration = EVENT_REATTACH_GRACE_PRODUCTION;
 #[cfg(test)]
@@ -1106,12 +1107,17 @@ mod tests {
     }
 
     #[test]
-    fn production_exit_grace_exceeds_studio_maximum_reconnect_backoff() {
+    fn production_exit_grace_exceeds_reconnect_and_ready_handshake_budget() {
         const STUDIO_MAXIMUM_RECONNECT_BACKOFF: Duration = Duration::from_secs(8);
+        const STUDIO_READY_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
         const TRANSPORT_SOURCE: &str = include_str!("../../src/transport.ts");
 
         assert!(TRANSPORT_SOURCE.contains("Math.min(8_000, 300 *"));
-        assert!(EVENT_REATTACH_GRACE_PRODUCTION > STUDIO_MAXIMUM_RECONNECT_BACKOFF);
+        assert!(TRANSPORT_SOURCE.contains("}, 15_000);"));
+        assert!(
+            EVENT_REATTACH_GRACE_PRODUCTION
+                > STUDIO_MAXIMUM_RECONNECT_BACKOFF + STUDIO_READY_HANDSHAKE_TIMEOUT
+        );
     }
 
     #[test]
@@ -1525,7 +1531,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn ended_session_survives_six_second_client_backoff() {
+    async fn ended_session_survives_max_backoff_and_delayed_handshake() {
         let project = tempfile::tempdir().unwrap();
         let project_path = project
             .path()
@@ -1543,16 +1549,16 @@ mod tests {
         #[cfg(not(windows))]
         let child = Command::new("true").spawn().unwrap();
         manager.sessions.lock().await.insert(
-            "six-second-reconnect".to_owned(),
+            "delayed-reconnect".to_owned(),
             SessionHandle {
                 child: Arc::new(Mutex::new(child)),
                 stdin: Arc::new(Mutex::new(None)),
                 sink: sink_slot.clone(),
-                resume_identity: Some((project_path.clone(), "durable-six-second".to_owned())),
+                resume_identity: Some((project_path.clone(), "durable-delayed".to_owned())),
                 detached_owner: true,
             },
         );
-        assert!(manager.detach("six-second-reconnect", 1).await.unwrap());
+        assert!(manager.detach("delayed-reconnect", 1).await.unwrap());
 
         let sessions = manager.sessions.clone();
         let finalizer_slot = sink_slot.clone();
@@ -1560,7 +1566,7 @@ mod tests {
             deliver_exit_and_remove_session_with_grace(
                 &sessions,
                 &finalizer_slot,
-                "six-second-reconnect",
+                "delayed-reconnect",
                 Vec::new(),
                 Some(0),
                 EVENT_REATTACH_GRACE_PRODUCTION,
@@ -1571,19 +1577,23 @@ mod tests {
             tokio::task::yield_now().await;
         }
 
-        tokio::time::advance(Duration::from_secs(6)).await;
+        // Studio may wait the full 8-second reconnect backoff before the
+        // WebSocket opens, then spend additional time awaiting ready. Eleven
+        // seconds crosses the former 10-second retention while remaining well
+        // inside the current 15-second handshake budget.
+        tokio::time::advance(Duration::from_secs(11)).await;
         assert!(manager
             .sessions
             .lock()
             .await
-            .contains_key("six-second-reconnect"));
+            .contains_key("delayed-reconnect"));
 
         let replacement_events = Arc::new(StdMutex::new(Vec::new()));
         let replacement_capture = replacement_events.clone();
         let (gui_id, _) = manager
             .attach_resume(
                 &project_path,
-                "durable-six-second",
+                "durable-delayed",
                 sync_sink(move |event| {
                     replacement_capture.lock().unwrap().push(event.clone());
                     true
@@ -1591,7 +1601,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(gui_id, "six-second-reconnect");
+        assert_eq!(gui_id, "delayed-reconnect");
         finalizer.await.unwrap();
 
         let replacement_events = replacement_events.lock().unwrap();
@@ -1602,9 +1612,9 @@ mod tests {
             .sessions
             .lock()
             .await
-            .contains_key("six-second-reconnect"));
+            .contains_key("delayed-reconnect"));
         assert!(manager
-            .attach_resume(&project_path, "durable-six-second", sync_sink(|_| true),)
+            .attach_resume(&project_path, "durable-delayed", sync_sink(|_| true),)
             .await
             .is_err());
     }

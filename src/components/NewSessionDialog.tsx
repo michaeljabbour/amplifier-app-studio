@@ -1,8 +1,9 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
+import { githubCloneDestination, parseGithubRepositoryUrl, projectDirForSource } from "../githubRepository";
 import { directoryBreadcrumbs, isPathInsideRoot } from "../projectFolders";
 import { toolContractFailure } from "../providerSafety";
-import { createHostDirectory, listHostDirectories, type HostDirectoryListing, type RuntimeHost } from "../transport";
+import { createHostDirectory, listHostDirectories, type CloneRepositoryResult, type HostDirectoryListing, type RuntimeHost } from "../transport";
 
 interface Props {
   initial: NewSessionInput;
@@ -12,6 +13,9 @@ interface Props {
   nativeProjectPicker: boolean;
   onCancel: () => void;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
+  canCloneRepository: (host: RuntimeHost) => boolean;
+  onCloneRepository: (repositoryUrl: string, host: RuntimeHost) => Promise<CloneRepositoryResult>;
+  onBusyChange?: (busy: boolean) => void;
   onHostChange: (host: RuntimeHost) => Promise<string | undefined>;
   onStart: (input: NewSessionInput) => Promise<void>;
 }
@@ -20,6 +24,7 @@ export function NewSessionDialog(props: Props) {
   let remoteBrowserTrigger: HTMLButtonElement | undefined;
   let remoteBrowserBack: HTMLButtonElement | undefined;
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
+  const [existingProjectDir, setExistingProjectDir] = createSignal(props.initial.projectDir);
   const [hostId, setHostId] = createSignal(props.initial.hostId || props.hosts[0]?.id || "local");
   const [bundle, setBundle] = createSignal(props.initial.bundle || "");
   const [model, setModel] = createSignal(props.initial.model || "");
@@ -31,15 +36,32 @@ export function NewSessionDialog(props: Props) {
   const [remoteDirectories, setRemoteDirectories] = createSignal<HostDirectoryListing>();
   const [newFolder, setNewFolder] = createSignal("");
   const [creatingFolder, setCreatingFolder] = createSignal(false);
+  const [projectSource, setProjectSource] = createSignal<"existing" | "github">("existing");
+  const [repositoryUrl, setRepositoryUrl] = createSignal("");
+  const [cloneResult, setCloneResult] = createSignal<CloneRepositoryResult>();
+  const [cloning, setCloning] = createSignal(false);
   const overrideMismatch = createMemo(() => Boolean(model().trim()) !== Boolean(provider().trim()));
   const selectedProvider = createMemo(() => props.catalog.providers.find((item) => item.name === provider().trim()));
   const unsafeProvider = createMemo(() => selectedProvider()?.toolCompatible === false ? selectedProvider() : undefined);
   const unsafeOverride = createMemo(() => toolContractFailure(model(), provider()));
   const selectedHost = createMemo(() => props.hosts.find((host) => host.id === hostId()) || props.hosts[0]);
   const nativeProjectPicker = createMemo(() => props.nativeProjectPicker && !selectedHost()?.url);
+  const cloneAvailable = createMemo(() => {
+    const host = selectedHost();
+    return Boolean(!props.initial.resumeId && host && props.canCloneRepository(host));
+  });
+
+  createEffect(() => {
+    if (!cloneAvailable() && projectSource() === "github") setProjectSource("existing");
+  });
+  onCleanup(() => props.onBusyChange?.(false));
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
+    if (projectSource() === "github" && !cloneResult()) {
+      setError("Clone the repository before starting this session.");
+      return;
+    }
     if (!projectDir().trim()) {
       setError("Choose the project directory this session may work in.");
       return;
@@ -76,13 +98,41 @@ export function NewSessionDialog(props: Props) {
     }
   };
 
+  const cloneRepository = async () => {
+    const host = selectedHost();
+    if (!host || cloning()) return;
+    try {
+      parseGithubRepositoryUrl(repositoryUrl());
+    } catch (caught) {
+      setError(String(caught).replace(/^Error:\s*/, ""));
+      return;
+    }
+    setCloning(true);
+    props.onBusyChange?.(true);
+    setError("");
+    setCloneResult(undefined);
+    try {
+      const result = await props.onCloneRepository(repositoryUrl().trim(), host);
+      setCloneResult(result);
+      setProjectDir(result.path);
+    } catch (caught) {
+      setError(String(caught).replace(/^Error:\s*/, ""));
+    } finally {
+      setCloning(false);
+      props.onBusyChange?.(false);
+    }
+  };
+
   const pickProject = async () => {
     if (pickingProject()) return;
     setPickingProject(true);
     setError("");
     try {
       const selected = await props.onPickProjectDir(projectDir());
-      if (selected) setProjectDir(selected);
+      if (selected) {
+        setExistingProjectDir(selected);
+        setProjectDir(selected);
+      }
     } catch (caught) {
       setError(String(caught));
     } finally {
@@ -99,7 +149,10 @@ export function NewSessionDialog(props: Props) {
     try {
       const listing = await listHostDirectories(host.url, path, host.id);
       setRemoteDirectories(listing);
-      if (!projectDir()) setProjectDir(listing.path);
+      if (!projectDir()) {
+        setExistingProjectDir(listing.path);
+        setProjectDir(listing.path);
+      }
       if (opening) queueMicrotask(() => remoteBrowserBack?.focus());
     } catch (caught) {
       setError(String(caught));
@@ -113,6 +166,7 @@ export function NewSessionDialog(props: Props) {
   };
 
   const chooseRemoteFolder = (path: string) => {
+    setExistingProjectDir(path);
     setProjectDir(path);
     setRemoteDirectories(undefined);
     setNewFolder("");
@@ -148,7 +202,7 @@ export function NewSessionDialog(props: Props) {
   };
 
   return (
-    <div class="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onCancel()}>
+    <div class="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !cloning() && props.onCancel()}>
       <form
         class="session-dialog"
         onSubmit={submit}
@@ -163,7 +217,7 @@ export function NewSessionDialog(props: Props) {
             <div class="eyebrow">{props.initial.resumeId ? "RESTORE WORK" : "PARALLEL RUNTIME"}</div>
             <h2>{props.initial.resumeId ? "Resume session" : "Start a new session"}</h2>
           </div>
-          <button type="button" class="icon-button" aria-label="Close dialog" onClick={props.onCancel}>×</button>
+          <button type="button" class="icon-button" aria-label="Close dialog" disabled={cloning()} onClick={props.onCancel}>×</button>
         </div>
 
         <Show when={props.initial.resumeId}>
@@ -191,15 +245,23 @@ export function NewSessionDialog(props: Props) {
           <span>Runtime host</span>
           <select
             value={hostId()}
+            disabled={cloning()}
             onChange={(event) => {
               const next = props.hosts.find((host) => host.id === event.currentTarget.value);
               if (!next) return;
               setHostId(next.id);
               setProjectDir(next.defaultProjectRoot || "");
+              setExistingProjectDir(next.defaultProjectRoot || "");
+              setProjectSource("existing");
+              setRepositoryUrl("");
+              setCloneResult(undefined);
               setRemoteDirectories(undefined);
               void props.onHostChange(next)
                 .then((projectRoot) => {
-                  if (hostId() === next.id && projectRoot) setProjectDir(projectRoot);
+                  if (hostId() === next.id && projectRoot) {
+                    setExistingProjectDir(projectRoot);
+                    setProjectDir(projectRoot);
+                  }
                 })
                 .catch((caught) => setError(String(caught)));
             }}
@@ -209,6 +271,77 @@ export function NewSessionDialog(props: Props) {
           <small>Every tab is pinned to one host. Switching tabs does not move or stop its runtime.</small>
         </label>
 
+        <Show when={cloneAvailable()}>
+          <fieldset class="project-source full-field" inert={Boolean(remoteDirectories()) || cloning()} aria-hidden={Boolean(remoteDirectories())}>
+            <legend>Project source</legend>
+            <div role="radiogroup" aria-label="Project source">
+              <button
+                type="button"
+                classList={{ active: projectSource() === "existing" }}
+                aria-pressed={projectSource() === "existing"}
+                onClick={() => {
+                  setProjectSource("existing");
+                  setProjectDir(projectDirForSource("existing", existingProjectDir(), cloneResult()?.path));
+                  setError("");
+                }}
+              >
+                <strong>Existing folder</strong>
+                <small>Open work already on this compute.</small>
+              </button>
+              <button
+                type="button"
+                classList={{ active: projectSource() === "github" }}
+                aria-pressed={projectSource() === "github"}
+                onClick={() => {
+                  setProjectSource("github");
+                  setProjectDir(projectDirForSource("github", existingProjectDir(), cloneResult()?.path));
+                  setError("");
+                }}
+              >
+                <strong>Clone GitHub repository</strong>
+                <small>Create a fresh checkout in the dev workspace.</small>
+              </button>
+            </div>
+          </fieldset>
+        </Show>
+
+        <Show when={projectSource() === "existing" || props.initial.resumeId} fallback={
+          <div class="field full-field github-clone-field" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
+            <span>GitHub repository</span>
+            <div class="github-clone-control">
+              <input
+                type="url"
+                value={repositoryUrl()}
+                placeholder="https://github.com/owner/repository"
+                autocomplete="url"
+                autocapitalize="none"
+                spellcheck={false}
+                disabled={cloning() || Boolean(cloneResult())}
+                aria-label="GitHub repository URL"
+                onInput={(event) => {
+                  setRepositoryUrl(event.currentTarget.value);
+                  setCloneResult(undefined);
+                  setError("");
+                }}
+              />
+              <button
+                type="button"
+                class="secondary-button"
+                disabled={cloning() || Boolean(cloneResult()) || !repositoryUrl().trim()}
+                onClick={() => void cloneRepository()}
+              >{cloning() ? "Cloning…" : cloneResult() ? "Cloned" : "Clone & use"}</button>
+            </div>
+            <div class="github-clone-destination" role="status" aria-live="polite" classList={{ complete: Boolean(cloneResult()) }}>
+              <span>{cloneResult() ? "READY TO START" : "DESTINATION"}</span>
+              <code title={cloneResult()?.path || githubCloneDestination(repositoryUrl(), selectedHost()?.url ? selectedHost()?.name : undefined)}>
+                {cloneResult()?.path || githubCloneDestination(repositoryUrl(), selectedHost()?.url ? selectedHost()?.name : undefined)}
+              </code>
+            </div>
+            <small>{selectedHost()?.url
+              ? `The repository is cloned on ${selectedHost()?.name}, not on this device.`
+              : "Studio uses Git directly and never stores repository credentials."}</small>
+          </div>
+        }>
         <div class="field full-field" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
           <span>{props.initial.resumeId ? "Original project folder" : "Project folder"}</span>
           <Show when={selectedHost()?.url} fallback={
@@ -216,7 +349,10 @@ export function NewSessionDialog(props: Props) {
               <input
                 value={projectDir()}
                 readOnly={nativeProjectPicker()}
-                onInput={(event) => setProjectDir(event.currentTarget.value)}
+                onInput={(event) => {
+                  setExistingProjectDir(event.currentTarget.value);
+                  setProjectDir(event.currentTarget.value);
+                }}
                 placeholder={nativeProjectPicker() ? "Choose a folder…" : "/project/path"}
                 aria-label="Selected project folder"
               />
@@ -243,6 +379,7 @@ export function NewSessionDialog(props: Props) {
               ? "Choose an existing project, or create a new project folder on this host."
               : "Enter the project folder this session may use."}</small>
         </div>
+        </Show>
 
         <Show when={remoteDirectories()} keyed>{(listing) => (
           <section class="remote-directory-picker" role="dialog" aria-modal="true" aria-labelledby="remote-directory-title">
@@ -403,9 +540,13 @@ export function NewSessionDialog(props: Props) {
         <Show when={error() && !remoteDirectories()}><div class="form-error">{error()}</div></Show>
 
         <div class="dialog-footer" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>
-          <div class="process-note"><span>◆</span> One isolated Amplifier runtime will be created for this tab.</div>
-          <button type="button" class="secondary-button" onClick={props.onCancel}>Cancel</button>
-          <button type="submit" class="primary-button" disabled={starting() || overrideMismatch() || Boolean(unsafeProvider()) || Boolean(unsafeOverride())}>
+          <div class="process-note" role="status" aria-live="polite"><span>◆</span> {cloning()
+            ? "Cloning the repository on the selected compute…"
+            : cloneResult()
+              ? `${cloneResult()?.repository} is ready. Review setup, then start.`
+              : "One isolated Amplifier runtime will be created for this tab."}</div>
+          <button type="button" class="secondary-button" disabled={cloning()} onClick={props.onCancel}>Cancel</button>
+          <button type="submit" class="primary-button" disabled={starting() || cloning() || (projectSource() === "github" && !cloneResult()) || overrideMismatch() || Boolean(unsafeProvider()) || Boolean(unsafeOverride())}>
             {starting() ? "Starting…" : props.initial.resumeId ? "Resume" : "Start session"}
           </button>
         </div>

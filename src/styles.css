@@ -416,6 +416,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .path-picker-control input { min-width: 0; flex: 1; }
 .path-picker-control input[readonly] { color: #9fb0c0; cursor: default; }
 .path-picker-control button { flex: 0 0 auto; height: 37px; white-space: nowrap; }
+.project-source { min-width: 0; border: 0; padding: 0; }
+.project-source > legend { margin-bottom: 7px; padding: 0; color: #9aabba; font-size: 10px; font-weight: 650; }
+.project-source > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.project-source button { min-height: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: rgba(255,255,255,.018); color: var(--muted); text-align: left; cursor: pointer; }
+.project-source button:hover { border-color: rgba(79,183,255,.32); background: rgba(79,183,255,.035); }
+.project-source button.active { border-color: rgba(79,183,255,.48); background: rgba(79,183,255,.075); box-shadow: inset 2px 0 var(--blue); }
+.project-source strong, .project-source small { display: block; }
+.project-source strong { color: #c7d5e1; font-size: 10px; }
+.project-source small { margin-top: 5px; color: #64778b; font-size: 8px; line-height: 1.4; }
+.github-clone-control { display: flex; align-items: center; gap: 8px; }
+.github-clone-control input { min-width: 0; flex: 1; }
+.github-clone-control button { flex: 0 0 auto; min-width: 94px; height: 37px; white-space: nowrap; }
+.github-clone-destination { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; background: rgba(255,255,255,.015); }
+.github-clone-destination.complete { border-color: rgba(99,217,154,.3); background: rgba(99,217,154,.045); }
+.github-clone-destination > span { color: var(--dim); font-size: 7px; font-weight: 800; letter-spacing: .1em; }
+.github-clone-destination.complete > span { color: var(--green); }
+.github-clone-destination > code { overflow: hidden; color: #8fa5b8; font: 9px var(--font-mono); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .remote-project-control { display: flex; align-items: stretch; gap: 8px; }
 .remote-project-control > div { display: grid; min-width: 0; flex: 1; gap: 4px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 10px; background: #0a111a; }
 .remote-project-control > div small { color: var(--dim); font-size: 8px; }
@@ -1153,6 +1170,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .remote-directory-empty strong { font-size: 13px; }
   .remote-project-create > div:last-child { flex-direction: column; }
   .remote-project-create > div:last-child button { width: 100%; }
+  .project-source > div { grid-template-columns: 1fr; }
+  .project-source button { min-height: 52px; }
+  .github-clone-control { align-items: stretch; flex-direction: column; }
+  .github-clone-control button { width: 100%; min-height: 46px; }
+  .github-clone-destination { grid-template-columns: 1fr; gap: 5px; }
+  .github-clone-destination > code { text-align: left; }
   .remote-directory-picker .remote-directory-list { max-height: none; }
   /* 6-7px -> 11px (49 rules) */
   .user-avatar, .attachment-chip small, .composer-autopilot, .machine-presence small, .effort-request, .effort-

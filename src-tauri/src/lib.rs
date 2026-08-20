@@ -7,6 +7,8 @@ mod protocol;
 #[cfg(desktop)]
 mod remote_hosts;
 #[cfg(desktop)]
+mod repo_clone;
+#[cfg(desktop)]
 mod runtime_settings;
 mod runtime_setup;
 mod session;
@@ -206,6 +208,15 @@ async fn send_op(
 #[tauri::command]
 async fn stop_session(manager: State<'_, SessionManager>, gui_id: String) -> Result<bool, String> {
     manager.stop(&gui_id).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn clone_github_repository(
+    repository_url: String,
+) -> Result<repo_clone::CloneRepositoryResult, String> {
+    let dev_workspace = repo_clone::local_dev_workspace()?;
+    repo_clone::clone_github_repository_into(&repository_url, &dev_workspace).await
 }
 
 #[tauri::command]
@@ -501,6 +512,8 @@ pub fn run() {
             transcription_status,
             transcribe_audio,
             default_project_dir,
+            #[cfg(desktop)]
+            clone_github_repository,
             #[cfg(desktop)]
             load_attachment_paths,
             #[cfg(desktop)]

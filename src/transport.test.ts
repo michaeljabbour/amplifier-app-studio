@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   configuredBridgeToken,
   configuredBridgeUrl,
+  cloneGithubRepository,
   durableRuntimeHostForSession,
   launchSession,
   loadOutputPreview,
@@ -149,13 +150,57 @@ describe("bridge trust storage", () => {
           message: "Amplifier Runtime is ready",
         });
       }
-      return jsonResponse({ defaultProjectDir: "/home/mjabbour/amplifier" });
+      return jsonResponse({
+        defaultProjectDir: "/home/mjabbour/amplifier",
+        capabilities: ["githubRepositoryClone"],
+      });
     }));
 
     await expect(probeRuntimeHost("http://127.0.0.1:4318", "configured")).resolves.toEqual({
       status: expect.objectContaining({ installed: true, adapter: "neutral" }),
       defaultProjectDir: "/home/mjabbour/amplifier",
+      capabilities: ["githubRepositoryClone"],
     });
+  });
+
+  it("clones on the explicitly selected remote compute", async () => {
+    const bridge = "http://127.0.0.1:4319";
+    saveBridgeToken("0123456789abcdef0123456789abcdef", bridge);
+    const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => jsonResponse({
+      path: "/home/mjabbour/dev/amplifier",
+      repository: "microsoft/amplifier",
+      request: init?.body,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(cloneGithubRepository(
+      " https://github.com/microsoft/amplifier ",
+      bridge,
+      "spark-9602",
+    )).resolves.toEqual(expect.objectContaining({
+      path: "/home/mjabbour/dev/amplifier",
+      repository: "microsoft/amplifier",
+    }));
+
+    const [requested, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(requested.origin).toBe(bridge);
+    expect(requested.pathname).toBe("/v1/api/repositories/clone");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      repositoryUrl: "https://github.com/microsoft/amplifier",
+    });
+  });
+
+  it("explains that an older remote host must be updated before cloning", async () => {
+    const bridge = "http://127.0.0.1:4319";
+    saveBridgeToken("0123456789abcdef0123456789abcdef", bridge);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "Not Found" }, 404)));
+
+    await expect(cloneGithubRepository(
+      "https://github.com/microsoft/amplifier",
+      bridge,
+      "spark-9602",
+    )).rejects.toThrow("Update Amplifier Host");
   });
 
   it("reads settings from the explicitly selected host instead of the globally configured bridge", async () => {
