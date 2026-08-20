@@ -24,9 +24,14 @@ use tokio::{
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const STOP_TASK_GRACE: Duration = Duration::from_secs(8);
 const EXIT_POLL: Duration = Duration::from_millis(120);
+const SINK_BACKPRESSURE_RETRY: Duration = Duration::from_millis(2);
 pub const DUPLICATE_RESUME_ERROR: &str = "That stored session is already open in Amplifier Studio";
 
-pub type EventSink = Arc<dyn Fn(SessionEvent) + Send + Sync + 'static>;
+/// Returns `true` when the event was accepted (or no subscriber remains) and
+/// `false` when a bounded transport needs the runtime reader to apply
+/// backpressure and retry. This keeps a durable history burst larger than the
+/// WebSocket queue from silently losing its tail.
+pub type EventSink = Arc<dyn Fn(&SessionEvent) -> bool + Send + Sync + 'static>;
 pub type AttachmentId = u64;
 
 #[derive(Debug, Clone)]
@@ -259,18 +264,36 @@ impl SessionManager {
         drop(sessions);
 
         let routed_sink = routed_sink(attached_sink);
-        spawn_stdout_reader(routed_sink.clone(), options.gui_id.clone(), stdout);
+        let mut readers = vec![spawn_stdout_reader(
+            routed_sink.clone(),
+            options.gui_id.clone(),
+            stdout,
+        )];
         if let Some(stderr) = stderr {
-            spawn_stderr_reader(routed_sink.clone(), options.gui_id.clone(), stderr);
+            readers.push(spawn_stderr_reader(
+                routed_sink.clone(),
+                options.gui_id.clone(),
+                stderr,
+            ));
         } else if let Some(path) = durable_stderr {
-            emit_log(
-                &routed_sink,
-                &options.gui_id,
-                "host",
-                format!("Detached runtime diagnostics: {}", path.display()),
-            );
+            let log_sink = routed_sink.clone();
+            let log_gui_id = options.gui_id.clone();
+            readers.push(tokio::spawn(async move {
+                deliver_log(
+                    &log_sink,
+                    &log_gui_id,
+                    "host",
+                    format!("Detached runtime diagnostics: {}", path.display()),
+                )
+                .await;
+            }));
         }
-        self.spawn_exit_monitor(routed_sink, options.gui_id.clone(), handle.child.clone());
+        self.spawn_exit_monitor(
+            routed_sink,
+            options.gui_id.clone(),
+            handle.child.clone(),
+            readers,
+        );
 
         Ok((
             StartSessionResult {
@@ -524,7 +547,13 @@ impl SessionManager {
         self.accepting.store(true, Ordering::SeqCst);
     }
 
-    fn spawn_exit_monitor(&self, sink: EventSink, gui_id: String, child: Arc<Mutex<Child>>) {
+    fn spawn_exit_monitor(
+        &self,
+        sink: EventSink,
+        gui_id: String,
+        child: Arc<Mutex<Child>>,
+        readers: Vec<tokio::task::JoinHandle<()>>,
+    ) {
         let sessions = self.sessions.clone();
         tokio::spawn(async move {
             let status = loop {
@@ -536,12 +565,13 @@ impl SessionManager {
                     Ok(Some(status)) => break Some(status),
                     Ok(None) => sleep(EXIT_POLL).await,
                     Err(error) => {
-                        emit_log(
+                        deliver_log(
                             &sink,
                             &gui_id,
                             "bridge",
                             format!("process monitor failed: {error}"),
-                        );
+                        )
+                        .await;
                         break None;
                     }
                 }
@@ -552,13 +582,29 @@ impl SessionManager {
             // unique for the lifetime of the app.
             sessions.lock().await.remove(&gui_id);
             let code = status.as_ref().and_then(std::process::ExitStatus::code);
-            let payload = ProcessExit {
-                code,
-                message: exit_message(code),
-            };
-            emit_serialized(&sink, &gui_id, "exit", payload);
+            deliver_exit_after_readers(&sink, &gui_id, readers, code).await;
         });
     }
+}
+
+async fn deliver_exit_after_readers(
+    sink: &EventSink,
+    gui_id: &str,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    code: Option<i32>,
+) {
+    // The process has exited, but BufReader may still hold the final
+    // stdout/stderr lines. Wait for both ordered readers to drain before
+    // publishing the terminal exit frame; the WebSocket writer closes after
+    // exit and must never overtake replay history.
+    for reader in readers {
+        let _ = reader.await;
+    }
+    let payload = ProcessExit {
+        code,
+        message: exit_message(code),
+    };
+    deliver_serialized(sink, gui_id, "exit", payload).await;
 }
 
 fn detached_runtime_log_path(gui_id: &str) -> Result<PathBuf, String> {
@@ -603,8 +649,9 @@ fn routed_sink(slot: AttachedSink) -> EventSink {
             .ok()
             .and_then(|current| current.as_ref().map(|(_, sink)| sink.clone()));
         if let Some(sink) = sink {
-            sink(event);
+            return sink(event);
         }
+        true
     })
 }
 
@@ -618,83 +665,99 @@ fn replace_sink(
     Ok(())
 }
 
-fn spawn_stdout_reader(sink: EventSink, gui_id: String, stdout: tokio::process::ChildStdout) {
+fn spawn_stdout_reader(
+    sink: EventSink,
+    gui_id: String,
+    stdout: tokio::process::ChildStdout,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
                     Ok(record) if record.is_object() => {
-                        emit_value(&sink, &gui_id, "record", record);
+                        deliver_value(&sink, &gui_id, "record", record).await;
                     }
-                    _ => emit_log(&sink, &gui_id, "stdout", line),
+                    _ => deliver_log(&sink, &gui_id, "stdout", line).await,
                 },
                 Ok(None) => break,
                 Err(error) => {
-                    emit_log(
+                    deliver_log(
                         &sink,
                         &gui_id,
                         "bridge",
                         format!("stdout read failed: {error}"),
-                    );
+                    )
+                    .await;
                     break;
                 }
             }
         }
-    });
+    })
 }
 
-fn spawn_stderr_reader(sink: EventSink, gui_id: String, stderr: tokio::process::ChildStderr) {
+fn spawn_stderr_reader(
+    sink: EventSink,
+    gui_id: String,
+    stderr: tokio::process::ChildStderr,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         loop {
             match lines.next_line().await {
-                Ok(Some(line)) => emit_log(&sink, &gui_id, "stderr", line),
+                Ok(Some(line)) => deliver_log(&sink, &gui_id, "stderr", line).await,
                 Ok(None) => break,
                 Err(error) => {
-                    emit_log(
+                    deliver_log(
                         &sink,
                         &gui_id,
                         "bridge",
                         format!("stderr read failed: {error}"),
-                    );
+                    )
+                    .await;
                     break;
                 }
             }
         }
-    });
+    })
 }
 
-fn emit_log(sink: &EventSink, gui_id: &str, stream: &'static str, message: String) {
-    emit_serialized(sink, gui_id, "log", ProcessLog { stream, message });
+async fn deliver_log(sink: &EventSink, gui_id: &str, stream: &'static str, message: String) {
+    deliver_serialized(sink, gui_id, "log", ProcessLog { stream, message }).await;
 }
 
-fn emit_serialized<T: serde::Serialize>(
+async fn deliver_serialized<T: serde::Serialize>(
     sink: &EventSink,
     gui_id: &str,
     channel: &'static str,
     payload: T,
 ) {
     match serde_json::to_value(payload) {
-        Ok(payload) => emit_value(sink, gui_id, channel, payload),
-        Err(error) => emit_value(
-            sink,
-            gui_id,
-            "log",
-            serde_json::json!({
-                "stream": "bridge",
-                "message": format!("could not serialize bridge event: {error}"),
-            }),
-        ),
+        Ok(payload) => deliver_value(sink, gui_id, channel, payload).await,
+        Err(error) => {
+            deliver_value(
+                sink,
+                gui_id,
+                "log",
+                serde_json::json!({
+                    "stream": "bridge",
+                    "message": format!("could not serialize bridge event: {error}"),
+                }),
+            )
+            .await
+        }
     }
 }
 
-fn emit_value(sink: &EventSink, gui_id: &str, channel: &'static str, payload: Value) {
-    sink(SessionEvent {
+async fn deliver_value(sink: &EventSink, gui_id: &str, channel: &'static str, payload: Value) {
+    let event = SessionEvent {
         gui_id: gui_id.to_owned(),
         channel,
         payload,
-    });
+    };
+    while !sink(&event) {
+        sleep(SINK_BACKPRESSURE_RETRY).await;
+    }
 }
 
 fn exit_message(code: Option<i32>) -> String {
@@ -793,7 +856,7 @@ mod tests {
     async fn draining_manager_rejects_new_starts_and_operations() {
         let manager = SessionManager::default();
         manager.stop_all().await.unwrap();
-        let sink: EventSink = Arc::new(|_| {});
+        let sink: EventSink = Arc::new(|_| true);
         let error = manager
             .start(
                 StartSessionOptions {
@@ -837,26 +900,90 @@ mod tests {
         assert!(!error.contains("shutting down"));
     }
 
+    #[tokio::test]
+    async fn bounded_sink_backpressure_retries_the_same_event_until_accepted() {
+        use std::sync::atomic::AtomicUsize;
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(StdMutex::new(Vec::new()));
+        let attempts_for_sink = attempts.clone();
+        let accepted_for_sink = accepted.clone();
+        let sink: EventSink = Arc::new(move |event| {
+            let attempt = attempts_for_sink.fetch_add(1, Ordering::SeqCst) + 1;
+            if attempt < 4 {
+                return false;
+            }
+            accepted_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+
+        deliver_value(
+            &sink,
+            "restored-session",
+            "record",
+            serde_json::json!({ "type": "history.end", "count": 298 }),
+        )
+        .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        let accepted = accepted.lock().unwrap();
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].payload["type"], "history.end");
+    }
+
+    #[tokio::test]
+    async fn exit_waits_for_the_final_reader_event() {
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let delivered_for_sink = delivered.clone();
+        let sink: EventSink = Arc::new(move |event| {
+            delivered_for_sink.lock().unwrap().push(event.clone());
+            true
+        });
+        let reader_sink = sink.clone();
+        let reader = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            deliver_value(
+                &reader_sink,
+                "ordered-session",
+                "record",
+                serde_json::json!({ "type": "history.end", "count": 300 }),
+            )
+            .await;
+        });
+
+        deliver_exit_after_readers(&sink, "ordered-session", vec![reader], Some(0)).await;
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].channel, "record");
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+    }
+
     #[test]
     fn routed_sink_can_be_replaced_and_stale_detach_is_detectable() {
         let first_events = Arc::new(StdMutex::new(Vec::new()));
         let second_events = Arc::new(StdMutex::new(Vec::new()));
         let first_capture = first_events.clone();
         let second_capture = second_events.clone();
-        let first: EventSink =
-            Arc::new(move |event| first_capture.lock().unwrap().push(event.gui_id));
-        let second: EventSink =
-            Arc::new(move |event| second_capture.lock().unwrap().push(event.gui_id));
+        let first: EventSink = Arc::new(move |event| {
+            first_capture.lock().unwrap().push(event.gui_id.clone());
+            true
+        });
+        let second: EventSink = Arc::new(move |event| {
+            second_capture.lock().unwrap().push(event.gui_id.clone());
+            true
+        });
         let slot = Arc::new(RwLock::new(Some((1, first))));
         let route = routed_sink(slot.clone());
 
-        route(SessionEvent {
+        route(&SessionEvent {
             gui_id: "one".into(),
             channel: "record",
             payload: Value::Null,
         });
         replace_sink(&slot, Some((2, second))).unwrap();
-        route(SessionEvent {
+        route(&SessionEvent {
             gui_id: "two".into(),
             channel: "record",
             payload: Value::Null,
@@ -878,7 +1005,7 @@ mod tests {
             .into_owned();
         let manager = SessionManager::default();
         let child = Arc::new(Mutex::new(Command::new("sleep").arg("60").spawn().unwrap()));
-        let original_sink: EventSink = Arc::new(|_| {});
+        let original_sink: EventSink = Arc::new(|_| true);
         let sink_slot = Arc::new(RwLock::new(Some((1, original_sink))));
         manager.sessions.lock().await.insert(
             "live-mobile-session".to_owned(),
@@ -891,7 +1018,7 @@ mod tests {
             },
         );
 
-        let replacement_sink: EventSink = Arc::new(|_| {});
+        let replacement_sink: EventSink = Arc::new(|_| true);
         let (gui_id, attachment_id) = manager
             .attach_resume(&project_path, "durable-123", replacement_sink)
             .await

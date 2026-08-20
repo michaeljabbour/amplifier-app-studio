@@ -182,9 +182,10 @@ async fn start_session(
                 .to_owned(),
         );
     }
-    let sink: EventSink = Arc::new(move |event: SessionEvent| {
+    let sink: EventSink = Arc::new(move |event: &SessionEvent| {
         let name = format!("session://{}/{}", event.gui_id, event.channel);
-        let _ = app.emit(&name, event.payload);
+        let _ = app.emit(&name, event.payload.clone());
+        true
     });
     manager.start(options, sink).await
 }
