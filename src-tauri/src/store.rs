@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -592,6 +592,27 @@ struct TranscriptScan {
     summary: TranscriptSummary,
 }
 
+/// Whether the file's last byte is a newline, i.e. whether the final append completed.
+///
+/// This is what separates "the process died part-way through writing a record" from "a record
+/// on disk is malformed". Only the former is safe to recover from.
+fn ends_with_newline(path: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let Ok(size) = file.seek(SeekFrom::End(0)) else {
+        return false;
+    };
+    if size == 0 {
+        return true;
+    }
+    if file.seek(SeekFrom::Start(size - 1)).is_err() {
+        return false;
+    }
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last).is_ok() && last[0] == b'\n'
+}
+
 fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
     let backup = path.with_file_name("transcript.jsonl.backup");
     let mut saw_candidate = false;
@@ -606,7 +627,12 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
         let mut summary = TranscriptSummary::default();
         let mut count = 0_u64;
         let mut valid = true;
-        for line in BufReader::new(file).lines() {
+        // A completed append always ends in a newline; its absence is the signal that the last
+        // record was cut short rather than written wrong.
+        let tail_may_be_torn = !ends_with_newline(candidate);
+        // Peekable so an unparseable line can be told apart from an unparseable *final* line.
+        let mut lines = BufReader::new(file).lines().peekable();
+        while let Some(line) = lines.next() {
             let Ok(line) = line else {
                 valid = false;
                 break;
@@ -615,6 +641,18 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
                 continue;
             }
             let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&line) else {
+                // A torn LAST line is a crash or power loss part-way through an append, not a
+                // damaged transcript: every record before it is intact. Condemning the whole
+                // file here meant one interrupted write hid the entire conversation and sent
+                // the reader to a stale backup, or reported the session as unreadable outright.
+                //
+                // The tolerance is deliberately narrow. All three must hold: it is the final
+                // line, the file does not end in a newline, and at least one good record came
+                // before it. A malformed-but-complete line, or a file that is nothing but
+                // garbage, is still corruption.
+                if lines.peek().is_none() && tail_may_be_torn && count > 0 {
+                    break;
+                }
                 valid = false;
                 break;
             };
@@ -990,6 +1028,57 @@ fn string_array_field(metadata: &Map<String, Value>, field: &str) -> Vec<String>
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// Regression: any unparseable line set `valid = false` and abandoned the whole transcript,
+    /// so a crash part-way through a single append hid every message written before it.
+    #[test]
+    fn a_torn_final_line_keeps_the_records_written_before_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("transcript.jsonl");
+        let mut file = File::create(&path).expect("transcript");
+        writeln!(file, r#"{{"role":"user","content":"first question"}}"#).unwrap();
+        writeln!(file, r#"{{"role":"assistant","content":"first answer"}}"#).unwrap();
+        // Power loss mid-append: truncated JSON, no trailing newline.
+        write!(file, r#"{{"role":"user","content":"third qu"#).unwrap();
+        drop(file);
+
+        let scan =
+            scan_transcript_with_backup(&path).expect("a torn tail must not condemn the file");
+        assert_eq!(scan.count, 2);
+        assert_eq!(scan.summary.first_user.as_deref(), Some("first question"));
+        assert_eq!(scan.summary.last_assistant.as_deref(), Some("first answer"));
+    }
+
+    /// A malformed line that was written *completely* is corruption, not a torn write.
+    #[test]
+    fn a_complete_but_malformed_final_line_is_still_damage() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("transcript.jsonl");
+        let mut file = File::create(&path).expect("transcript");
+        writeln!(file, r#"{{"role":"user","content":"first question"}}"#).unwrap();
+        writeln!(file, "{{ this is not json").unwrap();
+        drop(file);
+
+        assert!(scan_transcript_with_backup(&path).is_none());
+    }
+
+    /// The tolerance is deliberately narrow: damage anywhere but the very end still counts.
+    #[test]
+    fn corruption_before_the_final_line_is_still_damage() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("transcript.jsonl");
+        let mut file = File::create(&path).expect("transcript");
+        writeln!(file, r#"{{"role":"user","content":"first question"}}"#).unwrap();
+        writeln!(file, "{{ this is not json").unwrap();
+        writeln!(
+            file,
+            r#"{{"role":"assistant","content":"after the damage"}}"#
+        )
+        .unwrap();
+        drop(file);
+
+        assert!(scan_transcript_with_backup(&path).is_none());
+    }
 
     #[test]
     fn donor_slug_rule_is_preserved() {

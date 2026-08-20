@@ -4,6 +4,32 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.47 — 2026-08-20
+
+Second hardening pass: the remaining security and durability items that were
+scoped out of 0.1.46.
+
+- The browser host now serves a Content-Security-Policy. It previously sent
+  none, so the "network off" promise on `amplifier-html` artifacts held only in
+  the desktop app -- in a browser the sandboxed frame could navigate itself to
+  an external URL and beacon out, which an artifact's own inner policy cannot
+  prevent. Also adds `nosniff`, `no-referrer`, and `frame-ancestors 'none'`.
+  The router is now built by a testable function so the headers are asserted on
+  a real response rather than on a constant.
+- The Amplifier Host bearer token is created 0600 under a 0700 directory
+  instead of being written at the process umask and narrowed afterwards, which
+  left it world-readable for the window between the two calls.
+- Attachments are bounded before they are read: the size check ran after
+  `std::fs::read`, so one oversized file was pulled fully into memory first.
+- `.docx` text extraction now inflates through a hard cap. Compressed size says
+  nothing about inflated size, so a few KB of crafted zip could expand into
+  gigabytes and abort the process from a single attached file.
+- A transcript whose final line was cut short mid-append is recovered instead
+  of being condemned in full. The tolerance is narrow on purpose: the line must
+  be last, the file must not end in a newline, and at least one good record
+  must precede it. A complete-but-malformed line, or a file that is nothing but
+  garbage, is still reported as corrupt.
+
 ## 0.1.46 — 2026-08-20
 
 Production-hardening pass over 0.1.45. Every item below only reproduced in a

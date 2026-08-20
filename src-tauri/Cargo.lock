@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "amplifier-studio"
-version = "0.1.46"
+version = "0.1.47"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -75,6 +75,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "tower",
  "tower-http",
  "windows-sys 0.61.2",
  "zip 2.4.2",
