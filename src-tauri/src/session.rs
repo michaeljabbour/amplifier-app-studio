@@ -827,6 +827,11 @@ fn routed_sink(slot: AttachedSink) -> EventSink {
                     .await
                     .is_err()
                     {
+                        let current = slot.current.read().await.clone();
+                        if current.is_some() {
+                            reconnect_deadline = None;
+                            continue;
+                        }
                         return true;
                     }
                     continue;
@@ -845,6 +850,14 @@ fn routed_sink(slot: AttachedSink) -> EventSink {
                     .await
                     .is_err()
                     {
+                        let current = slot.current.read().await.clone();
+                        if current
+                            .as_ref()
+                            .is_some_and(|(current_id, _)| *current_id != attachment_id)
+                        {
+                            reconnect_deadline = None;
+                            continue;
+                        }
                         return true;
                     }
                     continue;
@@ -1573,6 +1586,52 @@ mod tests {
             .expect("bounded reconnect grace expires")
             .unwrap());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn replacement_visible_at_tail_grace_expiry_receives_the_event() {
+        let (failed_tx, failed_rx) = tokio::sync::oneshot::channel();
+        let failed_tx = Arc::new(StdMutex::new(Some(failed_tx)));
+        let failed_tx_for_sink = failed_tx.clone();
+        let slot = attached_sink(Some((
+            1,
+            sync_sink(move |_| {
+                if let Some(sender) = failed_tx_for_sink.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                false
+            }),
+        )));
+        let route = routed_sink(slot.clone());
+        let delivery = tokio::spawn(async move {
+            route(&SessionEvent {
+                gui_id: "tail-grace-boundary".to_owned(),
+                channel: "record",
+                payload: serde_json::json!({ "type": "history.end", "count": 300 }),
+            })
+            .await
+        });
+        failed_rx.await.unwrap();
+
+        let replacement_events = Arc::new(StdMutex::new(Vec::new()));
+        let replacement_capture = replacement_events.clone();
+        *slot.current.write().await = Some((
+            2,
+            sync_sink(move |event| {
+                replacement_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        ));
+        // Deliberately do not publish the generation. The timeout path must
+        // re-read the lease and observe an attachment installed at the exact
+        // grace boundary instead of treating the failed tail as delivered.
+        timeout(Duration::from_secs(1), delivery)
+            .await
+            .expect("replacement receives the grace-boundary tail")
+            .unwrap();
+        let replacement_events = replacement_events.lock().unwrap();
+        assert_eq!(replacement_events.len(), 1);
+        assert_eq!(replacement_events[0].channel, "record");
     }
 
     #[tokio::test]
