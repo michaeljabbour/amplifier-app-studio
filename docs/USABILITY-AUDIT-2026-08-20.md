@@ -7,7 +7,7 @@ workbench. The evidence board is in
 
 ## Outcome
 
-Studio 0.1.42 makes the durable runtime visible and recoverable instead of
+Studio 0.1.43 makes the durable runtime visible and recoverable instead of
 treating a tab as the process itself. The same design language now covers Agent
 sessions, mobile Work, and native terminal sessions. The release intentionally
 does not claim durable mobile host authentication; that remains blocked on a
