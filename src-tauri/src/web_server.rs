@@ -919,7 +919,7 @@ fn socket_attachment_requires_detach(terminal_exit_delivered: bool) -> bool {
     !terminal_exit_delivered
 }
 
-pub(crate) async fn cleanup_socket_attachment(
+async fn cleanup_socket_attachment(
     manager: &SessionManager,
     attachment: Option<(String, AttachmentId)>,
     terminal_exit_delivered: bool,
@@ -929,6 +929,29 @@ pub(crate) async fn cleanup_socket_attachment(
             let _ = manager.detach(&attached_gui_id, id).await;
         }
     }
+}
+
+pub(crate) async fn finish_socket_attachment(
+    manager: &SessionManager,
+    attachment: Option<(String, AttachmentId)>,
+    terminal_exit_delivered: &AtomicBool,
+    writer: &mut tokio::task::JoinHandle<()>,
+    writer_finished: bool,
+) {
+    // A peer close can race the terminal send. Quiesce the writer before
+    // loading its marker so the cleanup decision has a hard happens-before
+    // boundary: either exit was confirmed and published, or it can no longer
+    // become confirmed after this point.
+    if !writer_finished {
+        writer.abort();
+        let _ = (&mut *writer).await;
+    }
+    cleanup_socket_attachment(
+        manager,
+        attachment,
+        terminal_exit_delivered.load(Ordering::Acquire),
+    )
+    .await;
 }
 
 async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
@@ -1216,15 +1239,14 @@ async fn session_socket(socket: WebSocket, state: ServerState, gui_id: String) {
         }
     }
 
-    cleanup_socket_attachment(
+    finish_socket_attachment(
         &state.manager,
         attachment,
-        terminal_exit_delivered.load(Ordering::Acquire),
+        &terminal_exit_delivered,
+        &mut writer,
+        writer_finished,
     )
     .await;
-    if !writer_finished {
-        writer.abort();
-    }
 }
 
 fn socket_sink(outbound: Outbound) -> EventSink {

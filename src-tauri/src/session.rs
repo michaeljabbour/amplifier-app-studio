@@ -2185,16 +2185,32 @@ mod tests {
         });
         exit_entered_rx.await.unwrap();
 
-        // WebSocket cleanup races the finalizer immediately after the writer
-        // confirms exit. A terminal completion must leave the lease intact so
-        // the finalizer can remove it without entering reconnect grace.
-        crate::web_server::cleanup_socket_attachment(
+        // Model the exact peer-close race: the reader sees a false marker,
+        // then the writer confirms exit before cleanup can acquire the session
+        // map. Cleanup must quiesce that writer and use the fresh marker.
+        let terminal_exit_delivered = Arc::new(AtomicBool::new(false));
+        let stale_peer_close_snapshot = terminal_exit_delivered.load(Ordering::Acquire);
+        assert!(!stale_peer_close_snapshot);
+        let sessions_guard = manager.sessions.lock().await;
+        let writer_terminal_exit = terminal_exit_delivered.clone();
+        let (writer_marked_tx, writer_marked_rx) = tokio::sync::oneshot::channel();
+        let mut writer = tokio::spawn(async move {
+            writer_terminal_exit.store(true, Ordering::Release);
+            let _ = release_exit_tx.send(());
+            let _ = writer_marked_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        writer_marked_rx.await.unwrap();
+
+        crate::web_server::finish_socket_attachment(
             &manager,
             Some(("confirmed-terminal".to_owned(), 1)),
-            true,
+            &terminal_exit_delivered,
+            &mut writer,
+            false,
         )
         .await;
-        let _ = release_exit_tx.send(());
+        drop(sessions_guard);
         timeout(EVENT_REATTACH_GRACE / 2, finalizer)
             .await
             .expect("confirmed exit removes the handle without reconnect grace")
