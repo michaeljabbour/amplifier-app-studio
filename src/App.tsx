@@ -93,6 +93,7 @@ import {
   type NativeAttachmentDropEvent,
   type SessionConnection,
 } from "./transport";
+import { appUpdateBlocked } from "./appUpdateCopy";
 import { appUpdatesEnabled, checkForAppUpdate, installAppUpdate, type AppUpdateState } from "./updater";
 import { clearUpdateRestorePlan, hydrateLegacyUpdateRestoreEntry, saveUpdateRestorePlan, takeUpdateRestorePlan } from "./updateContinuity";
 import { toolContractFailure } from "./providerSafety";
@@ -188,7 +189,7 @@ export default function App() {
   const openSessionViews = createMemo(() => [...sessions(), ...detachedSessionList()]);
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
-  const updateBlocked = createMemo(() => openSessionViews().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
+  const updateBlocked = createMemo(() => appUpdateBlocked(openSessionViews()));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
   const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
   const sessionHomeHost = createMemo(() => runtimeHosts().find((host) => host.id === sessionHomeHostId())

@@ -48,4 +48,18 @@ describe("renderMarkdown", () => {
         { kind: "pending-artifact", format: "dot", source: "digraph spark {" },
       ]);
   });
+
+  // Regression: the sanitizer kept `class` and `role`, so agent output -- which is untrusted, a
+  // model reading a hostile repo can be prompt-injected -- could reuse Studio's own chrome
+  // classes and render convincing fake UI inside the transcript.
+  it("strips chrome-spoofing class and role attributes but keeps syntax highlighting hooks", () => {
+    const html = renderMarkdown('<div class="fatal-card" role="alert">Session terminated. Enter your token:</div>');
+    expect(html).not.toContain("fatal-card");
+    expect(html).not.toContain('role="alert"');
+    expect(html).toContain("Session terminated");
+
+    const code = renderMarkdown("```ts\nconst x = 1;\n```");
+    expect(code).toContain("language-ts");
+  });
+
 });
