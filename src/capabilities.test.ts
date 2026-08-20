@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { capabilityReadiness, capabilitySessionInput, STUDIO_CAPABILITIES } from "./capabilities";
+import {
+  capabilityReadiness,
+  capabilitySessionInput,
+  capabilityStatusLabel,
+  sessionUsesCapability,
+  STUDIO_CAPABILITIES,
+} from "./capabilities";
 
 describe("Studio capabilities", () => {
   it("pins the image studio and composes App Use as a real runtime", () => {
@@ -35,5 +41,13 @@ describe("Studio capabilities", () => {
     })).toBe("catalogued");
     const terminal = STUDIO_CAPABILITIES.find((item) => item.id === "terminal")!;
     expect(capabilityReadiness(terminal, { bundles: [], providers: [] })).toBe("composition");
+    expect(capabilityStatusLabel("on-demand")).toBe("Available on demand");
+  });
+
+  it("distinguishes a capability mounted in this tab from one available in Studio", () => {
+    const imagen = STUDIO_CAPABILITIES.find((item) => item.id === "imagen")!;
+    expect(sessionUsesCapability(imagen, { bundle: "tui", capabilityId: undefined })).toBe(false);
+    expect(sessionUsesCapability(imagen, { bundle: "imagen", capabilityId: undefined })).toBe(true);
+    expect(sessionUsesCapability(imagen, { bundle: "tui", capabilityId: "imagen" })).toBe(true);
   });
 });

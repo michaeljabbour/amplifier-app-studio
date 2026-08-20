@@ -7,6 +7,7 @@ import { PlanPanel } from "./Plan";
 import { ExecutionMap } from "./ExecutionMap";
 import { formatSessionCost } from "../costEstimate";
 import { sessionPlacement, workAttentionItems } from "../mobileWork";
+import { sessionUsesCapability, STUDIO_CAPABILITIES, type StudioCapability } from "../capabilities";
 
 export type InspectorTab = "run" | "map" | "plan" | "agent" | "build" | "bundles" | "outputs" | "context";
 
@@ -26,6 +27,7 @@ interface Props {
   onAddBundle: (uri: string, name?: string) => Promise<void>;
   onRefreshBundles: () => Promise<void>;
   onCapabilities: () => void;
+  onStartCapability: (capability: StudioCapability) => void;
   onRequestContext: () => void;
   onOpenOutput?: (path: string) => Promise<void>;
   onClose?: () => void;
@@ -220,6 +222,8 @@ function BuildPanel(props: Props) {
     || props.providers.find((provider) => provider.active);
   const safeProviders = () => props.providers.filter((provider) => provider.toolCompatible);
   const experimentalProviders = () => props.providers.filter((provider) => !provider.toolCompatible);
+  const imageStudio = STUDIO_CAPABILITIES.find((capability) => capability.id === "imagen")!;
+  const imageStudioMounted = () => sessionUsesCapability(imageStudio, props.state);
   return (
     <>
       <Show when={props.catalogError} keyed>{(message) => <div class="catalog-discovery-warning" role="status">Amplifier catalog unavailable: {message}. Existing session settings below come from runtime events; provider alternatives may be incomplete.</div>}</Show>
@@ -238,6 +242,17 @@ function BuildPanel(props: Props) {
           <button class="secondary-button" onClick={props.onCycleEffort}>Cycle effort now</button>
         </div>
         <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
+      </InspectorSection>
+      <InspectorSection title="Image generation" meta={imageStudioMounted() ? "MOUNTED IN THIS TAB" : "PARALLEL CAPABILITY"}>
+        <div classList={{ "capability-boundary-card": true, mounted: imageStudioMounted() }}>
+          <strong>{imageStudioMounted() ? "Imagen is mounted" : "Imagen is not mounted in this tab"}</strong>
+          <p>{imageStudioMounted()
+            ? "Image requests in this session can call Imagen's provider tools directly."
+            : `This ${props.state.bundle} session cannot call generate_image. Open Studio's pinned Image Studio beside it; the runtime host will verify imagen-mcp and provider credentials when it starts.`}</p>
+          <Show when={!imageStudioMounted()}>
+            <button class="secondary-button" onClick={() => props.onStartCapability(imageStudio)}>Open Image Studio in parallel</button>
+          </Show>
+        </div>
       </InspectorSection>
       <InspectorSection title="Tool-compatible providers" meta={String(safeProviders().length)}>
         <Show when={safeProviders().length} fallback={<p class="inspector-empty">{props.catalogError ? "Provider routes are unavailable because catalog discovery failed." : "No tool-compatible provider routes were discovered."}</p>}>

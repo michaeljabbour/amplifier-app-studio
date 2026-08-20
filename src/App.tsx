@@ -1051,6 +1051,7 @@ export default function App() {
               onAddBundle={registerBundle}
               onRefreshBundles={reloadCatalog}
               onCapabilities={() => setCapabilitiesOpen(true)}
+              onStartCapability={openCapability}
               onRequestContext={() => void requestContextForActive()}
               onOpenOutput={async (path) => {
                 try {
