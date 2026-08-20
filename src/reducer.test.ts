@@ -475,6 +475,135 @@ describe("session reducer", () => {
     expect(state.blocks.at(-1)).toMatchObject({ kind: "notice", level: "warning" });
   });
 
+  it("renders a legacy transcript snapshot without inventing rich session state", () => {
+    let state = createSessionState("gui-legacy", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.begin",
+      since: 0,
+      source: "transcript",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:1",
+      role: "user",
+      text: "Review the interop dossier",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:2",
+      role: "assistant",
+      text: "The core provocation is seamless session mobility.",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 0,
+      count: 0,
+      source: "transcript",
+      transcript_count: 2,
+    });
+
+    expect(state.restoreSource).toBe("transcript");
+    expect(state.restoredTranscriptMessages).toBe(2);
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "user", text: "Review the interop dossier" }),
+      expect.objectContaining({ kind: "answer", text: "The core provocation is seamless session mobility.", final: true }),
+    ]);
+    expect(state.plans).toEqual({});
+    expect(state.outputs).toEqual([]);
+    expect(state.lanes).toEqual({});
+  });
+
+  it("deduplicates a legacy transcript when native restore retries overlap", () => {
+    let state = createSessionState("gui-legacy-retry", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    const prompt = {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:1",
+      role: "user",
+      text: "Review the interop dossier",
+    };
+
+    state = reduceRecord(state, prompt);
+    state = reduceRecord(state, prompt);
+
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "user", text: "Review the interop dossier" }),
+    ]);
+    expect(state.replayedTranscriptMessageIds).toEqual({ "runtime-1:transcript:1": true });
+  });
+
+  it("allows a clean legacy transcript rebuild after an incomplete restore retry", () => {
+    let state = createSessionState("gui-legacy-reset", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+    });
+    const prompt = {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:1",
+      role: "user",
+      text: "Review the interop dossier",
+    };
+
+    state = reduceRecord(state, prompt);
+    state = reduceRecord(state, runtime(1, {
+      kind: "provider_response_usage",
+      input_tokens: 100,
+      output_tokens: 50,
+      cost_usd: 0.25,
+    }, true));
+    state = markRestoreDegraded(state, "history.end was interrupted");
+    state = retryRestore(state);
+
+    expect(state.restoreProgress).toEqual({ history: false, status: false });
+    expect(state.context).toMatchObject({ inputTokens: 0, outputTokens: 0, costUsd: "0", usageResponses: 0 });
+    expect(state.turnLoop).toMatchObject({ phase: "idle", appliedEvents: {} });
+    expect(state.restoreSource).toBeUndefined();
+
+    state = reduceRecord(state, prompt);
+
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "user", text: "Review the interop dossier" }),
+    ]);
+    expect(state.replayedTranscriptMessageIds).toEqual({ "runtime-1:transcript:1": true });
+  });
+
+  it("does not call an empty replay successful when the stored transcript is non-empty", () => {
+    let state = createSessionState("gui-old-owner", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryMessages: 101,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 0,
+      count: 0,
+    });
+
+    expect(state.phase).toBe("degraded");
+    expect(state.restoreProgress).toMatchObject({ history: false });
+    expect(state.restoreIssue?.message).toContain("101 saved transcript records");
+    expect(state.restoreIssue?.message).toContain("older runtime");
+  });
+
   it("keeps replayed agents inspectable without calling them live after an idle restore", () => {
     let state = createSessionState("gui-resume", {
       projectDir: "/tmp/project",

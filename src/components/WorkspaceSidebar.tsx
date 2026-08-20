@@ -5,7 +5,7 @@ import { Markdown } from "./Markdown";
 
 interface Props {
   state: SessionViewState;
-  parallelCount: number;
+  parallelSummary: string;
   lanes: LaneState[];
   selectedLaneId?: string;
   onSelectLane: (id: string) => void;
@@ -31,9 +31,9 @@ export function WorkspaceSidebar(props: Props) {
       <section class="sidebar-section">
         <div class="sidebar-heading">
           <span>PARALLEL SESSIONS</span>
-          <b>{props.parallelCount} OPEN</b>
+          <b>{props.parallelSummary}</b>
         </div>
-        <p class="sidebar-section-hint">Each tab above is an independent Amplifier runtime. Switching tabs does not stop the others.</p>
+        <p class="sidebar-section-hint">Active tabs run independently. Stopped tabs retain diagnostics until you close or retry them.</p>
         <div class="sidebar-session-actions">
           <button class="primary" onClick={props.onNew}>+ New parallel session</button>
           <button onClick={props.onResume}>Resume stored</button>

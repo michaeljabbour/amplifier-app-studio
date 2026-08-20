@@ -8,6 +8,7 @@ import {
   launchSession,
   listRuntimeHosts,
   probeRuntimeHost,
+  prepareSessionLaunch,
   readRuntimeSettings,
   removeRuntimeHost,
   runtimeHostId,
@@ -53,6 +54,21 @@ describe("bridge trust storage", () => {
 
     window.history.replaceState({}, "", "/?bridge=http://127.0.0.1:9666");
     expect(configuredBridgeToken()).toBe("");
+  });
+
+  it("preflights an unowned remote bridge before a dead tab is created", async () => {
+    saveBridgeUrl("http://127.0.0.1:9555");
+
+    await expect(prepareSessionLaunch({
+      projectDir: "/remote/project",
+      hostUrl: "http://127.0.0.1:9555",
+    })).rejects.toThrow("Enter the Rust bridge bearer token");
+
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:9555");
+    await expect(prepareSessionLaunch({
+      projectDir: "/remote/project",
+      hostUrl: "http://127.0.0.1:9555",
+    })).resolves.toBeUndefined();
   });
 
   it("persists proven mobile host metadata without invoking desktop-only storage", async () => {
@@ -215,14 +231,83 @@ describe("bridge trust storage", () => {
     sockets[1].message(eventEnvelope("already-seen", 1, true));
     sockets[1].message(eventEnvelope("missed", 2, true));
     sockets[1].message(eventEnvelope("at-boundary", 3, true));
+    const transcriptMessage = recordEnvelope({
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-one:transcript:1",
+      role: "user",
+      text: "Legacy prompt",
+    });
+    sockets[1].message(transcriptMessage);
+    sockets[1].message(transcriptMessage);
     sockets[1].message(recordEnvelope({ schema_version: 1, type: "history.end", cursor: 3 }));
     expect(runtimeEventIds(onRecord)).toEqual(["already-seen", "missed", "at-boundary"]);
+    expect(onRecord.mock.calls
+      .map(([record]) => record)
+      .filter((record) => record?.type === "transcript.message"))
+      .toHaveLength(1);
 
     sockets[1].message(eventEnvelope("after-cursor", 999));
     sockets[1].disconnect();
     await vi.advanceTimersByTimeAsync(300);
     sockets[2].open();
     expect(sockets[2].messages()).toEqual([{ type: "attach", since: 3, version: 1 }]);
+
+    connection.dispose();
+    vi.useRealTimers();
+  });
+
+  it("does not append a cursorless legacy transcript again on reconnect", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-legacy-reconnect", projectDir: "/project" },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn() },
+    );
+    const replayLegacy = (socket: FakeWebSocket) => {
+      socket.message(recordEnvelope({ schema_version: 1, type: "history.begin", since: 0, source: "transcript" }));
+      socket.message(recordEnvelope({
+        schema_version: 1,
+        type: "transcript.message",
+        replay: true,
+        message_id: "runtime-one:transcript:1",
+        role: "user",
+        text: "Legacy prompt",
+      }));
+      socket.message(recordEnvelope({
+        schema_version: 1,
+        type: "history.end",
+        cursor: 0,
+        source: "transcript",
+        transcript_count: 1,
+      }));
+    };
+
+    sockets[0].open();
+    sockets[0].message({ type: "ready", guiId: "gui-legacy-reconnect", attached: false });
+    const connection = await pending;
+    replayLegacy(sockets[0]);
+    expect(transcriptMessages(onRecord)).toHaveLength(1);
+
+    for (let reconnect = 1; reconnect <= 2; reconnect += 1) {
+      sockets[reconnect - 1].disconnect();
+      await vi.advanceTimersByTimeAsync(300);
+      sockets[reconnect].open();
+      sockets[reconnect].message({ type: "ready", guiId: "gui-legacy-reconnect", attached: true, since: 0 });
+      replayLegacy(sockets[reconnect]);
+      expect(transcriptMessages(onRecord)).toHaveLength(1);
+    }
 
     connection.dispose();
     vi.useRealTimers();
@@ -299,6 +384,12 @@ function runtimeEventIds(spy: ReturnType<typeof vi.fn>): string[] {
     .map(([record]) => record)
     .filter((record) => record?.type === "runtime.event")
     .map((record) => record.event.event_id as string);
+}
+
+function transcriptMessages(spy: ReturnType<typeof vi.fn>): Record<string, unknown>[] {
+  return spy.mock.calls
+    .map(([record]) => record as Record<string, unknown>)
+    .filter((record) => record.type === "transcript.message");
 }
 
 class FakeWebSocket {

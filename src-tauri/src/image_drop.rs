@@ -178,8 +178,19 @@ fn extract_docx_text(path: &Path, bytes: &[u8]) -> Result<String, String> {
                 }
             }
             Ok(Event::Text(event)) if in_text => {
-                let unescaped = event
-                    .unescape()
+                let decoded = event
+                    .decode()
+                    .map_err(|error| format!("Could not decode {}: {error}", display_name(path)))?;
+                let unescaped = quick_xml::escape::unescape(&decoded)
+                    .map_err(|error| format!("Could not decode {}: {error}", display_name(path)))?;
+                output.push_str(&unescaped);
+            }
+            Ok(Event::GeneralRef(event)) if in_text => {
+                let reference = event
+                    .decode()
+                    .map_err(|error| format!("Could not decode {}: {error}", display_name(path)))?;
+                let encoded = format!("&{reference};");
+                let unescaped = quick_xml::escape::unescape(&encoded)
                     .map_err(|error| format!("Could not decode {}: {error}", display_name(path)))?;
                 output.push_str(&unescaped);
             }
@@ -317,7 +328,7 @@ mod tests {
             .start_file("word/document.xml", SimpleFileOptions::default())
             .unwrap();
         archive.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>First paragraph.</w:t></w:r></w:p><w:p><w:r><w:t>Second paragraph.</w:t></w:r></w:p></w:body></w:document>"#,
+            br#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="urn:test"><w:body><w:p><w:r><w:t>First &amp; second.</w:t></w:r></w:p><w:p><w:r><w:t>Third paragraph.</w:t></w:r></w:p></w:body></w:document>"#,
         ).unwrap();
         archive.finish().unwrap();
 
@@ -325,7 +336,7 @@ mod tests {
         assert_eq!(attachments[0].kind, "document");
         assert_eq!(
             attachments[0].text.as_deref(),
-            Some("First paragraph.\nSecond paragraph.\n")
+            Some("First & second.\nThird paragraph.\n")
         );
     }
 }

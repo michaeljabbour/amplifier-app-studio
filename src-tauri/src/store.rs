@@ -105,11 +105,11 @@ fn list_stored_sessions_from(
     if !projects.is_dir() {
         return Vec::new();
     }
-    let directory_hints = project_directory_hints(&projects);
+    let directory_hints = project_directory_hints(projects);
 
     let cache = read_session_index_cache(projects);
     let mut tasks = Vec::new();
-    for project in read_dirs(&projects) {
+    for project in read_dirs(projects) {
         let Ok(file_type) = project.file_type() else {
             continue;
         };

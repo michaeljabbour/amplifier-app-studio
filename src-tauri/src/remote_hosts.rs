@@ -78,7 +78,7 @@ pub fn resolve_token(id: &str) -> Result<String, String> {
     if let Some(variable) = host.token_ref.strip_prefix("env:") {
         return env::var(variable)
             .ok()
-            .filter(|value| (32..=4096).contains(&value.trim().as_bytes().len()))
+            .filter(|value| (32..=4096).contains(&value.trim().len()))
             .map(|value| value.trim().to_owned())
             .ok_or_else(|| format!("Set {variable} to the bearer token for host '{id}'"));
     }
@@ -97,7 +97,7 @@ pub fn resolve_token(id: &str) -> Result<String, String> {
             .map_err(|error| format!("Could not read macOS Keychain: {error}"))?;
         if output.status.success() {
             let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if (32..=4096).contains(&token.as_bytes().len()) {
+            if (32..=4096).contains(&token.len()) {
                 return Ok(token);
             }
         }
@@ -123,7 +123,7 @@ pub fn store_token(id: &str, token: &str) -> Result<(), String> {
         .find(|host| host.id == id)
         .ok_or_else(|| format!("Unknown Amplifier host '{id}'"))?;
     let token = token.trim();
-    if !(32..=4096).contains(&token.as_bytes().len()) {
+    if !(32..=4096).contains(&token.len()) {
         return Err("Host bearer tokens must contain 32 to 4096 bytes".to_owned());
     }
     #[cfg(target_os = "macos")]

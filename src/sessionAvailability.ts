@@ -22,6 +22,12 @@ export function storedSessionCanDuplicate(session: StoredSession): boolean {
   return session.messageCount > 0 && !["empty", "corrupt", "transcript_lost"].includes(session.state);
 }
 
+/** Empty runtime attempts have no action Studio can safely offer. Keep them in
+ * the on-disk index for diagnostics, but do not present them as resumable work. */
+export function storedSessionShouldList(session: StoredSession): boolean {
+  return !(session.state === "empty" && session.messageCount === 0);
+}
+
 export function storedSessionWarning(session: StoredSession): string | undefined {
   if (!session.projectDir) return "Choose the original project folder before resuming.";
   if (session.state === "transcript_lost") {
