@@ -652,16 +652,20 @@ async fn deliver_exit_and_remove_session(
         };
 
         let Some((attachment_id, sink)) = candidate else {
-            if let Some(deadline) = reconnect_deadline {
-                if timeout(
-                    deadline.saturating_duration_since(Instant::now()),
-                    changes.changed(),
-                )
-                .await
-                .is_ok()
-                {
-                    continue;
-                }
+            // A clean WebSocket detach leaves no failed writer from which to
+            // establish a reconnect deadline. Keep the ended handle available
+            // for the same bounded grace so Studio's scheduled reattach can
+            // still claim the lease and receive the terminal exit.
+            let deadline =
+                *reconnect_deadline.get_or_insert_with(|| Instant::now() + EVENT_REATTACH_GRACE);
+            if timeout(
+                deadline.saturating_duration_since(Instant::now()),
+                changes.changed(),
+            )
+            .await
+            .is_ok()
+            {
+                continue;
             }
             // No client remains. Serialize absence with attach: either this
             // removes the ended session first, or a new attachment wins and
@@ -1343,6 +1347,122 @@ mod tests {
             .lock()
             .await
             .contains_key("reattach-during-drain"));
+    }
+
+    #[tokio::test]
+    async fn clean_detach_before_exit_preserves_tail_and_exit_through_reattach() {
+        let manager = SessionManager::default();
+        let delivered = Arc::new(StdMutex::new(Vec::new()));
+        let original_capture = delivered.clone();
+        let sink_slot = attached_sink(Some((
+            1,
+            sync_sink(move |event| {
+                original_capture.lock().unwrap().push(event.clone());
+                true
+            }),
+        )));
+        #[cfg(windows)]
+        let child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = Command::new("true").spawn().unwrap();
+        manager.sessions.lock().await.insert(
+            "clean-detach-before-exit".to_owned(),
+            SessionHandle {
+                child: Arc::new(Mutex::new(child)),
+                stdin: Arc::new(Mutex::new(None)),
+                sink: sink_slot.clone(),
+                resume_identity: None,
+                detached_owner: false,
+            },
+        );
+
+        // The final reader tail was writer-confirmed immediately before the
+        // socket detached. Finalization must preserve that ordering while it
+        // gives Studio's replacement socket a bounded chance to receive exit.
+        deliver_value(
+            &routed_sink(sink_slot.clone()),
+            "clean-detach-before-exit",
+            "record",
+            serde_json::json!({ "type": "history.end", "count": 300 }),
+        )
+        .await;
+        assert!(manager.detach("clean-detach-before-exit", 1).await.unwrap());
+
+        // Hold the manager while the finalizer snapshots the empty attachment,
+        // then queue a lock gate directly behind that snapshot. On the old
+        // immediate-removal path the finalizer queues behind the gate before
+        // attach; with the bounded grace, attach is the only queued claimant.
+        // This makes the grace regression deterministic without wall-clock
+        // sleeps.
+        let sessions_guard = manager.sessions.lock().await;
+        let sessions = manager.sessions.clone();
+        let finalizer_slot = sink_slot.clone();
+        let finalizer = tokio::spawn(async move {
+            deliver_exit_and_remove_session(
+                &sessions,
+                &finalizer_slot,
+                "clean-detach-before-exit",
+                Vec::new(),
+                Some(0),
+            )
+            .await;
+        });
+        while sink_slot.changes.receiver_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        let gate_sessions = manager.sessions.clone();
+        let (gate_started_tx, gate_started_rx) = tokio::sync::oneshot::channel();
+        let (gate_acquired_tx, gate_acquired_rx) = tokio::sync::oneshot::channel();
+        let (release_gate_tx, release_gate_rx) = tokio::sync::oneshot::channel();
+        let gate = tokio::spawn(async move {
+            let _ = gate_started_tx.send(());
+            let guard = gate_sessions.lock().await;
+            let _ = gate_acquired_tx.send(());
+            let _ = release_gate_rx.await;
+            drop(guard);
+        });
+        gate_started_rx.await.unwrap();
+        drop(sessions_guard);
+        gate_acquired_rx.await.unwrap();
+
+        let replacement_capture = delivered.clone();
+        let attach_manager = manager.clone();
+        let (attach_started_tx, attach_started_rx) = tokio::sync::oneshot::channel();
+        let attach = tokio::spawn(async move {
+            let _ = attach_started_tx.send(());
+            attach_manager
+                .attach(
+                    "clean-detach-before-exit",
+                    sync_sink(move |event| {
+                        replacement_capture.lock().unwrap().push(event.clone());
+                        true
+                    }),
+                )
+                .await
+        });
+        attach_started_rx.await.unwrap();
+        let _ = release_gate_tx.send(());
+        gate.await.unwrap();
+        attach.await.unwrap().unwrap();
+        timeout(Duration::from_secs(1), finalizer)
+            .await
+            .expect("reattached client receives exit within grace")
+            .unwrap();
+
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].payload["type"], "history.end");
+        assert_eq!(delivered[1].channel, "exit");
+        drop(delivered);
+        assert!(!manager
+            .sessions
+            .lock()
+            .await
+            .contains_key("clean-detach-before-exit"));
     }
 
     #[tokio::test]
