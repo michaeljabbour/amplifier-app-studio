@@ -13,6 +13,10 @@ export type AttentionResponse =
   | { kind: "approval"; ticketId: string; choice: string }
   | { kind: "decision"; decisionId: string; answer: string };
 
+export function attentionControlsUnavailable(state: SessionViewState): boolean {
+  return state.connectivity?.status === "reconnecting";
+}
+
 export function attentionResponseFor(state: SessionViewState, choice: string): AttentionResponse | undefined {
   if (state.pendingApproval) {
     return { kind: "approval", ticketId: state.pendingApproval.ticketId, choice };
@@ -67,6 +71,7 @@ export function AttentionBar(props: Props) {
   const automaticChoice = () => decision() && automaticDecisionMaking()
     ? recommended() || BEST_JUDGMENT
     : undefined;
+  const reconnecting = () => attentionControlsUnavailable(props.state);
   const expiresAt = () => approval()?.expiresAtMs || autoDeadline();
   const remainingSeconds = createMemo(() => {
     const deadline = expiresAt();
@@ -95,7 +100,7 @@ export function AttentionBar(props: Props) {
   onCleanup(() => window.clearInterval(timer));
 
   const choose = async (choice: string) => {
-    if (submitting() || !choice.trim()) return;
+    if (submitting() || reconnecting() || !choice.trim()) return;
     const response = attentionResponseFor(props.state, choice);
     if (!response) return;
     setSubmitting(choice);
@@ -106,19 +111,21 @@ export function AttentionBar(props: Props) {
     } catch {
       setSubmitting(undefined);
       setWaiting(false);
+      setAutoSubmitted("");
     }
   };
 
   createEffect(() => {
     const choice = automaticChoice();
     const key = choice ? `${decision()?.decisionId}:${choice}` : "";
-    if (choice && key && key !== autoSubmitted() && remainingSeconds() === 0 && !submitting()) {
+    if (choice && key && key !== autoSubmitted() && remainingSeconds() === 0 && !submitting() && !reconnecting()) {
       setAutoSubmitted(key);
       void choose(choice);
     }
   });
 
   const countdownLabel = () => {
+    if (reconnecting()) return "Reconnect to compute before answering; Amplifier’s request remains pending";
     const seconds = remainingSeconds();
     if (seconds === undefined) return undefined;
     if (approval()) return `${formatDuration(seconds)} until Amplifier applies ${approval()?.defaultChoice || "its safe default"}`;
@@ -152,7 +159,7 @@ export function AttentionBar(props: Props) {
           {(row) => (
             <div class="attention-choice">
               <button
-                disabled={Boolean(submitting())}
+                disabled={Boolean(submitting()) || reconnecting()}
                 classList={{
                   primary: row.recommended || /allow once|yes|continue/i.test(row.choice),
                   danger: /deny|no|cancel|don't edit/i.test(row.choice),
@@ -172,14 +179,14 @@ export function AttentionBar(props: Props) {
         <Show when={decision()?.multiple}>
           <button
             class="attention-multiple-submit primary"
-            disabled={Boolean(submitting()) || selectedChoices().length === 0}
+            disabled={Boolean(submitting()) || reconnecting() || selectedChoices().length === 0}
             onClick={() => void choose(selectedChoices().join(", "))}
           >Answer with {selectedChoices().length} selected</button>
         </Show>
         <Show when={decision() && (!recommended() || choices().length === 0)}>
           <button
             class="attention-best-judgment"
-            disabled={Boolean(submitting())}
+            disabled={Boolean(submitting()) || reconnecting()}
             onClick={() => void choose(BEST_JUDGMENT)}
           >Use Amplifier's best judgment</button>
         </Show>
@@ -190,16 +197,16 @@ export function AttentionBar(props: Props) {
           }}>
             <input
               value={customAnswer()}
-              disabled={Boolean(submitting())}
+              disabled={Boolean(submitting()) || reconnecting()}
               onInput={(event) => setCustomAnswer(event.currentTarget.value)}
               placeholder="Or type your own answer"
               aria-label="Custom decision answer"
             />
-            <button type="submit" disabled={Boolean(submitting()) || !customAnswer().trim()}>Answer</button>
+            <button type="submit" disabled={Boolean(submitting()) || reconnecting() || !customAnswer().trim()}>Answer</button>
           </form>
         </Show>
         <Show when={approval() && !choices().some((choice) => /deny/i.test(choice))}>
-          <button class="danger" disabled={Boolean(submitting())} onClick={() => void choose("Deny")}>{submitting() === "Deny" ? "Sending…" : "Deny"}</button>
+          <button class="danger" disabled={Boolean(submitting()) || reconnecting()} onClick={() => void choose("Deny")}>{submitting() === "Deny" ? "Sending…" : "Deny"}</button>
         </Show>
       </div>
       <span class="escape-hint">

@@ -20,6 +20,7 @@ export interface SessionHandlers {
   onRecord: (record: ProtocolRecord) => void;
   onLog: (log: ProcessLog) => void;
   onExit: (exit: ProcessExit) => void;
+  onConnectionChange?: (state: { status: "connected" | "reconnecting"; message?: string }) => void;
 }
 
 export interface SessionConnection {
@@ -524,14 +525,20 @@ export async function listenNativeAttachmentDrops(
   });
 }
 
-export async function openLocalOutput(projectDir: string, path: string): Promise<void> {
-  const bridge = bridgeBaseUrl();
+export async function openLocalOutput(
+  projectDir: string,
+  path: string,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<void> {
+  const bridge = sessionBridge({ hostUrl, hostId });
   if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/output");
     url.searchParams.set("projectDir", projectDir);
     url.searchParams.set("path", path);
     const response = await fetch(url, {
-      headers: { authorization: `Bearer ${requireBridgeToken()}` },
+      headers: { authorization: `Bearer ${requireBridgeToken(bridge)}` },
     });
     if (!response.ok) {
       const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
@@ -549,14 +556,19 @@ export async function openLocalOutput(projectDir: string, path: string): Promise
   await invoke("open_output", { projectDir, path });
 }
 
-export async function loadOutputPreview(projectDir: string, path: string): Promise<OutputPreview> {
-  if (usesWebBridge()) {
-    const bridge = bridgeBaseUrl();
-    if (!bridge) throw new Error("The Rust bridge is not configured");
+export async function loadOutputPreview(
+  projectDir: string,
+  path: string,
+  hostUrl?: string,
+  hostId?: string,
+): Promise<OutputPreview> {
+  const bridge = sessionBridge({ hostUrl, hostId });
+  if (bridge) {
+    await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/output-preview");
     url.searchParams.set("projectDir", projectDir);
     url.searchParams.set("path", path);
-    return fetchJson<OutputPreview>(url);
+    return fetchJson<OutputPreview>(url, undefined, bridge);
   }
   requireDesktop();
   return invoke<OutputPreview>("read_output_preview", { projectDir, path });
@@ -899,6 +911,10 @@ async function launchBridgeSession(
           acknowledged = true;
           initiallyReady = true;
           connection.reconnectAttempt = 0;
+          handlers.onConnectionChange?.({
+            status: "connected",
+            message: reattach ? "Reattached to the runtime" : "Connected to the runtime host",
+          });
           window.clearTimeout(timer);
           if (!settled) {
             settled = true;
@@ -956,7 +972,9 @@ async function launchBridgeSession(
         }
         const delay = Math.min(8_000, 300 * (2 ** connection.reconnectAttempt));
         connection.reconnectAttempt = Math.min(connection.reconnectAttempt + 1, 6);
-        handlers.onLog({ stream: "bridge", message: `Bridge connection lost; reconnecting in ${delay} ms` });
+        const message = `Bridge connection lost; reconnecting in ${delay} ms`;
+        handlers.onConnectionChange?.({ status: "reconnecting", message });
+        handlers.onLog({ stream: "bridge", message });
         connection.reconnectTimer = window.setTimeout(() => connect(true), delay);
       });
     };

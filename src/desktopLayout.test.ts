@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
+const terminalSurfaceSource = readFileSync(new URL("./components/TerminalWorkSurface.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("desktop navigation and history contracts", () => {
@@ -22,5 +23,24 @@ describe("desktop navigation and history contracts", () => {
   it("refreshes the compute registry before federating session history", () => {
     expect(appSource).toContain("await listRuntimeHosts().catch(() => runtimeHosts())");
     expect(appSource).toContain("loadStoredSessionsAcrossHosts(hosts");
+  });
+
+  it("shows session setup before invoking the native folder picker", () => {
+    const openNewDialog = appSource.slice(
+      appSource.indexOf("const openNewDialog"),
+      appSource.indexOf("const openSibling", appSource.indexOf("const openNewDialog")),
+    );
+    expect(openNewDialog).toContain("setDialog({ projectDir: remembered");
+    expect(openNewDialog).not.toContain("selectProjectFolder(");
+  });
+
+  it("opens native local terminal sessions inside the Studio workbench", () => {
+    expect(appSource).toContain("new NativeTmuxAdapter");
+    expect(appSource).toContain("isDesktopRuntime()");
+    expect(appSource).toContain("<TerminalWorkSurface");
+    expect(tabStripSource).toContain('<SquareTerminal aria-hidden="true" />');
+    expect(tabStripSource).toContain("aria-pressed={props.terminalOpen}");
+    expect(terminalSurfaceSource).toContain("project: props.project");
+    expect(terminalSurfaceSource).toContain('class="terminal-back"');
   });
 });

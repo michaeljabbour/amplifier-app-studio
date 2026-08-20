@@ -5,7 +5,7 @@ import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
 import type { TranscriptionStatus } from "../transport";
 import type { AudioRecording } from "../transcription";
-import { storedSessionResumeBlocker } from "../sessionAvailability";
+import { storedSessionResumeBlocker, storedSessionShouldList } from "../sessionAvailability";
 import { projectDisplayName } from "../projectDisplayName";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { VoiceInputButton } from "./VoiceInputButton";
@@ -44,7 +44,7 @@ export function CoordinatorHome(props: Props) {
   const [localError, setLocalError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
   const [locationOpen, setLocationOpen] = createSignal(false);
-  const recent = createMemo(() => props.sessions.slice(0, 24));
+  const recent = createMemo(() => props.sessions.filter(storedSessionShouldList).slice(0, 24));
   const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
@@ -144,10 +144,10 @@ export function CoordinatorHome(props: Props) {
             <div><span>ENGINE SETUP</span><strong>{props.runtime?.message || "Runtime check unavailable"}</strong></div>
             <p>Studio uses Amplifier’s existing Python runtime out of process.</p>
             <div>
-              <Show when={props.runtime?.installSupported} fallback={<button class="secondary-button" onClick={props.onSettings}>Configure bridge</button>}>
+              <Show when={props.runtime?.installSupported} fallback={<button class="primary-button" onClick={props.onSettings}>Connect compute host</button>}>
                 <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? props.runtime?.installed ? "Updating…" : "Installing…" : props.runtime?.installed ? "Update Amplifier runtime" : "Install Amplifier runtime"}</button>
+                <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
               </Show>
-              <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
             </div>
           </div>
         </Show>

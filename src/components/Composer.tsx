@@ -29,6 +29,7 @@ export function Composer(props: Props) {
   const [dictating, setDictating] = createSignal(false);
   let textarea: HTMLTextAreaElement | undefined;
   const presence = createMemo(() => machinePresence(props.state));
+  const reconnecting = () => props.state.connectivity?.status === "reconnecting";
 
   createEffect(() => {
     const lines = Math.min(7, Math.max(1, props.state.composerDraft.split("\n").length));
@@ -130,17 +131,27 @@ export function Composer(props: Props) {
           {props.state.busy && props.state.queuedSteers > 0 && <small>{props.state.queuedSteers}/32 queued</small>}
         </div>
       </div>
+      <Show when={reconnecting()}>
+        <div class="composer-reconnecting" role="status" aria-live="polite">
+          <strong>Reconnecting to compute</strong>
+          <span>Your draft is safe. Sending resumes when the runtime view reconnects.</span>
+        </div>
+      </Show>
       <textarea
         ref={textarea}
         value={props.state.composerDraft}
-        disabled={sending() || props.state.phase !== "ready"}
+        disabled={sending() || props.state.phase !== "ready" || reconnecting()}
         readOnly={dictating()}
-        placeholder={props.state.restoreProgress && props.state.phase !== "ready"
+        placeholder={reconnecting()
+          ? "Reconnecting to the runtime host…"
+          : props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring this conversation…"
           : props.state.busy
             ? "Course-correct the current run…"
             : "Tell Amplifier Agent what to build, investigate, or organize…"}
-        aria-label={props.state.restoreProgress && props.state.phase !== "ready"
+        aria-label={reconnecting()
+          ? "Reconnecting to Amplifier runtime"
+          : props.state.restoreProgress && props.state.phase !== "ready"
           ? "Restoring Amplifier conversation"
           : props.state.busy
             ? "Steer current turn"
@@ -185,7 +196,7 @@ export function Composer(props: Props) {
           <button type="button" class="attachment-trigger" disabled={sending()} aria-label="Add files" onClick={() => void pickFiles()}><Paperclip aria-hidden="true" /><span>Add files</span></button>
           <VoiceInputButton
             draft={props.state.composerDraft}
-            disabled={sending() || props.state.phase !== "ready"}
+            disabled={sending() || props.state.phase !== "ready" || reconnecting()}
             available={props.transcriptionAvailable}
             unavailableReason={props.transcriptionMessage}
             onDraft={props.onDraft}
@@ -194,7 +205,7 @@ export function Composer(props: Props) {
           />
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>
-        <button disabled={(!props.state.composerDraft.trim() && !props.state.composerAttachments.length) || sending() || props.state.phase !== "ready"} onClick={() => void send()}>
+        <button disabled={(!props.state.composerDraft.trim() && !props.state.composerAttachments.length) || sending() || props.state.phase !== "ready" || reconnecting()} onClick={() => void send()}>
           <span class="send-label">{props.state.busy ? "Steer" : "Send"}</span><span aria-hidden="true"><ArrowUp /></span>
         </button>
       </div>

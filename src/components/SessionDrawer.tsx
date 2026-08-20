@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { Blocks, FolderKanban, History, MessageCircle, Plus, RadioTower, RefreshCw, Search, Settings, X } from "lucide-solid";
+import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, RadioTower, RefreshCw, Search, Settings, Square, Unplug, X } from "lucide-solid";
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery } from "../storedSessions";
@@ -7,6 +7,7 @@ import { storedSessionMatchesQuery } from "../storedSessions";
 interface Props {
   sessions: StoredSession[];
   openSessions: SessionViewState[];
+  detachedSessionIds: string[];
   activeId?: string;
   loading: boolean;
   error?: string;
@@ -17,6 +18,8 @@ interface Props {
   onRefresh: () => void;
   onResume: (session: StoredSession) => void | Promise<void>;
   onSelectOpen: (id: string) => void;
+  onDetachOpen: (id: string) => void | Promise<void>;
+  onStopOpen: (id: string) => void | Promise<void>;
   onNew: () => void;
   onCapabilities: () => void;
   onSettings: () => void;
@@ -25,7 +28,10 @@ interface Props {
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
+  const [openSessionMenu, setOpenSessionMenu] = createSignal<string>();
   const [limit, setLimit] = createSignal(500);
+  const detachedSessionIds = createMemo(() => new Set(props.detachedSessionIds));
+  const detachedOpenSessions = createMemo(() => props.openSessions.filter((session) => detachedSessionIds().has(session.guiId)));
   const matching = createMemo(() => {
     const needle = query().trim();
     const resumable = props.sessions.filter(storedSessionShouldList);
@@ -43,8 +49,14 @@ export function SessionDrawer(props: Props) {
   };
 
   return (
-    <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
-      <aside class="session-drawer" aria-label="Stored sessions">
+    <div
+      class="drawer-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") props.onClose();
+      }}
+    >
+      <aside class="session-drawer" role="dialog" aria-modal="true" aria-label="Stored sessions">
         <div class="mobile-drawer-shell">
           <div class="mobile-drawer-header">
             <h2>Amplifier</h2>
@@ -84,15 +96,41 @@ export function SessionDrawer(props: Props) {
             <section class="mobile-open-sessions" aria-labelledby="mobile-open-heading">
               <h3 id="mobile-open-heading">Open</h3>
               <For each={props.openSessions}>{(session) => (
-                <button
-                  type="button"
-                  classList={{ active: session.guiId === props.activeId }}
-                  onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}
-                >
-                  <MessageCircle aria-hidden="true" />
-                  <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
-                  <i class={`phase-${session.phase}`} aria-hidden="true" />
-                </button>
+                <div class="mobile-open-session" classList={{ active: session.guiId === props.activeId }}>
+                  <button
+                    type="button"
+                    class="mobile-open-session-select"
+                    onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}
+                  >
+                    <MessageCircle aria-hidden="true" />
+                    <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
+                    <i class={`phase-${session.phase}`} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="mobile-open-session-more"
+                    aria-label={`Session actions for ${session.title}`}
+                    aria-expanded={openSessionMenu() === session.guiId}
+                    onClick={() => setOpenSessionMenu((open) => open === session.guiId ? undefined : session.guiId)}
+                  ><MoreHorizontal aria-hidden="true" /></button>
+                  <Show when={openSessionMenu() === session.guiId}>
+                    <div class="mobile-open-session-menu" role="menu" aria-label={`Actions for ${session.title}`}>
+                      <Show
+                        when={!detachedSessionIds().has(session.guiId)}
+                        fallback={<button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); props.onSelectOpen(session.guiId); props.onClose(); }}>
+                          <MessageCircle aria-hidden="true" /><span><strong>Reopen</strong><small>Return to this live runtime</small></span>
+                        </button>}
+                      >
+                        <button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); void props.onDetachOpen(session.guiId); }}>
+                          <Unplug aria-hidden="true" /><span><strong>Detach</strong><small>Leave the runtime running</small></span>
+                        </button>
+                      </Show>
+                      <button type="button" role="menuitem" class="danger" onClick={() => { setOpenSessionMenu(undefined); void props.onStopOpen(session.guiId); }}>
+                        <Square aria-hidden="true" /><span><strong>Stop</strong><small>End the runtime and close</small></span>
+                      </button>
+                    </div>
+                  </Show>
+                </div>
               )}</For>
             </section>
           </Show>
@@ -108,11 +146,27 @@ export function SessionDrawer(props: Props) {
         </div>
         <div class="drawer-search">
           <span>⌕</span>
-          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search conversations, projects, hosts…" autofocus />
+          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search conversations, projects, hosts…" aria-label="Search stored sessions" autofocus />
           <button onClick={props.onRefresh} aria-label="Refresh sessions" title="Refresh">↻</button>
         </div>
 
         <div class="stored-list" onScroll={revealMoreNearBottom}>
+          <Show when={detachedOpenSessions().length > 0}>
+            <section class="drawer-detached-sessions" aria-labelledby="drawer-detached-heading">
+              <h3 id="drawer-detached-heading">Live runtimes with detached views</h3>
+              <For each={detachedOpenSessions()}>{(session) => (
+                <div>
+                  <button type="button" onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}>
+                    <MessageCircle aria-hidden="true" />
+                    <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
+                  </button>
+                  <button type="button" class="danger" aria-label={`Stop ${session.title}`} onClick={() => void props.onStopOpen(session.guiId)}>
+                    <Square aria-hidden="true" />
+                  </button>
+                </div>
+              )}</For>
+            </section>
+          </Show>
           <Show when={props.loading}><div class="drawer-state"><span class="mini-spinner" /> Scanning every configured compute host…</div></Show>
           <Show when={props.error}><div class="drawer-error">{props.error}</div></Show>
           <Show when={!props.loading && !props.error && visible().length === 0}>

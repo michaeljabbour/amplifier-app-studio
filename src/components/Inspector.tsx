@@ -1,10 +1,12 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { ChevronLeft, MapPin, TriangleAlert, X } from "lucide-solid";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 import { PlanPanel } from "./Plan";
 import { ExecutionMap } from "./ExecutionMap";
 import { formatSessionCost } from "../costEstimate";
+import { sessionPlacement, workAttentionItems } from "../mobileWork";
 
 export type InspectorTab = "run" | "map" | "plan" | "agent" | "build" | "bundles" | "outputs" | "context";
 
@@ -26,17 +28,38 @@ interface Props {
   onCapabilities: () => void;
   onRequestContext: () => void;
   onOpenOutput?: (path: string) => Promise<void>;
+  onClose?: () => void;
 }
 
 export function Inspector(props: Props) {
+  const placement = () => sessionPlacement(props.state);
+  const attention = () => workAttentionItems(props.state);
   return (
     <aside class="machine-inspector" aria-label="Session inspector">
       <div class="inspector-heading">
-        <div><span>SESSION INSPECTOR</span><strong>{props.lane && props.tab === "agent" ? props.lane.agent : props.state.title}</strong></div>
+        <button type="button" class="mobile-work-back" onClick={props.onClose} aria-label="Back to session">
+          <ChevronLeft aria-hidden="true" /><span>Back</span>
+        </button>
+        <div class="inspector-heading-copy">
+          <span>WORK</span>
+          <strong>{props.state.title}</strong>
+          <small title={`${placement().host} · ${placement().project}`}>
+            <MapPin aria-hidden="true" />{placement().host}<i aria-hidden="true" />{placement().project}
+          </small>
+        </div>
+        <button type="button" class="mobile-work-close" onClick={props.onClose} aria-label="Close Work">
+          <X aria-hidden="true" />
+        </button>
       </div>
+      <Show when={attention().length > 0}>
+        <button type="button" class="mobile-work-attention" onClick={() => props.onTab("run")}>
+          <TriangleAlert aria-hidden="true" />
+          <span><strong>{attention().length} item{attention().length === 1 ? "" : "s"} need{attention().length === 1 ? "s" : ""} attention</strong><small>{attention()[0]?.name}</small></span>
+        </button>
+      </Show>
       <nav class="inspector-tabs" aria-label="Inspector views">
         <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
-        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>{props.state.pipeline?.dotSource ? "Pipeline" : "Loop"}</button>
+        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>Loop</button>
         <button classList={{ active: props.tab === "plan" }} onClick={() => props.onTab("plan")}>Plan</button>
         <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
         <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Setup</button>

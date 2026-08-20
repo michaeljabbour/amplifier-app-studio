@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { onBackButtonPress } from "@tauri-apps/api/app";
 import { AttentionBar, type AttentionResponse } from "./components/AttentionBar";
 import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
@@ -9,9 +10,11 @@ import { NewSessionDialog } from "./components/NewSessionDialog";
 import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
 import { SessionToolbar } from "./components/SessionToolbar";
 import { SessionDrawer } from "./components/SessionDrawer";
+import { SessionLifecycleDialog } from "./components/SessionLifecycleDialog";
 import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
 import { StoredSessionDialog } from "./components/StoredSessionDialog";
 import { TabStrip } from "./components/TabStrip";
+import { TerminalWorkSurface } from "./components/TerminalWorkSurface";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import { capabilitySessionInput, type StudioCapability } from "./capabilities";
@@ -31,7 +34,6 @@ import {
   addProcessLog,
   createSessionState,
   dismissAlert,
-  markClosing,
   markAutopilotPending,
   markAutopilotSendFailed,
   markEffortPending,
@@ -79,6 +81,7 @@ import {
   transportLabel,
   transcribeAudio,
   usesWebBridge,
+  isDesktopRuntime,
   isTauriRuntime,
   isMobileRuntime,
   type RuntimeStatus,
@@ -94,8 +97,11 @@ import { applyStudioTheme, loadStudioTheme, saveStudioTheme, type StudioTheme } 
 import { openGuiIdForStoredSession, parallelSessionSummary } from "./sessionSelection";
 import { storedSessionLegacyBundleOverride, storedSessionResumeBlocker } from "./sessionAvailability";
 import { projectContextForHost } from "./settingsProjectContext";
+import { projectDisplayName } from "./projectDisplayName";
 import { createLatestAsyncRunner } from "./latestAsync";
 import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, type FederatedStoredSessions } from "./storedSessions";
+import { attemptRuntimeStop, ordinaryTabCloseIntent, sessionHasLiveRuntime } from "./sessionLifecycle";
+import { NativeTmuxAdapter, TerminalCoordinator, type TerminalProjectIdentity } from "./terminal";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
@@ -103,6 +109,12 @@ const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
 interface StoredSessionRecovery {
   session: StoredSession;
   resumeDisabledReason?: string;
+}
+
+interface StopRuntimeRequest {
+  guiId: string;
+  stopping: boolean;
+  error?: string;
 }
 
 export default function App() {
@@ -115,6 +127,7 @@ export default function App() {
   const [storedError, setStoredError] = createSignal<string>();
   const [storedWarning, setStoredWarning] = createSignal<string>();
   const [storedSessionDialog, setStoredSessionDialog] = createSignal<StoredSessionRecovery>();
+  const [stopRuntimeRequest, setStopRuntimeRequest] = createSignal<StopRuntimeRequest>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [studioTheme, setStudioTheme] = createSignal<StudioTheme>(loadStudioTheme());
@@ -127,6 +140,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
+  const [workbenchSurface, setWorkbenchSurface] = createSignal<"agent" | "terminal">("agent");
   const [workspaceAttachmentDrag, setWorkspaceAttachmentDrag] = createSignal(false);
   const [homeAttachments, setHomeAttachments] = createSignal<ComposerAttachment[]>([]);
   const [appUpdate, setAppUpdate] = createSignal<AppUpdateState>({ status: "disabled" });
@@ -145,17 +159,29 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal<string>();
   const [transcription, setTranscription] = createSignal<TranscriptionStatus>();
   const connections = new Map<string, SessionConnection>();
+  const detachedSessions = new Map<string, SessionViewState>();
+  const [detachedSessionsVersion, setDetachedSessionsVersion] = createSignal(0);
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
   const pendingInitialPrompts = new Map<string, { runtimeText: string; attachments: ComposerAttachment[] }>();
   const runLatestRuntimeRefresh = createLatestAsyncRunner<RuntimeStatus>();
   const runLatestStoredRefresh = createLatestAsyncRunner<FederatedStoredSessions>();
+  const terminalCoordinator = isDesktopRuntime()
+    ? new TerminalCoordinator(new NativeTmuxAdapter({
+      host: { id: "local", label: "This computer", kind: "local", transport: "native" },
+    }))
+    : undefined;
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
+  const detachedSessionList = createMemo(() => {
+    detachedSessionsVersion();
+    return [...detachedSessions.values()];
+  });
+  const openSessionViews = createMemo(() => [...sessions(), ...detachedSessionList()]);
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
-  const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
+  const updateBlocked = createMemo(() => openSessionViews().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
   const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
   const sessionHomeHost = createMemo(() => runtimeHosts().find((host) => host.id === sessionHomeHostId())
@@ -170,6 +196,49 @@ export default function App() {
     const host = sessionHomeHost();
     return projectContextForHost(active(), host, knownHostProjectRoot(host));
   });
+  const nativeTerminalProject = createMemo<TerminalProjectIdentity | undefined>(() => {
+    const session = active();
+    const root = session && (!session.hostUrl || session.hostId === "local")
+      ? session.projectDir.trim()
+      : knownHostProjectRoot(runtimeHosts().find((host) => host.id === "local")).trim();
+    if (!root) return undefined;
+    return { id: root, label: projectDisplayName(root), root };
+  });
+  const mobileOverlayOpen = createMemo(() => Boolean(
+    stopRuntimeRequest()
+    || storedSessionDialog()
+    || providerSetupOpen()
+    || capabilitiesOpen()
+    || settingsOpen()
+    || dialog()
+    || rightOpen()
+    || drawerOpen(),
+  ));
+
+  const dismissTopMobileOverlay = () => {
+    if (stopRuntimeRequest()) setStopRuntimeRequest(undefined);
+    else if (storedSessionDialog()) setStoredSessionDialog(undefined);
+    else if (providerSetupOpen()) setProviderSetupOpen(false);
+    else if (capabilitiesOpen()) setCapabilitiesOpen(false);
+    else if (settingsOpen()) setSettingsOpen(false);
+    else if (dialog()) setDialog(undefined);
+    else if (rightOpen()) setRightOpen(false);
+    else if (drawerOpen()) setDrawerOpen(false);
+  };
+
+  createEffect(() => {
+    if (!isTauriRuntime() || !/Android/i.test(navigator.userAgent) || !mobileOverlayOpen()) return;
+    let disposed = false;
+    let listener: Awaited<ReturnType<typeof onBackButtonPress>> | undefined;
+    void onBackButtonPress(() => dismissTopMobileOverlay()).then((registered) => {
+      if (disposed) void registered.unregister();
+      else listener = registered;
+    }).catch((error) => setRuntimeError(cleanError(error)));
+    onCleanup(() => {
+      disposed = true;
+      if (listener) void listener.unregister();
+    });
+  });
 
   const refreshHostProjectRoot = async (host: RuntimeHost): Promise<string> => {
     if (!host.url) return knownHostProjectRoot(host);
@@ -180,9 +249,12 @@ export default function App() {
   };
 
   const setSessionHomeHost = (id: string) => {
-    const selected = runtimeHosts().some((host) => host.id === id) ? id : "local";
+    const selected = runtimeHosts().some((host) => host.id === id)
+      ? id
+      : runtimeHosts()[0]?.id || (isMobileRuntime() ? "" : "local");
     setSessionHomeHostId(selected);
-    localStorage.setItem(SESSION_HOME_HOST_KEY, selected);
+    if (selected) localStorage.setItem(SESSION_HOME_HOST_KEY, selected);
+    else localStorage.removeItem(SESSION_HOME_HOST_KEY);
   };
 
   createEffect(() => {
@@ -199,14 +271,13 @@ export default function App() {
       if (rememberedProject) setDefaultDir(rememberedProject);
       else void defaultProjectDir(undefined, "local").then(setDefaultDir).catch(() => undefined);
     }
-    void refreshRuntime();
+    if (!isMobileRuntime()) void refreshRuntime();
     void listRuntimeHosts().then((hosts) => {
       setRuntimeHosts(hosts);
       if (!hosts.some((host) => host.id === sessionHomeHostId())) {
-        setSessionHomeHost("local");
-      } else if (sessionHomeHostId() !== "local") {
-        void refreshRuntime();
+        setSessionHomeHost(hosts[0]?.id || (isMobileRuntime() ? "" : "local"));
       }
+      void refreshRuntime();
       const home = hosts.find((host) => host.id === sessionHomeHostId()) || hosts[0];
       if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
@@ -240,21 +311,30 @@ export default function App() {
   });
 
   onCleanup(() => {
+    terminalCoordinator?.dispose();
     connections.forEach((connection) => connection.dispose());
     statusPollers.forEach((timer) => window.clearInterval(timer));
     restoreTimers.forEach((timer) => window.clearTimeout(timer));
   });
 
   const update = (guiId: string, transform: (state: SessionViewState) => SessionViewState) => {
+    const detached = detachedSessions.get(guiId);
+    if (detached) {
+      detachedSessions.set(guiId, transform(detached));
+      setDetachedSessionsVersion((version) => version + 1);
+    }
     setSessions((items) => items.map((item) => (item.guiId === guiId ? transform(item) : item)));
   };
+
+  const sessionForGuiId = (guiId: string) => sessions().find((item) => item.guiId === guiId)
+    || detachedSessionList().find((item) => item.guiId === guiId);
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
     update(guiId, (state) => reduceRecord(state, record));
     if (record.type === "session.started" || record.type === "session.attached") {
       void applyStoredSessionTitle(guiId, typeof record.session_id === "string" ? record.session_id : undefined);
     }
-    if (sessions().find((item) => item.guiId === guiId)?.phase === "ready") clearRestoreTimeout(guiId);
+    if (sessionForGuiId(guiId)?.phase === "ready") clearRestoreTimeout(guiId);
     const type = typeof record.type === "string" ? record.type : "";
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
       initialized.add(guiId);
@@ -262,7 +342,7 @@ export default function App() {
       void sendOp(guiId, { op: "context.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "effort.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "goal.status" }).catch((error) => reportSendError(guiId, error));
-      const session = sessions().find((item) => item.guiId === guiId);
+      const session = sessionForGuiId(guiId);
       if (session?.resumeId) {
         void requestRestore(guiId);
       } else {
@@ -311,10 +391,12 @@ export default function App() {
         {
           onRecord: (record) => handleRecord(guiId, record),
           onLog: (log) => update(guiId, (current) => addProcessLog(current, log.stream, log.message)),
+          onConnectionChange: (connectivity) => update(guiId, (current) => ({ ...current, connectivity })),
           onExit: (exit) => {
             clearStatusPolling(guiId);
             clearRestoreTimeout(guiId);
             update(guiId, (current) => markExited(current, exit.code, exit.message));
+            if (detachedSessions.has(guiId)) discardSessionView(guiId);
           },
         },
       );
@@ -335,7 +417,7 @@ export default function App() {
         const session = stored().find((item) => item.sessionId === input.resumeId
           && (!input.hostId || item.hostId === input.hostId));
         if (session) {
-          await close(guiId);
+          discardSessionView(guiId);
           setStoredSessionDialog({
             session,
             resumeDisabledReason: "This durable session is already open on its owning compute. Duplicate it to continue independently.",
@@ -346,19 +428,36 @@ export default function App() {
     }
   };
 
-  const close = async (guiId: string) => {
+  const detachSessionView = (guiId: string) => {
     const session = sessions().find((item) => item.guiId === guiId);
     if (!session) return;
-    if (session.phase === "starting" || session.phase === "degraded" || session.phase === "ready") {
-      update(guiId, markClosing);
-      try {
-        await stopSession(guiId);
-      } catch (error) {
-        update(guiId, (current) => addLocalNotice(current, cleanError(error), "error"));
-      }
+    if (!sessionHasLiveRuntime(session)) {
+      discardSessionView(guiId);
+      return;
     }
+    detachedSessions.set(guiId, session);
+    setDetachedSessionsVersion((version) => version + 1);
+    const remaining = sessions().filter((item) => item.guiId !== guiId);
+    setSessions(remaining);
+    if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
+    if (stopRuntimeRequest()?.guiId === guiId) setStopRuntimeRequest(undefined);
+  };
+
+  const activateSessionView = (guiId: string) => {
+    const detached = detachedSessions.get(guiId);
+    if (detached) {
+      detachedSessions.delete(guiId);
+      setDetachedSessionsVersion((version) => version + 1);
+      setSessions((items) => items.some((item) => item.guiId === guiId) ? items : [...items, detached]);
+    }
+    setActiveId(guiId);
+    setWorkbenchSurface("agent");
+  };
+
+  const discardSessionView = (guiId: string) => {
     connections.get(guiId)?.dispose();
     connections.delete(guiId);
+    if (detachedSessions.delete(guiId)) setDetachedSessionsVersion((version) => version + 1);
     initialized.delete(guiId);
     pendingInitialPrompts.delete(guiId);
     clearStatusPolling(guiId);
@@ -366,6 +465,37 @@ export default function App() {
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
+    if (stopRuntimeRequest()?.guiId === guiId) setStopRuntimeRequest(undefined);
+  };
+
+  const requestTabClose = (guiId: string) => {
+    const session = sessions().find((item) => item.guiId === guiId);
+    if (!session) return;
+    if (ordinaryTabCloseIntent(session) === "detach") {
+      detachSessionView(guiId);
+      return;
+    }
+    setStopRuntimeRequest({ guiId, stopping: false });
+  };
+
+  const requestRuntimeStop = (guiId: string) => {
+    const session = sessionForGuiId(guiId);
+    if (!session || session.phase === "exited" || session.phase === "error") return;
+    setStopRuntimeRequest({ guiId, stopping: false });
+  };
+
+  const confirmRuntimeStop = async (guiId: string) => {
+    const request = stopRuntimeRequest();
+    if (!request || request.guiId !== guiId || request.stopping) return;
+    setStopRuntimeRequest({ guiId, stopping: true });
+    const outcome = await attemptRuntimeStop(() => stopSession(guiId));
+    if (outcome.stopped) {
+      discardSessionView(guiId);
+      return;
+    }
+    const message = outcome.error || "The runtime did not confirm that it stopped";
+    update(guiId, (current) => addLocalNotice(current, `Runtime stop failed: ${message}`, "error"));
+    setStopRuntimeRequest({ guiId, stopping: false, error: message });
   };
 
   const submit = async (text: string, attachments: ComposerAttachment[] = []) => {
@@ -537,10 +667,8 @@ export default function App() {
     const remembered = host?.url
       ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
       : knownHostProjectRoot(host);
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
-    if (host?.url) await refreshCatalog(projectDir, host.url, host.id);
-    setDialog({ projectDir: projectDir || remembered, ...sessionHostInput(host) });
+    if (host?.url) await refreshCatalog(remembered, host.url, host.id);
+    setDialog({ projectDir: remembered, ...sessionHostInput(host) });
   };
 
   const openSibling = (bundle?: string, provider?: ProviderOption) => {
@@ -554,10 +682,8 @@ export default function App() {
     const remembered = session?.projectDir || (host?.url
       ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
       : knownHostProjectRoot(host));
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     setDialog({
-      projectDir: projectDir || remembered,
+      projectDir: remembered,
       ...sessionHostInput(host),
       bundle: bundle || (session?.bundle && session.bundle !== "default bundle" ? session.bundle : undefined),
       provider: provider?.name,
@@ -577,14 +703,12 @@ export default function App() {
     const remembered = session?.projectDir || (host?.url
       ? knownHostProjectRoot(host) || await refreshHostProjectRoot(host)
       : knownHostProjectRoot(host));
-    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
-    if (!host?.url && nativeProjectPickerAvailable() && !projectDir) return;
     const provider = catalog().providers.find((item) => item.model === session?.model)
       || catalog().providers.find((item) => item.active);
     setCapabilitiesOpen(false);
     setDialog({ ...capabilitySessionInput(
       capability,
-      projectDir || remembered,
+      remembered,
       provider ? { provider: provider.name, model: provider.model } : undefined,
     ), ...sessionHostInput(host) });
   };
@@ -707,7 +831,7 @@ export default function App() {
       hostName: session.hostName,
       hostUrl: session.hostUrl,
     };
-    await close(session.guiId);
+    discardSessionView(session.guiId);
     try {
       await start(input);
     } catch {
@@ -743,7 +867,7 @@ export default function App() {
     }
     if (current.status !== "available" || updateBlocked()) return;
     try {
-      saveUpdateRestorePlan(localStorage, sessions(), activeId());
+      saveUpdateRestorePlan(localStorage, openSessionViews(), activeId());
     } catch {
       // Update installation remains available even when WebView storage is unavailable.
     }
@@ -760,16 +884,28 @@ export default function App() {
       <TabStrip
         sessions={sessions()}
         activeId={activeId()}
-        onSelect={setActiveId}
-        onClose={(id) => void close(id)}
+        onSelect={(id) => {
+          setActiveId(id);
+          setWorkbenchSurface("agent");
+        }}
+        onClose={requestTabClose}
         onNew={openNew}
         onDrawer={openDrawer}
         onSettings={() => setSettingsOpen(true)}
-        inspectorOpen={rightOpen()}
-        inspectorAvailable={Boolean(active())}
-        onToggleInspector={() => setRightOpen((value) => !value)}
+        inspectorOpen={workbenchSurface() === "agent" && rightOpen()}
+        inspectorAvailable={workbenchSurface() === "agent" && Boolean(active())}
+        onToggleInspector={(attentionSessionId) => {
+          const opening = !rightOpen();
+          if (opening && attentionSessionId) activateSessionView(attentionSessionId);
+          setWorkbenchSurface("agent");
+          if (opening) setInspectorTab("run");
+          setRightOpen(opening);
+        }}
         onOpenExecution={() => openInspector("map")}
         onOpenPlan={() => openInspector("plan")}
+        terminalAvailable={Boolean(terminalCoordinator)}
+        terminalOpen={workbenchSurface() === "terminal"}
+        onToggleTerminal={() => setWorkbenchSurface((surface) => surface === "terminal" ? "agent" : "terminal")}
         update={appUpdate()}
         updateBlocked={updateBlocked()}
         onUpdate={() => void applyAppUpdate()}
@@ -777,9 +913,10 @@ export default function App() {
 
       <Show when={workspaceAttachmentDrag()}><div class="native-drop-target">Drop files to attach</div></Show>
 
-      <Show
-        when={active()}
-        fallback={
+      <Show when={workbenchSurface() === "terminal" && terminalCoordinator} fallback={
+        <Show
+          when={active()}
+          fallback={
           <CoordinatorHome
             sessions={stored()}
             loading={storedLoading()}
@@ -805,11 +942,14 @@ export default function App() {
             transcription={transcription()}
             onTranscribe={transcribeAudio}
           />
-        }
-      >
+          }
+        >
         {(session) => (
           <div
             class="workspace"
+            id={`session-panel-${session().guiId}`}
+            role="tabpanel"
+            aria-labelledby={`session-tab-${session().guiId}`}
             classList={{ "left-open": leftOpen(), "right-open": rightOpen() }}
             onDragEnter={(event) => {
               const transfer = event.dataTransfer;
@@ -852,6 +992,8 @@ export default function App() {
               <SessionToolbar
                 state={session()}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
+                onDetach={() => detachSessionView(session().guiId)}
+                onStop={() => requestRuntimeStop(session().guiId)}
               />
               <Transcript
                 state={session()}
@@ -910,17 +1052,25 @@ export default function App() {
               onRefreshBundles={reloadCatalog}
               onCapabilities={() => setCapabilitiesOpen(true)}
               onRequestContext={() => void requestContextForActive()}
-              onOpenOutput={usesWebBridge() ? undefined : async (path) => {
+              onOpenOutput={async (path) => {
                 try {
-                  await openLocalOutput(session().projectDir, path);
+                  await openLocalOutput(session().projectDir, path, session().hostUrl, session().hostId);
                 } catch (error) {
                   update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
                 }
               }}
+              onClose={() => setRightOpen(false)}
             />
           </div>
-        )}
-      </Show>
+          )}
+        </Show>
+      } keyed>{(coordinator) => (
+        <TerminalWorkSurface
+          coordinator={coordinator}
+          project={nativeTerminalProject()}
+          onClose={() => setWorkbenchSurface("agent")}
+        />
+      )}</Show>
 
       <Show when={dialog()} keyed>
         {(initial) => <NewSessionDialog
@@ -945,7 +1095,8 @@ export default function App() {
       <Show when={drawerOpen()}>
         <SessionDrawer
           sessions={stored()}
-          openSessions={sessions()}
+          openSessions={openSessionViews()}
+          detachedSessionIds={detachedSessionList().map((session) => session.guiId)}
           activeId={activeId()}
           loading={storedLoading()}
           error={storedError()}
@@ -955,7 +1106,9 @@ export default function App() {
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
           onResume={requestStoredResume}
-          onSelectOpen={setActiveId}
+          onSelectOpen={activateSessionView}
+          onDetachOpen={detachSessionView}
+          onStopOpen={requestRuntimeStop}
           onNew={openNew}
           onCapabilities={() => setCapabilitiesOpen(true)}
           onSettings={() => setSettingsOpen(true)}
@@ -970,6 +1123,18 @@ export default function App() {
           onResume={() => prepareStoredResume(recovery.session)}
           onDuplicate={() => duplicateStoredSession(recovery.session)}
         />
+      )}</Show>
+      <Show when={stopRuntimeRequest()} keyed>{(request) => (
+        <Show when={sessionForGuiId(request.guiId)} keyed>{(session) => (
+          <SessionLifecycleDialog
+            session={session}
+            stopping={request.stopping}
+            error={request.error}
+            onCancel={() => setStopRuntimeRequest(undefined)}
+            onDetach={() => detachSessionView(session.guiId)}
+            onStop={() => void confirmRuntimeStop(session.guiId)}
+          />
+        )}</Show>
       )}</Show>
       <Show when={settingsOpen()}>
         <StudioSettingsDialog
@@ -1188,6 +1353,13 @@ export default function App() {
       setStoredSessionDialog(undefined);
       return;
     }
+    const detachedGuiId = openGuiIdForStoredSession(detachedSessionList(), session.sessionId, session);
+    if (detachedGuiId) {
+      activateSessionView(detachedGuiId);
+      setDrawerOpen(false);
+      setStoredSessionDialog(undefined);
+      return;
+    }
     const host = runtimeHostForStoredSession(session, runtimeHosts());
     if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);
     const remembered = session.projectDir || knownHostProjectRoot(host);
@@ -1305,7 +1477,7 @@ export default function App() {
   function startStatusPolling(guiId: string) {
     clearStatusPolling(guiId);
     const timer = window.setInterval(() => {
-      const session = sessions().find((item) => item.guiId === guiId);
+      const session = sessionForGuiId(guiId);
       if (session?.phase === "ready" && session.busy) void requestStatus(guiId);
     }, 2_500);
     statusPollers.set(guiId, timer);
@@ -1324,7 +1496,7 @@ export default function App() {
   }
 
   async function requestRestore(guiId: string) {
-    const session = sessions().find((item) => item.guiId === guiId);
+    const session = sessionForGuiId(guiId);
     if (!session?.restoreProgress) return;
     clearRestoreTimeout(guiId);
     const fail = (error: unknown) => {
@@ -1358,7 +1530,7 @@ export default function App() {
   async function applyStoredSessionTitle(guiId: string, runtimeSessionId?: string) {
     if (!runtimeSessionId) return;
     try {
-      const current = sessions().find((session) => session.guiId === guiId);
+      const current = sessionForGuiId(guiId);
       const match = (await listStoredSessions(undefined, current?.hostUrl, current?.hostId))
         .find((session) => session.sessionId === runtimeSessionId);
       if (!match?.name || /^Session [a-z0-9-]{1,12}$/i.test(match.name)) return;

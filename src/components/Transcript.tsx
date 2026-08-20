@@ -20,6 +20,7 @@ export function Transcript(props: Props) {
   let scroller: HTMLDivElement | undefined;
   let latestAnchor: HTMLDivElement | undefined;
   let scrollFrame = 0;
+  let focusedRestoreKey = "";
   let focusedPointerPan: { clientY: number; scrollTop: number; pointerId: number } | undefined;
   const [now, setNow] = createSignal(Date.now());
   const [following, setFollowing] = createSignal(true);
@@ -64,6 +65,24 @@ export function Transcript(props: Props) {
     if (!following()) return;
     window.cancelAnimationFrame(scrollFrame);
     scrollFrame = window.requestAnimationFrame(() => scrollTranscriptToLatest(scroller, latestAnchor));
+  });
+
+  createEffect(() => {
+    const state = props.state;
+    const restored = state.phase === "ready"
+      && state.restoreProgress?.history === true
+      && state.restoreProgress.status === true;
+    const conversation = state.blocks.filter((block) => block.kind === "user" || block.kind === "answer");
+    const key = restored && conversation.length
+      ? `${state.runtimeSessionId || state.resumeId || state.guiId}:${conversation.at(-1)?.id}`
+      : "";
+    if (!key || key === focusedRestoreKey) return;
+    focusedRestoreKey = key;
+    setFollowing(false);
+    window.requestAnimationFrame(() => {
+      const restoredConversation = scroller?.querySelectorAll<HTMLElement>("[data-conversation-message='true']");
+      restoredConversation?.item(restoredConversation.length - 1).scrollIntoView({ block: "center" });
+    });
   });
 
   const detachFromLatest = () => {
@@ -184,7 +203,13 @@ export function Transcript(props: Props) {
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={visibleBlocks()}>{(block) => <BlockView block={block} projectDir={props.state.projectDir} onThinkingExpanded={props.onThinkingExpanded} />}</For>
+        <For each={visibleBlocks()}>{(block) => <BlockView
+          block={block}
+          projectDir={props.state.projectDir}
+          hostUrl={props.state.hostUrl}
+          hostId={props.state.hostId}
+          onThinkingExpanded={props.onThinkingExpanded}
+        />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
           {(tail) => (
@@ -388,20 +413,34 @@ function formatDuration(milliseconds: number): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinkingExpanded: (blockId: string, expanded: boolean) => void }) {
+function BlockView(props: {
+  block: TranscriptBlock;
+  projectDir: string;
+  hostUrl?: string;
+  hostId?: string;
+  onThinkingExpanded: (blockId: string, expanded: boolean) => void;
+}) {
   const block = () => props.block;
   return (
     <Show
       when={block().kind !== "tool" && block().kind !== "thinking" && block().kind !== "recipe" && block().kind !== "output"}
       fallback={block().kind === "output"
-        ? <OutputView block={block() as Extract<TranscriptBlock, { kind: "output" }>} projectDir={props.projectDir} />
+        ? <OutputView
+          block={block() as Extract<TranscriptBlock, { kind: "output" }>}
+          projectDir={props.projectDir}
+          hostUrl={props.hostUrl}
+          hostId={props.hostId}
+        />
         : block().kind === "tool"
         ? <ToolView block={block() as Extract<TranscriptBlock, { kind: "tool" }>} />
         : block().kind === "recipe"
           ? <RecipeView block={block() as Extract<TranscriptBlock, { kind: "recipe" }>} />
           : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} onExpanded={props.onThinkingExpanded} />}
     >
-      <article class={`block block-${block().kind}`}>
+      <article
+        class={`block block-${block().kind}`}
+        data-conversation-message={block().kind === "user" || block().kind === "answer" ? "true" : undefined}
+      >
         <div class="block-gutter">
           {block().kind === "user" ? <span class="user-avatar">YOU</span> : block().kind === "answer" ? <span class="answer-glyph">✦</span> : <span class={`notice-dot ${(block() as Extract<TranscriptBlock, { kind: "notice" }>).level}`} />}
         </div>
@@ -435,6 +474,8 @@ function BlockView(props: { block: TranscriptBlock; projectDir: string; onThinki
 function OutputView(props: {
   block: Extract<TranscriptBlock, { kind: "output" }>;
   projectDir: string;
+  hostUrl?: string;
+  hostId?: string;
 }) {
   let card: HTMLDivElement | undefined;
   const [preview, setPreview] = createSignal<{ mediaType: string; data: string }>();
@@ -442,7 +483,7 @@ function OutputView(props: {
 
   onMount(() => {
     const load = () => {
-      void loadOutputPreview(props.projectDir, props.block.output.path)
+      void loadOutputPreview(props.projectDir, props.block.output.path, props.hostUrl, props.hostId)
         .then(setPreview)
         .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
     };

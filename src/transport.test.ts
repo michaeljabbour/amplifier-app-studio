@@ -6,6 +6,7 @@ import {
   configuredBridgeUrl,
   durableRuntimeHostForSession,
   launchSession,
+  loadOutputPreview,
   listRuntimeHosts,
   probeRuntimeHost,
   prepareSessionLaunch,
@@ -181,6 +182,25 @@ describe("bridge trust storage", () => {
     expect(requested.searchParams.get("projectDir")).toBe("/home/mjabbour/amplifier");
   });
 
+  it("loads output previews from the session's owning host", async () => {
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4319");
+    const fetchMock = vi.fn(async (_input: URL | RequestInfo) => jsonResponse({ mediaType: "image/png", data: "cG5n" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadOutputPreview(
+      "/home/mjabbour/amplifier",
+      ".git/amplifier-studio/outputs/result.png",
+      "http://127.0.0.1:4319",
+      "spark-9602",
+    )).resolves.toEqual({ mediaType: "image/png", data: "cG5n" });
+
+    const requested = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requested.origin).toBe("http://127.0.0.1:4319");
+    expect(requested.pathname).toBe("/v1/api/output-preview");
+    expect(requested.searchParams.get("path")).toBe(".git/amplifier-studio/outputs/result.png");
+  });
+
   it("turns a WebKit load failure into an actionable host connection error", async () => {
     saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4318");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Load failed")));
@@ -203,9 +223,10 @@ describe("bridge trust storage", () => {
     saveBridgeUrl("http://127.0.0.1:9555");
     saveBridgeToken("0123456789abcdef0123456789abcdef");
     const onRecord = vi.fn();
+    const onConnectionChange = vi.fn();
     const pending = launchSession(
       { guiId: "gui-one", projectDir: "/project" },
-      { onRecord, onLog: vi.fn(), onExit: vi.fn() },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn(), onConnectionChange },
     );
 
     sockets[0].open();
@@ -214,15 +235,18 @@ describe("bridge trust storage", () => {
     ]);
     sockets[0].message({ type: "ready", guiId: "gui-one", attached: false });
     const connection = await pending;
+    expect(onConnectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ status: "connected" }));
     sockets[0].message(eventEnvelope("already-seen", 50));
     expect(runtimeEventIds(onRecord)).toEqual(["already-seen"]);
 
     sockets[0].disconnect();
+    expect(onConnectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ status: "reconnecting" }));
     await vi.advanceTimersByTimeAsync(300);
     expect(sockets).toHaveLength(2);
     sockets[1].open();
     expect(sockets[1].messages()).toEqual([{ type: "attach", since: 0, version: 1 }]);
     sockets[1].message({ type: "ready", guiId: "gui-one", attached: true, since: 0 });
+    expect(onConnectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ status: "connected" }));
 
     // A live event may arrive after attachment but before history.begin. It is
     // buffered, then suppressed when the same durable id appears in replay.

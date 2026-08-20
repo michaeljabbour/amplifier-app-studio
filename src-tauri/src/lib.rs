@@ -1,6 +1,8 @@
 mod catalog;
 #[cfg(desktop)]
 mod image_drop;
+#[cfg(desktop)]
+mod local_tmux;
 mod protocol;
 #[cfg(desktop)]
 mod remote_hosts;
@@ -516,6 +518,20 @@ pub fn run() {
             open_output,
             #[cfg(desktop)]
             read_output_preview,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_list,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_create,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_capture,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_send,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_resize,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_rename,
+            #[cfg(desktop)]
+            local_tmux::terminal_tmux_terminate,
             #[cfg(desktop)]
             app_updates::fetch_update,
             #[cfg(desktop)]

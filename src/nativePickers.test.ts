@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePickerPaths } from "./nativePickers";
+import { normalizePickerPaths, projectPickerAvailableForRuntime } from "./nativePickers";
 
 describe("native picker selection normalization", () => {
   it("accepts the single-path and multi-path shapes returned by Tauri", () => {
@@ -14,5 +14,13 @@ describe("native picker selection normalization", () => {
     expect(normalizePickerPaths(null)).toEqual([]);
     expect(normalizePickerPaths(undefined)).toEqual([]);
     expect(normalizePickerPaths(["", 42, null])).toEqual([]);
+  });
+});
+
+describe("native project picker availability", () => {
+  it("never offers the desktop-only project picker to a mobile Tauri runtime", () => {
+    expect(projectPickerAvailableForRuntime(true, true)).toBe(false);
+    expect(projectPickerAvailableForRuntime(true, false)).toBe(true);
+    expect(projectPickerAvailableForRuntime(false, false)).toBe(false);
   });
 });

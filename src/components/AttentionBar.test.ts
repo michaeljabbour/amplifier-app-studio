@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attentionResponseFor, decisionChoiceRows, goalAlignedRecommendedChoice } from "./AttentionBar";
+import { attentionControlsUnavailable, attentionResponseFor, decisionChoiceRows, goalAlignedRecommendedChoice } from "./AttentionBar";
 import { createSessionState } from "../reducer";
 
 describe("decision automation", () => {
@@ -60,5 +60,14 @@ describe("decision automation", () => {
       ticketId: "approval-1",
       choice: "Allow once",
     });
+  });
+
+  it("keeps decisions pending but disables answers while compute reconnects", () => {
+    const state = createSessionState("gui", { projectDir: "/tmp/project" });
+    expect(attentionControlsUnavailable(state)).toBe(false);
+    expect(attentionControlsUnavailable({
+      ...state,
+      connectivity: { status: "reconnecting", message: "Trying again" },
+    })).toBe(true);
   });
 });
