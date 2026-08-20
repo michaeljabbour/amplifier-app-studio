@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { CapabilityCatalog, NewSessionInput } from "../protocol";
-import { githubCloneDestination, parseGithubRepositoryUrl } from "../githubRepository";
+import { githubCloneDestination, parseGithubRepositoryUrl, projectDirForSource } from "../githubRepository";
 import { directoryBreadcrumbs, isPathInsideRoot } from "../projectFolders";
 import { toolContractFailure } from "../providerSafety";
 import { createHostDirectory, listHostDirectories, type CloneRepositoryResult, type HostDirectoryListing, type RuntimeHost } from "../transport";
@@ -15,6 +15,7 @@ interface Props {
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
   canCloneRepository: (host: RuntimeHost) => boolean;
   onCloneRepository: (repositoryUrl: string, host: RuntimeHost) => Promise<CloneRepositoryResult>;
+  onBusyChange?: (busy: boolean) => void;
   onHostChange: (host: RuntimeHost) => Promise<string | undefined>;
   onStart: (input: NewSessionInput) => Promise<void>;
 }
@@ -23,6 +24,7 @@ export function NewSessionDialog(props: Props) {
   let remoteBrowserTrigger: HTMLButtonElement | undefined;
   let remoteBrowserBack: HTMLButtonElement | undefined;
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
+  const [existingProjectDir, setExistingProjectDir] = createSignal(props.initial.projectDir);
   const [hostId, setHostId] = createSignal(props.initial.hostId || props.hosts[0]?.id || "local");
   const [bundle, setBundle] = createSignal(props.initial.bundle || "");
   const [model, setModel] = createSignal(props.initial.model || "");
@@ -52,6 +54,7 @@ export function NewSessionDialog(props: Props) {
   createEffect(() => {
     if (!cloneAvailable() && projectSource() === "github") setProjectSource("existing");
   });
+  onCleanup(() => props.onBusyChange?.(false));
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -105,6 +108,7 @@ export function NewSessionDialog(props: Props) {
       return;
     }
     setCloning(true);
+    props.onBusyChange?.(true);
     setError("");
     setCloneResult(undefined);
     try {
@@ -115,6 +119,7 @@ export function NewSessionDialog(props: Props) {
       setError(String(caught).replace(/^Error:\s*/, ""));
     } finally {
       setCloning(false);
+      props.onBusyChange?.(false);
     }
   };
 
@@ -124,7 +129,10 @@ export function NewSessionDialog(props: Props) {
     setError("");
     try {
       const selected = await props.onPickProjectDir(projectDir());
-      if (selected) setProjectDir(selected);
+      if (selected) {
+        setExistingProjectDir(selected);
+        setProjectDir(selected);
+      }
     } catch (caught) {
       setError(String(caught));
     } finally {
@@ -141,7 +149,10 @@ export function NewSessionDialog(props: Props) {
     try {
       const listing = await listHostDirectories(host.url, path, host.id);
       setRemoteDirectories(listing);
-      if (!projectDir()) setProjectDir(listing.path);
+      if (!projectDir()) {
+        setExistingProjectDir(listing.path);
+        setProjectDir(listing.path);
+      }
       if (opening) queueMicrotask(() => remoteBrowserBack?.focus());
     } catch (caught) {
       setError(String(caught));
@@ -155,6 +166,7 @@ export function NewSessionDialog(props: Props) {
   };
 
   const chooseRemoteFolder = (path: string) => {
+    setExistingProjectDir(path);
     setProjectDir(path);
     setRemoteDirectories(undefined);
     setNewFolder("");
@@ -239,13 +251,17 @@ export function NewSessionDialog(props: Props) {
               if (!next) return;
               setHostId(next.id);
               setProjectDir(next.defaultProjectRoot || "");
+              setExistingProjectDir(next.defaultProjectRoot || "");
               setProjectSource("existing");
               setRepositoryUrl("");
               setCloneResult(undefined);
               setRemoteDirectories(undefined);
               void props.onHostChange(next)
                 .then((projectRoot) => {
-                  if (hostId() === next.id && projectRoot) setProjectDir(projectRoot);
+                  if (hostId() === next.id && projectRoot) {
+                    setExistingProjectDir(projectRoot);
+                    setProjectDir(projectRoot);
+                  }
                 })
                 .catch((caught) => setError(String(caught)));
             }}
@@ -265,6 +281,7 @@ export function NewSessionDialog(props: Props) {
                 aria-pressed={projectSource() === "existing"}
                 onClick={() => {
                   setProjectSource("existing");
+                  setProjectDir(projectDirForSource("existing", existingProjectDir(), cloneResult()?.path));
                   setError("");
                 }}
               >
@@ -277,6 +294,7 @@ export function NewSessionDialog(props: Props) {
                 aria-pressed={projectSource() === "github"}
                 onClick={() => {
                   setProjectSource("github");
+                  setProjectDir(projectDirForSource("github", existingProjectDir(), cloneResult()?.path));
                   setError("");
                 }}
               >
@@ -331,7 +349,10 @@ export function NewSessionDialog(props: Props) {
               <input
                 value={projectDir()}
                 readOnly={nativeProjectPicker()}
-                onInput={(event) => setProjectDir(event.currentTarget.value)}
+                onInput={(event) => {
+                  setExistingProjectDir(event.currentTarget.value);
+                  setProjectDir(event.currentTarget.value);
+                }}
                 placeholder={nativeProjectPicker() ? "Choose a folder…" : "/project/path"}
                 aria-label="Selected project folder"
               />

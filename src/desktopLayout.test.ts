@@ -43,7 +43,8 @@ describe("desktop navigation and history contracts", () => {
     expect(newSessionSource).toContain("setProjectDir(result.path)");
     expect(newSessionSource).toContain("Review setup, then start");
     expect(appSource).toContain("canCloneRepository={(host)");
-    expect(appSource).toContain("onCloneRepository={(repositoryUrl, host)");
+    expect(appSource).toContain("onCloneRepository={async (repositoryUrl, host)");
+    expect(appSource).toContain("await refreshCatalog(result.path");
   });
 
   it("opens native local terminal sessions inside the Studio workbench", () => {

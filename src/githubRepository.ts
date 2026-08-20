@@ -36,8 +36,16 @@ export function parseGithubRepositoryUrl(value: string): GithubRepositoryIdentit
 export function githubCloneDestination(value: string, remoteHostName?: string): string {
   try {
     const { name } = parseGithubRepositoryUrl(value);
-    return remoteHostName ? `${remoteHostName} · dev/${name}` : `~/dev/${name}`;
+    return remoteHostName ? `${remoteHostName} · ~/dev/${name}` : `~/dev/${name}`;
   } catch {
-    return remoteHostName ? `${remoteHostName} · dev/<repository>` : "~/dev/<repository>";
+    return remoteHostName ? `${remoteHostName} · ~/dev/<repository>` : "~/dev/<repository>";
   }
+}
+
+export function projectDirForSource(
+  source: "existing" | "github",
+  existingPath: string,
+  clonedPath?: string,
+): string {
+  return source === "github" && clonedPath ? clonedPath : existingPath;
 }

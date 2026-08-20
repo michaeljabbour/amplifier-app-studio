@@ -9,6 +9,8 @@ use tokio::sync::Semaphore;
 use tokio::{io::AsyncReadExt, process::Command, time::timeout};
 
 const CLONE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const CLONE_BUSY: &str =
+    "Another repository clone is already running. Wait for it to finish, then try again.";
 static CLONE_SLOT: Semaphore = Semaphore::const_new(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,25 +48,21 @@ pub fn local_dev_workspace() -> Result<PathBuf, String> {
 /// Select the configured `dev` workspace for a remote host. Host cloning never
 /// guesses outside the explicit project-root allowlist.
 pub fn configured_dev_workspace(
-    default_project_dir: &str,
+    _default_project_dir: &str,
     allowed_roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
-    for root in allowed_roots {
-        if root.file_name().is_some_and(|name| name == "dev") {
-            return Ok(root.clone());
-        }
-    }
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Amplifier Host could not locate its home folder".to_owned())?;
+    configured_dev_workspace_at(&home, allowed_roots)
+}
 
-    let default = PathBuf::from(default_project_dir)
+fn configured_dev_workspace_at(home: &Path, allowed_roots: &[PathBuf]) -> Result<PathBuf, String> {
+    let dev = home
+        .join("dev")
         .canonicalize()
-        .map_err(|error| format!("Could not open the host's default project folder: {error}"))?;
-    if let Some(dev) = default
-        .ancestors()
-        .find(|path| path.file_name().is_some_and(|name| name == "dev"))
-    {
-        if allowed_roots.iter().any(|root| dev.starts_with(root)) {
-            return Ok(dev.to_path_buf());
-        }
+        .map_err(|error| format!("Could not open the host's ~/dev workspace: {error}"))?;
+    if allowed_roots.iter().any(|root| dev.starts_with(root)) {
+        return Ok(dev);
     }
 
     Err(
@@ -78,6 +76,9 @@ pub async fn clone_github_repository_into(
     dev_workspace: &Path,
 ) -> Result<CloneRepositoryResult, String> {
     let repository = parse_github_repository(repository_url)?;
+    let _clone_slot = CLONE_SLOT
+        .try_acquire()
+        .map_err(|_| CLONE_BUSY.to_owned())?;
     let parent = dev_workspace
         .canonicalize()
         .map_err(|error| format!("Could not open the dev workspace: {error}"))?;
@@ -100,11 +101,6 @@ pub async fn clone_github_repository_into(
             repository.name
         )
     })?;
-
-    let _clone_slot = CLONE_SLOT
-        .acquire()
-        .await
-        .map_err(|_| "The repository clone service is unavailable".to_owned())?;
 
     let mut command = Command::new("git");
     command
@@ -133,24 +129,27 @@ pub async fn clone_github_repository_into(
         .stderr
         .take()
         .ok_or_else(|| "Studio could not read Git's error output".to_owned())?;
-    let stderr_task = tokio::spawn(read_bounded_stderr(stderr));
-
-    let status = match timeout(CLONE_TIMEOUT, child.wait()).await {
-        Ok(Ok(status)) => Ok(status),
-        Ok(Err(error)) => Err(format!("Could not wait for Git: {error}")),
+    let clone = async {
+        let (status, stderr) = tokio::join!(child.wait(), read_bounded_stderr(stderr));
+        status
+            .map(|status| (status, stderr))
+            .map_err(|error| format!("Could not wait for Git: {error}"))
+    };
+    let completed = match timeout(CLONE_TIMEOUT, clone).await {
+        Ok(result) => result,
         Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            let _ = timeout(Duration::from_secs(5), async {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            })
+            .await;
             Err("Cloning timed out after 10 minutes".to_owned())
         }
     };
-    let stderr = stderr_task
-        .await
-        .map_err(|_| "Studio could not finish reading Git's error output".to_owned())?;
 
-    let result = match status {
-        Ok(status) if status.success() => Ok(()),
-        Ok(_) => {
+    let result = match completed {
+        Ok((status, _)) if status.success() => Ok(()),
+        Ok((_, stderr)) => {
             let detail = concise_git_error(&stderr);
             Err(if detail.is_empty() {
                 format!(
@@ -333,20 +332,18 @@ mod tests {
     fn remote_clone_requires_an_authorized_dev_workspace() {
         let root = tempfile::tempdir().unwrap();
         let dev = root.path().join("dev");
-        let project = dev.join("project");
-        std::fs::create_dir_all(&project).unwrap();
-        let allowed = vec![dev.canonicalize().unwrap()];
+        std::fs::create_dir(&dev).unwrap();
+        let canonical = dev.canonicalize().unwrap();
         assert_eq!(
-            configured_dev_workspace(project.to_string_lossy().as_ref(), &allowed).unwrap(),
-            allowed[0]
+            configured_dev_workspace_at(root.path(), std::slice::from_ref(&canonical)).unwrap(),
+            canonical
         );
 
         let other = tempfile::tempdir().unwrap();
-        assert!(configured_dev_workspace(
-            other.path().to_string_lossy().as_ref(),
-            &[other.path().canonicalize().unwrap()]
-        )
-        .is_err());
+        assert!(
+            configured_dev_workspace_at(root.path(), &[other.path().canonicalize().unwrap()])
+                .is_err()
+        );
     }
 
     #[tokio::test]

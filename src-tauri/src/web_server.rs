@@ -381,12 +381,22 @@ async fn health() -> Json<Value> {
 }
 
 async fn config(State(state): State<ServerState>) -> Json<Value> {
+    let capabilities = if repo_clone::configured_dev_workspace(
+        &state.default_project_dir,
+        &state.security.allowed_project_roots,
+    )
+    .is_ok()
+    {
+        vec!["githubRepositoryClone"]
+    } else {
+        Vec::new()
+    };
     Json(json!({
         "version": API_VERSION,
         "defaultProjectDir": state.default_project_dir,
         "transport": "websocket",
         "projectRootCount": state.security.allowed_project_roots.len(),
-        "capabilities": ["githubRepositoryClone"],
+        "capabilities": capabilities,
     }))
 }
 
@@ -417,10 +427,11 @@ async fn clone_repository(
         &state.security.allowed_project_roots,
     )
     .map_err(ServerError::bad_request)?;
-    repo_clone::clone_github_repository_into(&request.repository_url, &dev_workspace)
-        .await
-        .map(Json)
-        .map_err(ServerError::bad_request)
+    match repo_clone::clone_github_repository_into(&request.repository_url, &dev_workspace).await {
+        Ok(result) => Ok(Json(result)),
+        Err(error) if error == repo_clone::CLONE_BUSY => Err(ServerError::too_many_requests(error)),
+        Err(error) => Err(ServerError::bad_request(error)),
+    }
 }
 
 /// Creates one directory inside an already-authorized parent.
@@ -1442,6 +1453,13 @@ impl ServerError {
     fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
+    }
+
+    fn too_many_requests(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
             message: message.into(),
         }
     }

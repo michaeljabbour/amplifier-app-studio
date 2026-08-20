@@ -104,6 +104,8 @@ describe("mobile layout contracts", () => {
       "setRightOpen(false)",
       "setDrawerOpen(false)",
     ]) expect(dismiss).toContain(close);
+    expect(dismiss).toContain("if (!dialogBusy()) setDialog(undefined)");
+    expect(appSource).toContain("onBusyChange={setDialogBusy}");
   });
 
   it("keeps open-session lifecycle actions explicit and touch sized", () => {

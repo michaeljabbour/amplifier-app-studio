@@ -123,6 +123,7 @@ export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
   const [activeId, setActiveId] = createSignal<string>();
   const [dialog, setDialog] = createSignal<NewSessionInput>();
+  const [dialogBusy, setDialogBusy] = createSignal(false);
   const [drawerOpen, setDrawerOpen] = createSignal(false);
   const [stored, setStored] = createSignal<StoredSession[]>([]);
   const [storedLoading, setStoredLoading] = createSignal(false);
@@ -226,7 +227,9 @@ export default function App() {
     else if (providerSetupOpen()) setProviderSetupOpen(false);
     else if (capabilitiesOpen()) setCapabilitiesOpen(false);
     else if (settingsOpen()) setSettingsOpen(false);
-    else if (dialog()) setDialog(undefined);
+    else if (dialog()) {
+      if (!dialogBusy()) setDialog(undefined);
+    }
     else if (rightOpen()) setRightOpen(false);
     else if (drawerOpen()) setDrawerOpen(false);
   };
@@ -1087,16 +1090,23 @@ export default function App() {
           catalogError={catalogError()}
           hosts={runtimeHosts()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
-          onCancel={() => setDialog(undefined)}
+          onCancel={() => {
+            if (!dialogBusy()) setDialog(undefined);
+          }}
+          onBusyChange={setDialogBusy}
           onPickProjectDir={pickProjectDirectory}
           canCloneRepository={(host) => host.url
             ? hostCapabilities()[host.id]?.includes("githubRepositoryClone") === true
             : nativeProjectPickerAvailable()}
-          onCloneRepository={(repositoryUrl, host) => cloneGithubRepository(
-            repositoryUrl,
-            host.url || undefined,
-            host.id,
-          )}
+          onCloneRepository={async (repositoryUrl, host) => {
+            const result = await cloneGithubRepository(
+              repositoryUrl,
+              host.url || undefined,
+              host.id,
+            );
+            await refreshCatalog(result.path, host.url || undefined, host.id);
+            return result;
+          }}
           onHostChange={async (host) => {
             const projectRoot = host.url ? await refreshHostProjectRoot(host) : knownHostProjectRoot(host);
             await refreshCatalog(projectRoot, host.url || undefined, host.id);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { githubCloneDestination, parseGithubRepositoryUrl } from "./githubRepository";
+import { githubCloneDestination, parseGithubRepositoryUrl, projectDirForSource } from "./githubRepository";
 
 describe("GitHub repository URLs", () => {
   it("derives one safe repository destination", () => {
@@ -9,7 +9,7 @@ describe("GitHub repository URLs", () => {
       repository: "microsoft/amplifier",
     });
     expect(githubCloneDestination("https://github.com/microsoft/amplifier")).toBe("~/dev/amplifier");
-    expect(githubCloneDestination("https://github.com/microsoft/amplifier", "Spark")).toBe("Spark · dev/amplifier");
+    expect(githubCloneDestination("https://github.com/microsoft/amplifier", "Spark")).toBe("Spark · ~/dev/amplifier");
   });
 
   it.each([
@@ -22,5 +22,14 @@ describe("GitHub repository URLs", () => {
     "https://github.com/microsoft/%2E%2E",
   ])("rejects unsafe or non-repository input: %s", (value) => {
     expect(() => parseGithubRepositoryUrl(value)).toThrow();
+  });
+});
+
+describe("project source path", () => {
+  it("restores the correct path while toggling after a successful clone", () => {
+    expect(projectDirForSource("github", "/work/existing", "/home/user/dev/cloned"))
+      .toBe("/home/user/dev/cloned");
+    expect(projectDirForSource("existing", "/work/changed", "/home/user/dev/cloned"))
+      .toBe("/work/changed");
   });
 });
