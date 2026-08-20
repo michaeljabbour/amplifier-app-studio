@@ -13,6 +13,18 @@ const MAX_IMAGE_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_DOCUMENT_CHARS: usize = 200_000;
 const MAX_DOCUMENT_TOTAL_CHARS: usize = 300_000;
+/// Nothing is read into memory before this bound. Both the image and document limits are 20 MB,
+/// so a larger file is rejected whatever it turns out to be. The size check used to run *after*
+/// `std::fs::read`, so one dropped multi-gigabyte file could exhaust memory before any limit was
+/// consulted.
+const MAX_ATTACHMENT_BYTES: u64 = if MAX_IMAGE_BYTES > MAX_DOCUMENT_BYTES {
+    MAX_IMAGE_BYTES
+} else {
+    MAX_DOCUMENT_BYTES
+};
+/// Ceiling on inflated `word/document.xml`. A few KB of crafted zip can expand to gigabytes;
+/// this used to inflate straight into a String with no bound, aborting the process.
+const MAX_DOCX_XML_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +63,12 @@ pub(crate) fn load_attachments(paths: &[PathBuf]) -> Result<Vec<NativeAttachment
         let size = metadata.len();
         if size == 0 {
             return Err(format!("{} is empty.", display_name(path)));
+        }
+        if size > MAX_ATTACHMENT_BYTES {
+            return Err(format!(
+                "{} is larger than the 20 MB attachment limit.",
+                display_name(path)
+            ));
         }
         let bytes = std::fs::read(path)
             .map_err(|error| format!("Could not read {}: {error}", display_name(path)))?;
@@ -150,10 +168,22 @@ fn extract_docx_text(path: &Path, bytes: &[u8]) -> Result<String, String> {
             display_name(path)
         )
     })?;
-    let mut xml = String::new();
+    // Read through a hard cap rather than inflating the whole entry: the compressed size says
+    // nothing about the inflated size, so an unbounded read here is a one-file process kill.
+    let mut raw = Vec::new();
     document
-        .read_to_string(&mut xml)
+        .by_ref()
+        .take(MAX_DOCX_XML_BYTES.saturating_add(1))
+        .read_to_end(&mut raw)
         .map_err(|error| format!("Could not read {}: {error}", display_name(path)))?;
+    if raw.len() as u64 > MAX_DOCX_XML_BYTES {
+        return Err(format!(
+            "{} expands to more Word content than Studio can read safely.",
+            display_name(path)
+        ));
+    }
+    let xml = String::from_utf8(raw)
+        .map_err(|_| format!("{} has unreadable Word content.", display_name(path)))?;
 
     let mut reader = Reader::from_str(&xml);
     reader.config_mut().trim_text(false);
@@ -278,6 +308,55 @@ mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
+
+    /// Regression: the size check ran *after* `std::fs::read`, so a single oversized file was
+    /// pulled into memory in full before any limit was consulted. The file here is sparse, so
+    /// the test proves the rejection happens without the bytes ever being read.
+    #[test]
+    fn an_oversized_attachment_is_rejected_before_it_is_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("huge.bin");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+        drop(file);
+
+        let error = load_attachments(&[path]).unwrap_err();
+        assert!(
+            error.contains("larger than the 20 MB attachment limit"),
+            "{error}"
+        );
+    }
+
+    /// Regression: `word/document.xml` was inflated with an unbounded `read_to_string`, so a
+    /// few KB of crafted zip could expand to gigabytes and abort the process from one attached
+    /// file. Compressed size says nothing about inflated size, so the outer 20 MB attachment
+    /// bound does not help here.
+    #[test]
+    fn a_docx_that_inflates_past_the_cap_is_refused_rather_than_exhausting_memory() {
+        let mut archive = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut archive));
+            zip.start_file("word/document.xml", SimpleFileOptions::default())
+                .unwrap();
+            let chunk = vec![b'a'; 1024 * 1024];
+            for _ in 0..=(MAX_DOCX_XML_BYTES / (1024 * 1024)) {
+                zip.write_all(&chunk).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let error = extract_docx_text(Path::new("bomb.docx"), &archive).unwrap_err();
+        assert!(
+            error.contains("more Word content than Studio can read safely"),
+            "{error}"
+        );
+        // The archive itself is tiny: this is exactly why an inflated-size cap is required.
+        assert!(
+            (archive.len() as u64) < MAX_DOCX_XML_BYTES / 10,
+            "bomb archive was {} bytes",
+            archive.len()
+        );
+    }
 
     #[test]
     fn loads_supported_images_and_text_documents() {

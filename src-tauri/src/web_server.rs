@@ -218,27 +218,55 @@ impl ServerOptions {
     }
 }
 
-pub async fn serve(options: ServerOptions) -> Result<(), String> {
-    if !options.frontend_dir.join("index.html").is_file() {
-        return Err(format!(
-            "Web frontend was not found at {}. Run `npm run build` first.",
-            options.frontend_dir.display()
-        ));
-    }
+/// Content-Security-Policy served to the browser client.
+///
+/// Mirrors `app.security.csp` in tauri.conf.json minus the Tauri-only `ipc:` and `asset:`
+/// schemes. The host previously sent NO CSP at all, which made the "network off" promise on
+/// `amplifier-html` artifacts true only in the desktop app: in a browser the sandboxed frame
+/// could navigate ITSELF to an external URL and beacon its contents out. `frame-src` is what
+/// stops that -- an artifact's own inner policy governs subresources, not navigation of its own
+/// browsing context, so only the embedding page's policy can refuse it.
+///
+/// `connect-src` deliberately stays as broad as the desktop policy: a browser client may be
+/// pointed at a bridge on another origin, and narrowing it to 'self' would break that.
+///
+/// The `'sha256-...'` entry is the artifact frame's inline resize script and must stay identical
+/// to tauri.conf.json. `node scripts/artifact-csp-hash.mjs --write` updates both, and
+/// `browser_csp_pins_the_same_artifact_script_as_the_desktop_app` fails the build if they drift.
+const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-uQ6KvrnTSPQivdKZP+b9yjEs3Xj48Ot9wBzToVLzyts='; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
-    let (shutdown, _) = broadcast::channel(1);
-    let state = ServerState {
-        manager: SessionManager::default(),
-        default_project_dir: options.default_project_dir.to_string_lossy().into_owned(),
-        security: BridgeSecurity {
-            bearer_token: options.bearer_token.into(),
-            allowed_origins: options.allowed_origins.into(),
-            allowed_project_roots: options.allowed_project_roots.into(),
-        },
-        shutdown: shutdown.clone(),
-    };
-    let index = options.frontend_dir.join("index.html");
-    let assets = ServeDir::new(&options.frontend_dir)
+/// Attaches the browser client's security headers to every response.
+async fn browser_security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    // A 101 has already handed the connection to the WebSocket; leave its headers alone.
+    if response.status() == StatusCode::SWITCHING_PROTOCOLS {
+        return response;
+    }
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(BROWSER_CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
+/// Builds the full HTTP surface.
+///
+/// Split out of `serve` so tests can exercise the real router -- in particular that the browser
+/// security headers are actually attached to responses. Asserting only on the BROWSER_CSP
+/// constant would pass even if the layer were never wired up, which is precisely the failure
+/// mode this whole area has already produced once.
+fn build_app(state: ServerState, frontend_dir: &Path) -> Result<Router, String> {
+    let index = frontend_dir.join("index.html");
+    let assets = ServeDir::new(frontend_dir)
         .append_index_html_on_directories(true)
         .fallback(ServeFile::new(index));
     let cors_origins = state
@@ -290,15 +318,41 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         // This outer layer answers browser preflight before bearer middleware;
         // actual API requests still require the token.
         .layer(cors);
-    let shutdown_manager = state.manager.clone();
-    let cleanup_manager = state.manager.clone();
     let app = Router::new()
         .nest("/v1/api", api.clone())
         // Compatibility alias for Studio builds from before the host surface
         // was versioned. New clients use /v1/api exclusively.
         .nest("/api", api)
         .fallback_service(assets)
+        .layer(middleware::from_fn(browser_security_headers))
         .with_state(state);
+
+    Ok(app)
+}
+
+pub async fn serve(options: ServerOptions) -> Result<(), String> {
+    if !options.frontend_dir.join("index.html").is_file() {
+        return Err(format!(
+            "Web frontend was not found at {}. Run `npm run build` first.",
+            options.frontend_dir.display()
+        ));
+    }
+
+    let (shutdown, _) = broadcast::channel(1);
+    let state = ServerState {
+        manager: SessionManager::default(),
+        default_project_dir: options.default_project_dir.to_string_lossy().into_owned(),
+        security: BridgeSecurity {
+            bearer_token: options.bearer_token.into(),
+            allowed_origins: options.allowed_origins.into(),
+            allowed_project_roots: options.allowed_project_roots.into(),
+        },
+        shutdown: shutdown.clone(),
+    };
+    let app = build_app(state.clone(), &options.frontend_dir)?;
+
+    let shutdown_manager = state.manager.clone();
+    let cleanup_manager = state.manager.clone();
 
     let listener = TcpListener::bind(options.bind)
         .await
@@ -1492,6 +1546,98 @@ mod tests {
     fn pending_event(value: Value) -> OutboundEvent {
         let (delivered, _confirmed) = oneshot::channel();
         OutboundEvent { value, delivered }
+    }
+
+    fn browser_test_state() -> ServerState {
+        let (shutdown, _) = broadcast::channel(1);
+        ServerState {
+            manager: SessionManager::default(),
+            default_project_dir: "/project".to_owned(),
+            security: BridgeSecurity {
+                bearer_token: b"0123456789abcdef0123456789abcdef".to_vec().into(),
+                allowed_origins: vec!["http://127.0.0.1:4317".to_owned()].into(),
+                allowed_project_roots: vec![PathBuf::from("/project")].into(),
+            },
+            shutdown,
+        }
+    }
+
+    /// Regression: the browser host shipped no CSP at all, so the "network off" promise on
+    /// amplifier-html artifacts was true only in the desktop app. In a browser the sandboxed
+    /// frame could navigate ITSELF to an external URL and beacon out; an artifact's own inner
+    /// policy governs subresources, not navigation of its own browsing context, so only the
+    /// embedding page's frame-src can refuse it.
+    ///
+    /// This drives the real router rather than the constant: a header that is declared but
+    /// never wired up is exactly the failure this area has already produced once.
+    #[tokio::test]
+    async fn the_browser_host_actually_serves_its_security_headers() {
+        use tower::ServiceExt;
+
+        let frontend = tempfile::tempdir().expect("frontend dir");
+        fs::write(
+            frontend.path().join("index.html"),
+            "<!doctype html><html></html>",
+        )
+        .expect("index.html");
+
+        let app = build_app(browser_test_state(), frontend.path()).expect("router");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("the browser host must serve a Content-Security-Policy")
+            .to_str()
+            .expect("ascii csp");
+
+        // frame-src is the directive that stops a sandboxed artifact navigating itself out.
+        assert!(csp.contains("frame-src 'self' data: blob:"), "{csp}");
+        assert!(csp.contains("object-src 'none'"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+        assert_eq!(
+            response
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .map(|v| v.to_str().unwrap()),
+            Some("nosniff")
+        );
+    }
+
+    /// The artifact frame's inline script is allowed by hash, and desktop and browser must pin
+    /// the same one or artifacts break in whichever client was not updated.
+    #[test]
+    fn browser_csp_pins_the_same_artifact_script_as_the_desktop_app() {
+        const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+        let conf: Value = serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
+        let desktop = conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("desktop csp");
+        let hash = desktop
+            .split_whitespace()
+            .find(|token| token.starts_with("'sha256-"))
+            .expect("desktop csp pins the artifact script hash");
+
+        assert!(
+            BROWSER_CSP.contains(hash),
+            "browser CSP must allow the same artifact script as the desktop app ({hash}); \
+             run `node scripts/artifact-csp-hash.mjs --write`"
+        );
+
+        let script_src = BROWSER_CSP
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("script-src "))
+            .expect("browser csp declares script-src");
+        assert!(!script_src.contains("'unsafe-inline'"), "{script_src}");
     }
 
     fn token_file(directory: &Path) -> PathBuf {
