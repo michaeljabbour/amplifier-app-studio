@@ -75,6 +75,7 @@ import {
   listStoredSessions,
   exportStoredSession,
   removeRuntimeHost,
+  resetReplayDedupe,
   sendOp,
   saveBridgeToken,
   saveRuntimeHost,
@@ -811,6 +812,9 @@ export default function App() {
   };
 
   const retrySessionRestore = (guiId: string) => {
+    // The retry re-requests the ledger from cursor 0. Transport dedupe has to forget the first
+    // delivery first, or every record is suppressed and the rebuilt transcript comes back empty.
+    resetReplayDedupe(guiId);
     update(guiId, retryRestore);
     void requestRestore(guiId);
   };

@@ -146,6 +146,7 @@ interface BridgeConnection extends SessionConnection {
   lastCursor: number;
   replaying: boolean;
   replayBuffer: BridgeEnvelope[];
+  replayWatchdog?: number;
   seenEventIds: Set<string>;
   replayCoveredIds: Set<string>;
 }
@@ -915,6 +916,7 @@ async function launchBridgeSession(
     dispose: () => {
       connection.disposed = true;
       if (connection.reconnectTimer !== undefined) window.clearTimeout(connection.reconnectTimer);
+      clearReplayWatchdog(connection);
       if (connection.pendingStop) {
         window.clearTimeout(connection.pendingStop.timer);
         connection.pendingStop.reject(new Error("The session view detached before stop completed"));
@@ -988,6 +990,10 @@ async function launchBridgeSession(
               message: `Reattached to the runtime; replaying after cursor ${connection.lastCursor}`,
             });
           }
+          // The reattach is acknowledged but its replay has not finished. Until history.end
+          // arrives every record goes to replayBuffer, so a replay that never completes buries
+          // the session behind a UI that still reads "connected".
+          if (reattach) armReplayWatchdog(connection, handlers);
           if (connection.stopRequested) sendBridge(socket, { type: "stop" });
           return;
         }
@@ -1004,10 +1010,19 @@ async function launchBridgeSession(
             socket.close();
             reject(error);
           } else if (reattach && !acknowledged) {
+            // The host refused the reattach: the runtime this view was bound to is gone. This
+            // used to just close the socket, which fell through to the reconnect backoff and
+            // retried a runtime that can never come back -- "Reconnecting to compute" forever,
+            // composer disabled, and the loop survived detaching the tab.
             handlers.onLog({ stream: "bridge", message: error.message });
-            socket.close(4004, "runtime reattach failed");
+            endBridgeConnection(connection, options.guiId, handlers, socket, error.message);
           } else {
             handlers.onLog({ stream: "bridge", message: error.message });
+            // A post-ready error during replay means history.end is never coming. Deliver what
+            // was buffered rather than holding it until the socket happens to drop.
+            if (connection.replaying) {
+              flushReplayBuffer(connection, handlers, "History replay failed; showing live updates from here.");
+            }
           }
           return;
         }
@@ -1046,6 +1061,81 @@ async function launchBridgeSession(
   });
 }
 
+/** How long a reattach may sit in replay before Studio gives up waiting for history.end. */
+const REPLAY_WATCHDOG_MS = 12_000;
+
+function clearReplayWatchdog(connection: BridgeConnection): void {
+  if (connection.replayWatchdog === undefined) return;
+  window.clearTimeout(connection.replayWatchdog);
+  connection.replayWatchdog = undefined;
+}
+
+function armReplayWatchdog(connection: BridgeConnection, handlers: SessionHandlers): void {
+  clearReplayWatchdog(connection);
+  if (!connection.replaying) return;
+  connection.replayWatchdog = window.setTimeout(() => {
+    connection.replayWatchdog = undefined;
+    if (!connection.replaying) return;
+    flushReplayBuffer(
+      connection,
+      handlers,
+      "The runtime did not finish replaying history; showing live updates from here.",
+    );
+  }, REPLAY_WATCHDOG_MS);
+}
+
+/** Leaves replay mode and delivers whatever was buffered, in order. */
+function flushReplayBuffer(connection: BridgeConnection, handlers: SessionHandlers, message: string): void {
+  clearReplayWatchdog(connection);
+  connection.replaying = false;
+  const buffered = connection.replayBuffer;
+  connection.replayBuffer = [];
+  connection.replayCoveredIds.clear();
+  handlers.onLog({ stream: "bridge", message });
+  for (const pending of buffered) deliverBridgeEnvelope(connection, pending, handlers);
+}
+
+/**
+ * Puts a bridge connection into a terminal state and reports the runtime as exited.
+ *
+ * Reconnecting is only correct while the runtime still exists. When the host tells us it does
+ * not, the view needs an ending: without one the reconnect backoff runs forever and the session
+ * can never be relaunched or cleared.
+ */
+function endBridgeConnection(
+  connection: BridgeConnection,
+  guiId: string,
+  handlers: SessionHandlers,
+  socket: WebSocket | undefined,
+  message: string,
+): void {
+  if (connection.sawExit) return;
+  // `sawExit` and `disposed` both suppress the close handler's reconnect scheduling.
+  connection.sawExit = true;
+  connection.disposed = true;
+  if (connection.reconnectTimer !== undefined) window.clearTimeout(connection.reconnectTimer);
+  clearReplayWatchdog(connection);
+  bridgeConnections.delete(guiId);
+  socket?.close(4004, "runtime reattach failed");
+  handlers.onExit({ message });
+}
+
+/**
+ * Forgets transport-level dedupe for a session so a full re-replay can be delivered.
+ *
+ * "Retry restore" clears the transcript and re-asks for the whole ledger with
+ * `history.replay { since: 0 }`. `seenEventIds` still held every id from the first delivery, so
+ * deliverRecordOnce dropped all of them and the retry produced a permanently blank transcript
+ * with no error shown. The reducer keeps its own `replayedTranscriptMessageIds`, so a full
+ * rebuild stays idempotent downstream.
+ */
+export function resetReplayDedupe(guiId: string): void {
+  const connection = bridgeConnections.get(guiId);
+  if (!connection) return;
+  connection.seenEventIds.clear();
+  connection.replayCoveredIds.clear();
+}
+
 function deliverBridgeEnvelope(
   connection: BridgeConnection,
   envelope: BridgeEnvelope,
@@ -1070,6 +1160,7 @@ function deliverBridgeEnvelope(
       if (record.type === "history.end") {
         updateCursor(connection, record);
         handlers.onRecord(record);
+        clearReplayWatchdog(connection);
         connection.replaying = false;
         const buffered = connection.replayBuffer;
         connection.replayBuffer = [];

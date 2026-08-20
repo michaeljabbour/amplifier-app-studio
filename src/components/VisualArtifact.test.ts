@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { artifactScriptHash, readArtifactResizeScript, TAURI_CONF } from "../../scripts/artifact-csp-hash.mjs";
 import {
   ARTIFACT_RESIZE_MESSAGE,
   buildSandboxedHtmlDocument,
   clampArtifactHeight,
   dotArtifactFailureMessage,
   dotArtifactIsPending,
+  ARTIFACT_RESIZE_SCRIPT,
   isArtifactResizeMessage,
   renderDotArtifact,
   sanitizeVisualSvg,
@@ -17,21 +20,45 @@ import {
 
 describe("visual artifacts", () => {
   it("runs interactive HTML only inside a unique-origin, network-disabled sandbox", () => {
-    const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>", "frame-7");
+    const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>");
     expect(VISUAL_ARTIFACT_SANDBOX).toBe("allow-scripts");
     expect(VISUAL_ARTIFACT_SANDBOX).not.toContain("allow-same-origin");
     expect(document).toContain("connect-src 'none'");
     expect(document).toContain("form-action 'none'");
     expect(document).toContain("<script>document.body.dataset.ready='yes'</script>");
     expect(document).toContain(ARTIFACT_RESIZE_MESSAGE);
-    expect(document).toContain('const frameId = "frame-7"');
     expect(document).toContain("ResizeObserver");
-    expect(document).toContain("overflow: hidden");
+    // `auto`, not `hidden`: the host degrades to scrolling="yes" when no resize ever arrives,
+    // and a hidden overflow would make that fallback inert.
+    expect(document).toContain("overflow: auto");
   });
 
-  it("accepts correlated resize messages and bounds pathological document heights", () => {
-    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, frameId: "frame-1", height: 940 }, "frame-1")).toBe(true);
-    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, frameId: "other", height: 940 }, "frame-1")).toBe(false);
+  // Regression: a srcdoc frame INHERITS Studio's policy container instead of replacing it, so
+  // the frame's inline script has to be allowed by Studio's own script-src. Verified against
+  // WKWebView: with the hash absent the child script is blocked in packaged builds
+  // (script-src-elem violation) while `npm run dev`, which serves no CSP, works fine. A
+  // string-matching test on the generated markup structurally cannot catch that, so assert the
+  // hash instead.
+  it("keeps Studio's CSP hash in sync with the artifact frame's inline script", () => {
+    const script = readArtifactResizeScript();
+    expect(script).toBe(ARTIFACT_RESIZE_SCRIPT);
+    expect(script).not.toContain("${");
+
+    const csp = JSON.parse(readFileSync(TAURI_CONF, "utf8")).app.security.csp as string;
+    const scriptSrc = csp.split(";").map((directive) => directive.trim()).find((directive) => directive.startsWith("script-src "));
+    expect(scriptSrc, "tauri.conf.json must declare script-src").toBeDefined();
+    expect(scriptSrc).toContain(`'${artifactScriptHash(script)}'`);
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
+  });
+
+  it("accepts resize messages from the frame and bounds pathological document heights", () => {
+    // Correlation is `event.source === frame.contentWindow` in the host; the payload only has
+    // to be well formed. Dropping the frame id from the payload is what keeps the frame script
+    // byte-stable enough to hash.
+    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, height: 940 })).toBe(true);
+    expect(isArtifactResizeMessage({ type: "other", height: 940 })).toBe(false);
+    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, height: "940" })).toBe(false);
+    expect(isArtifactResizeMessage(null)).toBe(false);
     expect(clampArtifactHeight(940.2)).toBe(941);
     expect(clampArtifactHeight(-1)).toBe(300);
     expect(clampArtifactHeight(99_000)).toBe(12_000);

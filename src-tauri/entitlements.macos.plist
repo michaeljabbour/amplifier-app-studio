@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Signed, notarized Studio builds run under the Hardened Runtime, which denies microphone
+    access unless the binary carries this entitlement. Info.plist's NSMicrophoneUsageDescription
+    is necessary but NOT sufficient: without the entitlement the voice-input button fails in
+    every Developer ID build while working in unsigned local builds, so the release configuration
+    has to declare it explicitly.
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

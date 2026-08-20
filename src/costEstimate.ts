@@ -12,10 +12,11 @@ interface RunPodRate {
   ratePerMillion: number;
 }
 
-// Fleet-owner planning rates. They allocate a
-// fixed $600k annual compute pool across the active RunPod models, assuming
-// 5M blended input+output tokens per endpoint-hour. These are estimates, not
-// provider list prices, and the UI must always label them as such.
+// Blended planning rates for RunPod-hosted models: a fixed annual compute pool amortised across
+// the active models at ~5M blended input+output tokens per endpoint-hour. They are coarse local
+// estimates, never provider list prices, and the UI must always label them as such. Do not
+// restate the operator's own compute budget in user-facing copy -- these numbers ship to
+// everyone who installs Studio, not just the fleet owner.
 export const RUNPOD_BLENDED_RATES: readonly RunPodRate[] = [
   { label: "moonshotai/Kimi-K3", matches: /(?:moonshotai\/)?kimi-k3/i, ratePerMillion: 10.53 },
   { label: "deepseek-ai/DeepSeek-V4-Flash-0731", matches: /deepseek-v4-flash(?:-0731)?/i, ratePerMillion: 3.09 },

@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval' 'sha256-uQ6KvrnTSPQivdKZP+b9yjEs3Xj48Ot9wBzToVLzyts='; connect-src 'self' ipc: http://ipc.localhost https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'"
     }
   },
   "bundle": {
@@ -36,6 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "entitlements": "entitlements.macos.plist"
+    },
     "iOS": {
       "developmentTeam": "K74P73BUKF",
       "bundleVersion": "33",

@@ -137,6 +137,13 @@ jobs:
           test -n "$APP_PATH" || { echo "Amplifier Studio.app was not produced" >&2; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
+          # The Hardened Runtime denies the microphone unless the signature actually carries the
+          # entitlement. Assert on the signed binary, not on tauri.conf.json: a config key that
+          # silently fails to reach codesign is exactly the failure this is here to catch.
+          codesign -d --entitlements :- --xml "$APP_PATH" > /tmp/studio-entitlements.plist 2>/dev/null
+          plutil -p /tmp/studio-entitlements.plist
+          plutil -extract com.apple.security.device.audio-input raw /tmp/studio-entitlements.plist \
+            || { echo "signed app is missing com.apple.security.device.audio-input; voice input would fail for every user" >&2; exit 1; }
 
   publish-release:
     needs: publish-desktop

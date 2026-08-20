@@ -13,6 +13,7 @@ import {
   prepareSessionLaunch,
   readRuntimeSettings,
   removeRuntimeHost,
+  resetReplayDedupe,
   runtimeHostId,
   saveBridgeToken,
   saveBridgeUrl,
@@ -322,6 +323,140 @@ describe("bridge trust storage", () => {
     await vi.advanceTimersByTimeAsync(300);
     sockets[2].open();
     expect(sockets[2].messages()).toEqual([{ type: "attach", since: 3, version: 1 }]);
+
+    connection.dispose();
+    vi.useRealTimers();
+  });
+
+  // Regression: the host rejects the reattach because the runtime is gone, and this used to
+  // close the socket straight into the reconnect backoff. The view retried a runtime that could
+  // never come back -- "Reconnecting to compute" forever, composer disabled, and detaching the
+  // tab did not stop it. A rejected reattach has to be terminal.
+  it("ends the session when the host says the runtime no longer exists", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onExit = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-gone", projectDir: "/project" },
+      { onRecord: vi.fn(), onLog: vi.fn(), onExit, onConnectionChange: vi.fn() },
+    );
+    sockets[0].open();
+    sockets[0].message({ type: "ready", guiId: "gui-gone", attached: false });
+    const connection = await pending;
+
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sockets).toHaveLength(2);
+    sockets[1].open();
+    sockets[1].message({ type: "error", message: "unknown session gui-gone" });
+
+    expect(onExit).toHaveBeenCalledWith(expect.objectContaining({ message: "unknown session gui-gone" }));
+
+    // No further reconnect may be scheduled, however long we wait.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+
+    connection.dispose();
+    vi.useRealTimers();
+  });
+
+  // Regression: on a reattach every record is buffered until history.end arrives. When the
+  // replay never completed, the buffer grew forever behind a UI that still read "connected" --
+  // the session silently stopped updating with no error and no recovery.
+  it("stops buffering and goes live when a reattach replay never completes", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-stall", projectDir: "/project" },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn(), onConnectionChange: vi.fn() },
+    );
+    sockets[0].open();
+    sockets[0].message({ type: "ready", guiId: "gui-stall", attached: false });
+    const connection = await pending;
+
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(300);
+    sockets[1].open();
+    sockets[1].message({ type: "ready", guiId: "gui-stall", attached: true, since: 0 });
+
+    // history.begin arrives, history.end never does.
+    sockets[1].message(recordEnvelope({ schema_version: 1, type: "history.begin", since: 0 }));
+    sockets[1].message(eventEnvelope("stranded", 10));
+    expect(runtimeEventIds(onRecord)).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(runtimeEventIds(onRecord)).toEqual(["stranded"]);
+
+    // Live delivery resumes immediately instead of buffering the next record too.
+    sockets[1].message(eventEnvelope("after-flush", 11));
+    expect(runtimeEventIds(onRecord)).toEqual(["stranded", "after-flush"]);
+
+    connection.dispose();
+    vi.useRealTimers();
+  });
+
+  // Regression: "Retry restore" clears the transcript and re-asks for the whole ledger with
+  // history.replay { since: 0 }. seenEventIds still held every id from the first delivery, so
+  // every replayed record was dropped and the rebuilt transcript came back permanently blank.
+  it("re-delivers the whole ledger after transport dedupe is reset for a retry", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-retry", projectDir: "/project" },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn(), onConnectionChange: vi.fn() },
+    );
+    sockets[0].open();
+    sockets[0].message({ type: "ready", guiId: "gui-retry", attached: false });
+    const connection = await pending;
+
+    sockets[0].message(eventEnvelope("first", 1));
+    sockets[0].message(eventEnvelope("second", 2));
+    expect(runtimeEventIds(onRecord)).toEqual(["first", "second"]);
+
+    // Without the reset, a since:0 re-replay is swallowed entirely.
+    onRecord.mockClear();
+    sockets[0].message(recordEnvelope({ schema_version: 1, type: "history.begin", since: 0 }));
+    sockets[0].message(eventEnvelope("first", 1, true));
+    sockets[0].message(eventEnvelope("second", 2, true));
+    sockets[0].message(recordEnvelope({ schema_version: 1, type: "history.end", cursor: 0, source: "transcript" }));
+    expect(runtimeEventIds(onRecord)).toEqual([]);
+
+    onRecord.mockClear();
+    resetReplayDedupe("gui-retry");
+    sockets[0].message(recordEnvelope({ schema_version: 1, type: "history.begin", since: 0 }));
+    sockets[0].message(eventEnvelope("first", 1, true));
+    sockets[0].message(eventEnvelope("second", 2, true));
+    sockets[0].message(recordEnvelope({ schema_version: 1, type: "history.end", cursor: 0, source: "transcript" }));
+    expect(runtimeEventIds(onRecord)).toEqual(["first", "second"]);
 
     connection.dispose();
     vi.useRealTimers();
