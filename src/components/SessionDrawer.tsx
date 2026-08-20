@@ -46,8 +46,14 @@ export function SessionDrawer(props: Props) {
   };
 
   return (
-    <div class="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}>
-      <aside class="session-drawer" aria-label="Stored sessions">
+    <div
+      class="drawer-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") props.onClose();
+      }}
+    >
+      <aside class="session-drawer" role="dialog" aria-modal="true" aria-label="Stored sessions">
         <div class="mobile-drawer-shell">
           <div class="mobile-drawer-header">
             <h2>Amplifier</h2>
@@ -130,7 +136,7 @@ export function SessionDrawer(props: Props) {
         </div>
         <div class="drawer-search">
           <span>⌕</span>
-          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search conversations, projects, hosts…" autofocus />
+          <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Search conversations, projects, hosts…" aria-label="Search stored sessions" autofocus />
           <button onClick={props.onRefresh} aria-label="Refresh sessions" title="Refresh">↻</button>
         </div>
 

@@ -19,4 +19,10 @@ describe("mobile open-session actions", () => {
     expect(source).toContain('role="menu"');
     expect(source.match(/role="menuitem"/g)).toHaveLength(2);
   });
+
+  it("exposes stored history as a named modal with an explicit search control", () => {
+    expect(source).toContain('role="dialog" aria-modal="true" aria-label="Stored sessions"');
+    expect(source).toContain('aria-label="Search stored sessions"');
+    expect(source).toContain('if (event.key === "Escape") props.onClose()');
+  });
 });

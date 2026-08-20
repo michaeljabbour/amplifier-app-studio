@@ -377,3 +377,55 @@
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="made"] .app-shell { background: #f3f2f2; }
 }
+
+/* Desktop reading surfaces carry operational state, not decorative metadata.
+   Keep the restrained MADE hierarchy while bringing those facts to a reliable
+   at-a-glance floor on laptop displays. */
+@media (min-width: 761px) {
+  :root[data-theme="made"] .home-history-heading button,
+  :root[data-theme="made"] .home-all-history,
+  :root[data-theme="made"] .home-composer-tools button,
+  :root[data-theme="made"] .home-history-state,
+  :root[data-theme="made"] .home-history-row p,
+  :root[data-theme="made"] .home-history-row span,
+  :root[data-theme="made"] .home-continue small { font-size: 11px; }
+
+  :root[data-theme="made"] .section-kicker,
+  :root[data-theme="made"] .sidebar-heading,
+  :root[data-theme="made"] .sidebar-section-hint,
+  :root[data-theme="made"] .sidebar-session-actions button,
+  :root[data-theme="made"] .agent-empty p,
+  :root[data-theme="made"] .agent-workspace-copy small,
+  :root[data-theme="made"] .session-identity small,
+  :root[data-theme="made"] .session-identity span,
+  :root[data-theme="made"] .runtime-proof { font-size: 11px; }
+  :root[data-theme="made"] .agent-empty strong,
+  :root[data-theme="made"] .agent-workspace-copy strong,
+  :root[data-theme="made"] .session-identity strong { font-size: 13px; }
+
+  :root[data-theme="made"] .inspector-tabs button,
+  :root[data-theme="made"] .inspector-section-title > span,
+  :root[data-theme="made"] .progress-row small,
+  :root[data-theme="made"] .inspector-empty,
+  :root[data-theme="made"] .inspector-guidance,
+  :root[data-theme="made"] .context-facts dt,
+  :root[data-theme="made"] .context-facts dd { font-size: 11px; }
+  :root[data-theme="made"] .inspector-section-title h3,
+  :root[data-theme="made"] .progress-row strong,
+  :root[data-theme="made"] .plan-owner-card > header strong,
+  :root[data-theme="made"] .output-item strong { font-size: 12px; }
+
+  :root[data-theme="made"] .stored-topline > span,
+  :root[data-theme="made"] .stored-summary,
+  :root[data-theme="made"] .stored-meta,
+  :root[data-theme="made"] .stored-path,
+  :root[data-theme="made"] .stored-bottomline code,
+  :root[data-theme="made"] .health-state,
+  :root[data-theme="made"] .unavailable-note,
+  :root[data-theme="made"] .drawer-footer { font-size: 10px; }
+  :root[data-theme="made"] .drawer-search input,
+  :root[data-theme="made"] .drawer-state,
+  :root[data-theme="made"] .drawer-error,
+  :root[data-theme="made"] .drawer-empty p { font-size: 12px; }
+  :root[data-theme="made"] .footer-bar { font-size: 11px; }
+}

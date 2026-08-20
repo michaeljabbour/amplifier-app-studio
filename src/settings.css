@@ -184,3 +184,33 @@
   .settings-review-backdrop { padding: calc(12px + var(--studio-safe-area-top, env(safe-area-inset-top,0px))) 12px calc(12px + var(--studio-safe-area-bottom, env(safe-area-inset-bottom,0px))); }
   .settings-review { max-height: 100%; padding: 20px 16px; }
 }
+
+@media (min-width: 761px) {
+  :root[data-theme="made"] .settings-header p,
+  :root[data-theme="made"] .settings-nav-item strong,
+  :root[data-theme="made"] .settings-section-heading p,
+  :root[data-theme="made"] .theme-options small,
+  :root[data-theme="made"] .settings-callout p,
+  :root[data-theme="made"] .settings-form-field small,
+  :root[data-theme="made"] .compute-pool-heading small,
+  :root[data-theme="made"] .runtime-setting-copy p,
+  :root[data-theme="made"] .settings-loading,
+  :root[data-theme="made"] .settings-empty { font-size: 12px; }
+
+  :root[data-theme="made"] .settings-search input,
+  :root[data-theme="made"] .settings-form-field > span,
+  :root[data-theme="made"] .settings-form-field input,
+  :root[data-theme="made"] .settings-form-field select,
+  :root[data-theme="made"] .compute-host-list strong,
+  :root[data-theme="made"] .session-home-field select,
+  :root[data-theme="made"] .runtime-setting-control input,
+  :root[data-theme="made"] .runtime-setting-control select,
+  :root[data-theme="made"] .runtime-setting-control textarea { font-size: 12px; }
+
+  :root[data-theme="made"] .compute-host-list code,
+  :root[data-theme="made"] .compute-host-list small,
+  :root[data-theme="made"] .settings-context-bar span,
+  :root[data-theme="made"] .settings-context-bar strong,
+  :root[data-theme="made"] .runtime-setting-copy code,
+  :root[data-theme="made"] .setting-provenance small { font-size: 10px; }
+}
