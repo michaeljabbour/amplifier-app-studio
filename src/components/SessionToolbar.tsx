@@ -4,6 +4,8 @@ import type { SessionViewState } from "../protocol";
 export function SessionToolbar(props: {
   state: SessionViewState;
   onDismissAlert: (id: string) => void;
+  onDetach: () => void;
+  onStop: () => void;
 }) {
   const agents = () => Object.values(props.state.lanes);
   const running = () => agents().filter((lane) => lane.status === "running").length;
@@ -26,6 +28,12 @@ export function SessionToolbar(props: {
             <code title={props.state.runtimeSessionId}>{props.state.runtimeSessionId?.slice(0, 8)}</code>
           </Show>
         </div>
+      </div>
+      <div class="session-toolbar-actions" role="group" aria-label="Session runtime actions">
+        <button type="button" onClick={props.onDetach} title="Close this view while leaving the runtime available">Detach view</button>
+        <Show when={props.state.phase !== "exited" && props.state.phase !== "error"}>
+          <button type="button" class="stop-runtime-button" onClick={props.onStop}>Stop runtime</button>
+        </Show>
       </div>
       <Show when={props.state.alerts.at(-1)} keyed>{(alert) => (
         <div class={`session-recovery ${alert.level}`} role="status">

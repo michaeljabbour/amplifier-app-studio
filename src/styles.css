@@ -91,31 +91,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .drawer-button:hover, .new-tab-button:hover, .icon-button:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 .tabs { display: flex; align-items: stretch; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
-.session-tab {
+.session-tab-shell {
   position: relative;
   min-width: 158px;
   max-width: 230px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  border: 0;
   border-right: 1px solid var(--line);
-  padding: 0 10px 0 14px;
   background: transparent;
   color: var(--muted);
+}
+.session-tab {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  padding: 0 5px 0 14px;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
-.session-tab:hover { background: rgba(255, 255, 255, 0.025); color: #b9c7d8; }
-.session-tab.active { color: var(--text); background: rgba(23, 36, 51, 0.76); }
-.session-tab.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; background: var(--blue); box-shadow: 0 0 12px rgba(79, 183, 255, 0.8); }
+.session-tab-shell:hover { background: rgba(255, 255, 255, 0.025); color: #b9c7d8; }
+.session-tab-shell.active { color: var(--text); background: rgba(23, 36, 51, 0.76); }
+.session-tab-shell.active::after { content: ""; position: absolute; z-index: 1; left: 12px; right: 12px; bottom: 0; height: 2px; background: var(--blue); box-shadow: 0 0 12px rgba(79, 183, 255, 0.8); pointer-events: none; }
 .tab-status { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); box-shadow: 0 0 0 3px rgba(82, 97, 116, 0.12); }
 .tab-status.phase-ready { background: var(--green); box-shadow: 0 0 0 3px rgba(99, 217, 154, 0.12); }
 .tab-status.phase-starting, .tab-status.phase-degraded, .tab-status.phase-closing { background: var(--amber); }
 .tab-status.phase-error { background: var(--red); }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12px; font-weight: 600; }
 .tab-host { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; padding: 2px 5px; color: var(--dim); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
-.tab-close { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 5px; color: transparent; font-size: 16px; line-height: 1; }
-.session-tab:hover .tab-close, .session-tab.active .tab-close { color: var(--dim); }
+.tab-close { display: grid; place-items: center; width: 19px; height: 19px; flex: 0 0 19px; margin-right: 8px; border: 0; border-radius: 5px; background: transparent; color: transparent; cursor: pointer; font-size: 16px; line-height: 1; }
+.session-tab-shell:hover .tab-close, .session-tab-shell.active .tab-close, .tab-close:focus-visible { color: var(--dim); }
 .tab-close:hover { color: var(--text) !important; background: rgba(255, 255, 255, 0.08); }
 .tab-pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--blue); animation: pulse 1.4s ease-in-out infinite; }
 .new-tab-button { width: 42px; flex: 0 0 42px; color: var(--muted); font-size: 22px; border-right: 1px solid var(--line); }
@@ -368,6 +377,35 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .stored-session-choices small { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .stored-session-limit { border-color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
 .stored-session-footnote { margin: 16px 24px 22px; color: var(--dim); font-size: 8px; line-height: 1.5; }
+.session-lifecycle-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 24px); overflow: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); animation: modal-in 180ms ease-out; }
+.session-lifecycle-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding: 22px 24px 18px; }
+.session-lifecycle-dialog > header h2 { margin: 6px 0 0; color: var(--text); font-size: 21px; }
+.session-lifecycle-dialog > header .icon-button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.session-lifecycle-dialog > header .icon-button svg { width: 17px; }
+.session-lifecycle-dialog svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.session-lifecycle-body { display: grid; gap: 14px; padding: 18px 24px 20px; }
+.session-lifecycle-body > p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.session-lifecycle-activity { display: grid; grid-template-columns: 9px minmax(0,1fr); align-items: start; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel-2); }
+.session-lifecycle-activity > i { width: 8px; height: 8px; margin-top: 2px; border-radius: 50%; background: var(--green); }
+.session-lifecycle-activity.active > i { background: var(--blue); box-shadow: 0 0 8px rgba(79,183,255,.48); animation: pulse 1.4s ease-in-out infinite; }
+.session-lifecycle-activity.connecting > i { background: var(--amber); }
+.session-lifecycle-activity strong, .session-lifecycle-activity span { display: block; }
+.session-lifecycle-activity strong { color: var(--text); font-size: 10px; }
+.session-lifecycle-activity span { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.session-lifecycle-context { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; border: 1px solid var(--line); background: var(--line); }
+.session-lifecycle-context > div { min-width: 0; padding: 9px 10px; background: var(--panel-2); }
+.session-lifecycle-context dt { color: var(--dim); font-size: 7px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.session-lifecycle-context dd { overflow: hidden; margin: 5px 0 0; color: var(--muted); font: 9px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.session-lifecycle-error { display: grid; gap: 5px; border-left: 2px solid var(--red); padding: 10px 11px; background: color-mix(in srgb, var(--red) 7%, transparent); }
+.session-lifecycle-error strong { color: #e8b1b4; font-size: 10px; }
+.session-lifecycle-error span { overflow-wrap: anywhere; color: #d99a9f; font: 9px/1.45 var(--font-mono); }
+.session-lifecycle-error small { color: var(--muted); font-size: 8px; line-height: 1.45; }
+.session-lifecycle-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); padding: 14px 24px; background: rgba(0,0,0,.12); }
+.session-lifecycle-dialog .detach-button { display: inline-flex; align-items: center; gap: 6px; }
+.session-lifecycle-dialog .detach-button svg { width: 14px; }
+.danger-button { border: 1px solid rgba(255,118,127,.4); border-radius: 8px; padding: 10px 15px; background: rgba(255,118,127,.09); color: #efb0b4; cursor: pointer; font-size: 11px; font-weight: 700; }
+.danger-button:hover:not(:disabled) { background: rgba(255,118,127,.16); color: #ffd1d4; }
+.danger-button:disabled { cursor: progress; opacity: .55; }
 .stored-row.needs-recovery, .home-history-row.needs-recovery { border-color: color-mix(in srgb, var(--amber) 24%, var(--line)); }
 .dialog-heading, .drawer-heading { display: flex; justify-content: space-between; align-items: center; padding: 22px 24px 18px; border-bottom: 1px solid var(--line); }.dialog-heading h2, .drawer-heading h2 { margin: 5px 0 0; font-size: 19px; }.dialog-heading .icon-button, .drawer-heading .icon-button { width: 30px; height: 30px; border-radius: 7px; color: var(--muted); font-size: 20px; }
 .resume-chip { display: flex; gap: 12px; align-items: center; margin: 18px 24px 0; padding: 12px; border: 1px solid rgba(79, 183, 255, .2); border-radius: 8px; background: rgba(79, 183, 255, .055); }.resume-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: rgba(79, 183, 255, .12); color: var(--blue); }.resume-chip strong { display: block; font-size: 11px; }.resume-chip code { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
@@ -495,7 +533,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .app-shell { grid-template-rows: calc(48px + env(safe-area-inset-top, 0px)) minmax(0, 1fr); }
   .traffic-light-space, .brand-mark { display: none; }
   .drawer-button, .new-tab-button, .settings-button { width: 46px; flex-basis: 46px; }
-  .session-tab { min-width: 132px; max-width: 184px; padding-inline: 10px; }
+  .session-tab-shell { min-width: 132px; max-width: 184px; }
+  .session-tab { padding-inline: 10px 5px; }
   .tab-close { color: var(--dim); }
 
   .workspace { flex-direction: column; overflow: hidden; }
@@ -623,7 +662,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-open-label { position: absolute; right: 9px; top: 10px; color: #526b81; font-size: 7px; }
 
 .session-column { grid-template-rows: auto minmax(0, 1fr) auto calc(29px + env(safe-area-inset-bottom, 0px)); border-right: 1px solid var(--line); }
-.session-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); border-bottom: 1px solid var(--line); background: rgba(10, 17, 26, .72); }
+.session-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--line); background: rgba(10, 17, 26, .72); }
 .session-identity { min-width: 0; padding: 11px 17px 10px; }
 .session-identity small { display: block; margin-bottom: 4px; color: #4f6c84; font-size: 7px; font-weight: 850; letter-spacing: .13em; }
 .session-identity strong, .session-identity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -633,6 +672,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .runtime-proof i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--dim); }
 .runtime-proof b { color: #91a6b9; font-weight: 750; }.runtime-proof em { color: #5a7185; font-style: normal; }.runtime-proof code { margin-left: auto; color: #4d6478; font: 7px ui-monospace, monospace; }
 .runtime-proof.connected i { background: var(--green); box-shadow: 0 0 8px rgba(99,217,154,.45); }.runtime-proof.running i { background: var(--blue); box-shadow: 0 0 8px rgba(79,183,255,.55); animation: pulse 1.4s ease-in-out infinite; }.runtime-proof.connecting i { background: var(--amber); }.runtime-proof.stopped i { background: var(--red); }
+.session-toolbar-actions { display: flex; align-items: center; gap: 5px; padding: 10px 14px 10px 0; }
+.session-toolbar-actions button { border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; background: transparent; color: var(--dim); cursor: pointer; font-size: 8px; white-space: nowrap; }
+.session-toolbar-actions button:hover { border-color: var(--line); background: rgba(255,255,255,.035); color: var(--muted); }
+.session-toolbar-actions .stop-runtime-button:hover { border-color: rgba(255,118,127,.22); background: rgba(255,118,127,.055); color: #d99499; }
 .session-recovery { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 16px; border-top: 1px solid rgba(244,185,95,.16); background: rgba(244,185,95,.055); }
 .session-recovery > div { min-width: 0; }
 .session-recovery strong { color: #c9a973; font-size: 9px; }
@@ -958,6 +1001,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .provider-setup-optional { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .provider-setup-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 @media (max-width: 640px) { .provider-setup-optional { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 640px) {
+  .session-lifecycle-dialog > footer { align-items: stretch; flex-direction: column; padding-inline: 16px; }
+  .session-lifecycle-dialog > footer > button { width: 100%; min-height: 44px; justify-content: center; }
+}
 
 @media (max-width: 1240px) {
   .workspace { grid-template-columns: 224px minmax(390px,1fr) 300px; }

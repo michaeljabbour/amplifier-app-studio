@@ -9,6 +9,7 @@ import { NewSessionDialog } from "./components/NewSessionDialog";
 import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
 import { SessionToolbar } from "./components/SessionToolbar";
 import { SessionDrawer } from "./components/SessionDrawer";
+import { SessionLifecycleDialog } from "./components/SessionLifecycleDialog";
 import { StudioSettingsDialog } from "./components/StudioSettingsDialog";
 import { StoredSessionDialog } from "./components/StoredSessionDialog";
 import { TabStrip } from "./components/TabStrip";
@@ -31,7 +32,6 @@ import {
   addProcessLog,
   createSessionState,
   dismissAlert,
-  markClosing,
   markAutopilotPending,
   markAutopilotSendFailed,
   markEffortPending,
@@ -96,6 +96,7 @@ import { storedSessionLegacyBundleOverride, storedSessionResumeBlocker } from ".
 import { projectContextForHost } from "./settingsProjectContext";
 import { createLatestAsyncRunner } from "./latestAsync";
 import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, type FederatedStoredSessions } from "./storedSessions";
+import { attemptRuntimeStop, ordinaryTabCloseIntent, sessionHasLiveRuntime } from "./sessionLifecycle";
 
 const RESTORE_TIMEOUT_MS = 15_000;
 const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
@@ -103,6 +104,12 @@ const SESSION_HOME_HOST_KEY = "amplifier-studio.session-home-host";
 interface StoredSessionRecovery {
   session: StoredSession;
   resumeDisabledReason?: string;
+}
+
+interface StopRuntimeRequest {
+  guiId: string;
+  stopping: boolean;
+  error?: string;
 }
 
 export default function App() {
@@ -115,6 +122,7 @@ export default function App() {
   const [storedError, setStoredError] = createSignal<string>();
   const [storedWarning, setStoredWarning] = createSignal<string>();
   const [storedSessionDialog, setStoredSessionDialog] = createSignal<StoredSessionRecovery>();
+  const [stopRuntimeRequest, setStopRuntimeRequest] = createSignal<StopRuntimeRequest>();
   const [defaultDir, setDefaultDir] = createSignal("");
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [studioTheme, setStudioTheme] = createSignal<StudioTheme>(loadStudioTheme());
@@ -145,6 +153,7 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal<string>();
   const [transcription, setTranscription] = createSignal<TranscriptionStatus>();
   const connections = new Map<string, SessionConnection>();
+  const detachedSessions = new Map<string, SessionViewState>();
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
@@ -246,15 +255,19 @@ export default function App() {
   });
 
   const update = (guiId: string, transform: (state: SessionViewState) => SessionViewState) => {
+    const detached = detachedSessions.get(guiId);
+    if (detached) detachedSessions.set(guiId, transform(detached));
     setSessions((items) => items.map((item) => (item.guiId === guiId ? transform(item) : item)));
   };
+
+  const sessionForGuiId = (guiId: string) => sessions().find((item) => item.guiId === guiId) || detachedSessions.get(guiId);
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
     update(guiId, (state) => reduceRecord(state, record));
     if (record.type === "session.started" || record.type === "session.attached") {
       void applyStoredSessionTitle(guiId, typeof record.session_id === "string" ? record.session_id : undefined);
     }
-    if (sessions().find((item) => item.guiId === guiId)?.phase === "ready") clearRestoreTimeout(guiId);
+    if (sessionForGuiId(guiId)?.phase === "ready") clearRestoreTimeout(guiId);
     const type = typeof record.type === "string" ? record.type : "";
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
       initialized.add(guiId);
@@ -262,7 +275,7 @@ export default function App() {
       void sendOp(guiId, { op: "context.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "effort.get" }).catch((error) => reportSendError(guiId, error));
       void sendOp(guiId, { op: "goal.status" }).catch((error) => reportSendError(guiId, error));
-      const session = sessions().find((item) => item.guiId === guiId);
+      const session = sessionForGuiId(guiId);
       if (session?.resumeId) {
         void requestRestore(guiId);
       } else {
@@ -315,6 +328,7 @@ export default function App() {
             clearStatusPolling(guiId);
             clearRestoreTimeout(guiId);
             update(guiId, (current) => markExited(current, exit.code, exit.message));
+            if (detachedSessions.has(guiId)) discardSessionView(guiId);
           },
         },
       );
@@ -335,7 +349,7 @@ export default function App() {
         const session = stored().find((item) => item.sessionId === input.resumeId
           && (!input.hostId || item.hostId === input.hostId));
         if (session) {
-          await close(guiId);
+          discardSessionView(guiId);
           setStoredSessionDialog({
             session,
             resumeDisabledReason: "This durable session is already open on its owning compute. Duplicate it to continue independently.",
@@ -346,31 +360,24 @@ export default function App() {
     }
   };
 
-  const close = async (guiId: string) => {
+  const detachSessionView = (guiId: string) => {
     const session = sessions().find((item) => item.guiId === guiId);
     if (!session) return;
-    if (session.phase === "starting" || session.phase === "degraded" || session.phase === "ready") {
-      update(guiId, markClosing);
-      try {
-        await stopSession(guiId);
-      } catch (error) {
-        update(guiId, (current) => addLocalNotice(current, cleanError(error), "error"));
-      }
+    if (!sessionHasLiveRuntime(session)) {
+      discardSessionView(guiId);
+      return;
     }
-    connections.get(guiId)?.dispose();
-    connections.delete(guiId);
-    initialized.delete(guiId);
-    pendingInitialPrompts.delete(guiId);
-    clearStatusPolling(guiId);
-    clearRestoreTimeout(guiId);
+    detachedSessions.set(guiId, session);
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
+    if (stopRuntimeRequest()?.guiId === guiId) setStopRuntimeRequest(undefined);
   };
 
-  const detach = (guiId: string) => {
+  const discardSessionView = (guiId: string) => {
     connections.get(guiId)?.dispose();
     connections.delete(guiId);
+    detachedSessions.delete(guiId);
     initialized.delete(guiId);
     pendingInitialPrompts.delete(guiId);
     clearStatusPolling(guiId);
@@ -378,6 +385,37 @@ export default function App() {
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
+    if (stopRuntimeRequest()?.guiId === guiId) setStopRuntimeRequest(undefined);
+  };
+
+  const requestTabClose = (guiId: string) => {
+    const session = sessions().find((item) => item.guiId === guiId);
+    if (!session) return;
+    if (ordinaryTabCloseIntent(session) === "detach") {
+      detachSessionView(guiId);
+      return;
+    }
+    setStopRuntimeRequest({ guiId, stopping: false });
+  };
+
+  const requestRuntimeStop = (guiId: string) => {
+    const session = sessions().find((item) => item.guiId === guiId);
+    if (!session || session.phase === "exited" || session.phase === "error") return;
+    setStopRuntimeRequest({ guiId, stopping: false });
+  };
+
+  const confirmRuntimeStop = async (guiId: string) => {
+    const request = stopRuntimeRequest();
+    if (!request || request.guiId !== guiId || request.stopping) return;
+    setStopRuntimeRequest({ guiId, stopping: true });
+    const outcome = await attemptRuntimeStop(() => stopSession(guiId));
+    if (outcome.stopped) {
+      discardSessionView(guiId);
+      return;
+    }
+    const message = outcome.error || "The runtime did not confirm that it stopped";
+    update(guiId, (current) => addLocalNotice(current, `Runtime stop failed: ${message}`, "error"));
+    setStopRuntimeRequest({ guiId, stopping: false, error: message });
   };
 
   const submit = async (text: string, attachments: ComposerAttachment[] = []) => {
@@ -713,7 +751,7 @@ export default function App() {
       hostName: session.hostName,
       hostUrl: session.hostUrl,
     };
-    await close(session.guiId);
+    discardSessionView(session.guiId);
     try {
       await start(input);
     } catch {
@@ -767,7 +805,7 @@ export default function App() {
         sessions={sessions()}
         activeId={activeId()}
         onSelect={setActiveId}
-        onClose={(id) => void close(id)}
+        onClose={requestTabClose}
         onNew={openNew}
         onDrawer={openDrawer}
         onSettings={() => setSettingsOpen(true)}
@@ -816,6 +854,9 @@ export default function App() {
         {(session) => (
           <div
             class="workspace"
+            id={`session-panel-${session().guiId}`}
+            role="tabpanel"
+            aria-labelledby={`session-tab-${session().guiId}`}
             classList={{ "left-open": leftOpen(), "right-open": rightOpen() }}
             onDragEnter={(event) => {
               const transfer = event.dataTransfer;
@@ -858,6 +899,8 @@ export default function App() {
               <SessionToolbar
                 state={session()}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
+                onDetach={() => detachSessionView(session().guiId)}
+                onStop={() => requestRuntimeStop(session().guiId)}
               />
               <Transcript
                 state={session()}
@@ -963,8 +1006,8 @@ export default function App() {
           onRefresh={() => void refreshStored()}
           onResume={requestStoredResume}
           onSelectOpen={setActiveId}
-          onDetachOpen={detach}
-          onStopOpen={(id) => void close(id)}
+          onDetachOpen={detachSessionView}
+          onStopOpen={requestRuntimeStop}
           onNew={openNew}
           onCapabilities={() => setCapabilitiesOpen(true)}
           onSettings={() => setSettingsOpen(true)}
@@ -979,6 +1022,18 @@ export default function App() {
           onResume={() => prepareStoredResume(recovery.session)}
           onDuplicate={() => duplicateStoredSession(recovery.session)}
         />
+      )}</Show>
+      <Show when={stopRuntimeRequest()} keyed>{(request) => (
+        <Show when={sessions().find((session) => session.guiId === request.guiId)} keyed>{(session) => (
+          <SessionLifecycleDialog
+            session={session}
+            stopping={request.stopping}
+            error={request.error}
+            onCancel={() => setStopRuntimeRequest(undefined)}
+            onDetach={() => detachSessionView(session.guiId)}
+            onStop={() => void confirmRuntimeStop(session.guiId)}
+          />
+        )}</Show>
       )}</Show>
       <Show when={settingsOpen()}>
         <StudioSettingsDialog
@@ -1197,6 +1252,18 @@ export default function App() {
       setStoredSessionDialog(undefined);
       return;
     }
+    const detachedGuiId = openGuiIdForStoredSession([...detachedSessions.values()], session.sessionId, session);
+    if (detachedGuiId) {
+      const detached = detachedSessions.get(detachedGuiId);
+      if (detached) {
+        detachedSessions.delete(detachedGuiId);
+        setSessions((items) => [...items, detached]);
+        setActiveId(detachedGuiId);
+        setDrawerOpen(false);
+        setStoredSessionDialog(undefined);
+        return;
+      }
+    }
     const host = runtimeHostForStoredSession(session, runtimeHosts());
     if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);
     const remembered = session.projectDir || knownHostProjectRoot(host);
@@ -1314,7 +1381,7 @@ export default function App() {
   function startStatusPolling(guiId: string) {
     clearStatusPolling(guiId);
     const timer = window.setInterval(() => {
-      const session = sessions().find((item) => item.guiId === guiId);
+      const session = sessionForGuiId(guiId);
       if (session?.phase === "ready" && session.busy) void requestStatus(guiId);
     }, 2_500);
     statusPollers.set(guiId, timer);
@@ -1333,7 +1400,7 @@ export default function App() {
   }
 
   async function requestRestore(guiId: string) {
-    const session = sessions().find((item) => item.guiId === guiId);
+    const session = sessionForGuiId(guiId);
     if (!session?.restoreProgress) return;
     clearRestoreTimeout(guiId);
     const fail = (error: unknown) => {
@@ -1367,7 +1434,7 @@ export default function App() {
   async function applyStoredSessionTitle(guiId: string, runtimeSessionId?: string) {
     if (!runtimeSessionId) return;
     try {
-      const current = sessions().find((session) => session.guiId === guiId);
+      const current = sessionForGuiId(guiId);
       const match = (await listStoredSessions(undefined, current?.hostUrl, current?.hostId))
         .find((session) => session.sessionId === runtimeSessionId);
       if (!match?.name || /^Session [a-z0-9-]{1,12}$/i.test(match.name)) return;

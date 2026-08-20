@@ -88,10 +88,13 @@
     letter-spacing: .13em;
   }
 
-  .session-tab {
+  .session-tab-shell {
     min-width: 112px;
     max-width: none;
     flex: 1 1 168px;
+  }
+
+  .session-tab {
     padding-inline: 11px;
   }
 
@@ -100,7 +103,7 @@
     display: none;
   }
 
-  .session-tab.active .tab-close {
+  .session-tab-shell.active .tab-close {
     width: 44px;
     height: 44px;
     min-width: 44px;

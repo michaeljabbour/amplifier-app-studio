@@ -52,8 +52,8 @@ describe("mobile layout contracts", () => {
 
   it("uses compact session chrome and one native touch-scroll settings surface", () => {
     expect(mobileCss).toMatch(/\.tab-host,[\s\S]*\.tab-close\s*\{[\s\S]*display:\s*none/);
-    expect(mobileCss).toMatch(/\.session-tab\.active \.tab-close\s*\{[\s\S]*display:\s*grid/);
-    expect(mobileCss).toMatch(/\.session-tab\s*\{[\s\S]*flex:\s*1 1 168px/);
+    expect(mobileCss).toMatch(/\.session-tab-shell\.active \.tab-close\s*\{[\s\S]*display:\s*grid/);
+    expect(mobileCss).toMatch(/\.session-tab-shell\s*\{[\s\S]*flex:\s*1 1 168px/);
     expect(settingsCss).toMatch(/\.settings-window\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column/);
     expect(settingsCss).toMatch(/\.settings-layout\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*overflow-y:\s*auto;[\s\S]*touch-action:\s*pan-y;[\s\S]*-webkit-overflow-scrolling:\s*touch/);
     expect(settingsCss).toMatch(/\.settings-navigation\s*\{[\s\S]*position:\s*sticky/);
