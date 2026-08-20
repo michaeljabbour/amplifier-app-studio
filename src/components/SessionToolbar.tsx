@@ -71,6 +71,14 @@ export function sessionToolbarStatus(state: SessionViewState): string {
     case "closing": return "Stopping runtime";
     case "exited": return "Session stopped";
     case "error": return state.error || "Session error";
-    case "ready": return state.busy ? state.activity : "Ready for the next turn";
+    case "ready": {
+      if (state.busy) return state.activity;
+      if (state.restoreProgress?.history && state.restoreProgress.status) {
+        return state.restoredTranscriptMessages
+          ? `Ready · ${state.restoredTranscriptMessages} saved messages restored`
+          : "Ready · History restored";
+      }
+      return "Ready for the next turn";
+    }
   }
 }

@@ -20,6 +20,7 @@ export function Transcript(props: Props) {
   let scroller: HTMLDivElement | undefined;
   let latestAnchor: HTMLDivElement | undefined;
   let scrollFrame = 0;
+  let focusedRestoreKey = "";
   let focusedPointerPan: { clientY: number; scrollTop: number; pointerId: number } | undefined;
   const [now, setNow] = createSignal(Date.now());
   const [following, setFollowing] = createSignal(true);
@@ -64,6 +65,24 @@ export function Transcript(props: Props) {
     if (!following()) return;
     window.cancelAnimationFrame(scrollFrame);
     scrollFrame = window.requestAnimationFrame(() => scrollTranscriptToLatest(scroller, latestAnchor));
+  });
+
+  createEffect(() => {
+    const state = props.state;
+    const restored = state.phase === "ready"
+      && state.restoreProgress?.history === true
+      && state.restoreProgress.status === true;
+    const conversation = state.blocks.filter((block) => block.kind === "user" || block.kind === "answer");
+    const key = restored && conversation.length
+      ? `${state.runtimeSessionId || state.resumeId || state.guiId}:${conversation.at(-1)?.id}`
+      : "";
+    if (!key || key === focusedRestoreKey) return;
+    focusedRestoreKey = key;
+    setFollowing(false);
+    window.requestAnimationFrame(() => {
+      const restoredConversation = scroller?.querySelectorAll<HTMLElement>("[data-conversation-message='true']");
+      restoredConversation?.item(restoredConversation.length - 1).scrollIntoView({ block: "center" });
+    });
   });
 
   const detachFromLatest = () => {
@@ -418,7 +437,10 @@ function BlockView(props: {
           ? <RecipeView block={block() as Extract<TranscriptBlock, { kind: "recipe" }>} />
           : <ThinkingView block={block() as Extract<TranscriptBlock, { kind: "thinking" }>} onExpanded={props.onThinkingExpanded} />}
     >
-      <article class={`block block-${block().kind}`}>
+      <article
+        class={`block block-${block().kind}`}
+        data-conversation-message={block().kind === "user" || block().kind === "answer" ? "true" : undefined}
+      >
         <div class="block-gutter">
           {block().kind === "user" ? <span class="user-avatar">YOU</span> : block().kind === "answer" ? <span class="answer-glyph">✦</span> : <span class={`notice-dot ${(block() as Extract<TranscriptBlock, { kind: "notice" }>).level}`} />}
         </div>
