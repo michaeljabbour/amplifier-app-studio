@@ -308,13 +308,14 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       if (
         next.restoreProgress
         && expectedMessages > 0
-        && replayedEvents === 0
-        && replayedTranscript === 0
         && !hasVisibleConversation
       ) {
+        const delivery = replayedEvents || replayedTranscript
+          ? `The runtime reported ${replayedEvents} durable event${replayedEvents === 1 ? "" : "s"} and ${replayedTranscript} transcript message${replayedTranscript === 1 ? "" : "s"}, but delivered no visible conversation.`
+          : "The active session owner returned no replayable history.";
         return markRestoreDegraded(
           next,
-          `Amplifier found ${expectedMessages} saved transcript record${expectedMessages === 1 ? "" : "s"}, but the active session owner returned no replayable history. It may still be running an older runtime. Restart the Studio window or runtime that owns this session, then retry the restore.`,
+          `Amplifier found ${expectedMessages} saved transcript record${expectedMessages === 1 ? "" : "s"}. ${delivery} It may still be running an older runtime. Restart the Studio window or runtime that owns this session, then retry the restore.`,
         );
       }
       return markRestoreProgress({

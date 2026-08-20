@@ -604,6 +604,29 @@ describe("session reducer", () => {
     expect(state.restoreIssue?.message).toContain("older runtime");
   });
 
+  it("rejects a replay that reports saved records but delivers no visible conversation", () => {
+    let state = createSessionState("gui-dishonest-owner", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryMessages: 25,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0 });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 8628,
+      count: 8628,
+      source: "transcript",
+      transcript_count: 1487,
+    });
+
+    expect(state.phase).toBe("degraded");
+    expect(state.restoreProgress).toMatchObject({ history: false });
+    expect(state.restoreIssue?.message).toContain("reported 8628 durable events and 1487 transcript messages");
+    expect(state.restoreIssue?.message).toContain("delivered no visible conversation");
+  });
+
   it("keeps replayed agents inspectable without calling them live after an idle restore", () => {
     let state = createSessionState("gui-resume", {
       projectDir: "/tmp/project",

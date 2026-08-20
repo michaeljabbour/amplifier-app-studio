@@ -5,7 +5,7 @@ import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
 import type { TranscriptionStatus } from "../transport";
 import type { AudioRecording } from "../transcription";
-import { storedSessionResumeBlocker } from "../sessionAvailability";
+import { storedSessionResumeBlocker, storedSessionShouldList } from "../sessionAvailability";
 import { projectDisplayName } from "../projectDisplayName";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { VoiceInputButton } from "./VoiceInputButton";
@@ -44,7 +44,7 @@ export function CoordinatorHome(props: Props) {
   const [localError, setLocalError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
   const [locationOpen, setLocationOpen] = createSignal(false);
-  const recent = createMemo(() => props.sessions.slice(0, 24));
+  const recent = createMemo(() => props.sessions.filter(storedSessionShouldList).slice(0, 24));
   const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
