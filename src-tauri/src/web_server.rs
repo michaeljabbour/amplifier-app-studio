@@ -1,7 +1,7 @@
 use crate::{
     catalog,
     protocol::{SessionEvent, StartSessionOptions},
-    runtime_setup,
+    repo_clone, runtime_setup,
     session::{AttachmentId, EventSink, NetworkPrincipal, SessionManager, DUPLICATE_RESUME_ERROR},
     store,
 };
@@ -259,6 +259,7 @@ pub async fn serve(options: ServerOptions) -> Result<(), String> {
         .route("/health", get(health))
         .route("/config", get(config))
         .route("/directories", get(directories).post(create_directory))
+        .route("/repositories/clone", post(clone_repository))
         .route("/stored-sessions", get(stored_sessions))
         .route("/stored-session-export", get(stored_session_export))
         .route(
@@ -385,6 +386,7 @@ async fn config(State(state): State<ServerState>) -> Json<Value> {
         "defaultProjectDir": state.default_project_dir,
         "transport": "websocket",
         "projectRootCount": state.security.allowed_project_roots.len(),
+        "capabilities": ["githubRepositoryClone"],
     }))
 }
 
@@ -398,6 +400,27 @@ struct DirectoryQuery {
 struct CreateDirectoryRequest {
     parent: String,
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloneRepositoryRequest {
+    repository_url: String,
+}
+
+async fn clone_repository(
+    State(state): State<ServerState>,
+    Json(request): Json<CloneRepositoryRequest>,
+) -> Result<Json<repo_clone::CloneRepositoryResult>, ServerError> {
+    let dev_workspace = repo_clone::configured_dev_workspace(
+        &state.default_project_dir,
+        &state.security.allowed_project_roots,
+    )
+    .map_err(ServerError::bad_request)?;
+    repo_clone::clone_github_repository_into(&request.repository_url, &dev_workspace)
+        .await
+        .map(Json)
+        .map_err(ServerError::bad_request)
 }
 
 /// Creates one directory inside an already-authorized parent.
@@ -1402,6 +1425,13 @@ struct ServerError {
 }
 
 impl ServerError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
     fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

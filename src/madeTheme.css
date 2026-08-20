@@ -347,6 +347,16 @@
 :root[data-theme="made"] .provider-setup-dialog select { border-color: var(--line-strong); border-radius: 0; background: #f8f4f4; color: #201f1d; }
 :root[data-theme="made"] .field input:focus,
 :root[data-theme="made"] .field select:focus { border-color: #b68235; }
+:root[data-theme="made"] .project-source button,
+:root[data-theme="made"] .github-clone-destination { border-color: var(--line); border-radius: 0; background: transparent; }
+:root[data-theme="made"] .project-source button:hover,
+:root[data-theme="made"] .project-source button.active { border-color: #b68235; background: rgba(182,130,53,.06); }
+:root[data-theme="made"] .project-source button.active { box-shadow: inset 2px 0 #b68235; }
+:root[data-theme="made"] .project-source strong { color: #201f1d; }
+:root[data-theme="made"] .project-source small,
+:root[data-theme="made"] .github-clone-destination > code { color: #716d6a; }
+:root[data-theme="made"] .github-clone-destination.complete { border-color: rgba(70,107,82,.38); background: rgba(70,107,82,.05); }
+:root[data-theme="made"] .github-clone-destination.complete > span { color: #466b52; }
 :root[data-theme="made"] .remote-project-control > div,
 :root[data-theme="made"] .remote-directory-breadcrumbs,
 :root[data-theme="made"] .remote-project-create input { border-color: var(--line-strong); border-radius: 0; background: #f8f4f4; }

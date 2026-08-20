@@ -6,6 +6,7 @@ const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", impo
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
 const terminalSurfaceSource = readFileSync(new URL("./components/TerminalWorkSurface.tsx", import.meta.url), "utf8");
 const terminalStyles = readFileSync(new URL("./components/TerminalWorkSurface.css", import.meta.url), "utf8");
+const newSessionSource = readFileSync(new URL("./components/NewSessionDialog.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("desktop navigation and history contracts", () => {
@@ -33,6 +34,16 @@ describe("desktop navigation and history contracts", () => {
     );
     expect(openNewDialog).toContain("setDialog({ projectDir: remembered");
     expect(openNewDialog).not.toContain("selectProjectFolder(");
+  });
+
+  it("keeps GitHub clone inside fresh-session setup and outside resume payloads", () => {
+    expect(newSessionSource).toContain("Clone GitHub repository");
+    expect(newSessionSource).toContain("!props.initial.resumeId");
+    expect(newSessionSource).toContain("await props.onCloneRepository");
+    expect(newSessionSource).toContain("setProjectDir(result.path)");
+    expect(newSessionSource).toContain("Review setup, then start");
+    expect(appSource).toContain("canCloneRepository={(host)");
+    expect(appSource).toContain("onCloneRepository={(repositoryUrl, host)");
   });
 
   it("opens native local terminal sessions inside the Studio workbench", () => {
