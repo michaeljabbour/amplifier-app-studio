@@ -15,11 +15,14 @@ const MAX_CAPTURE_LINES: u32 = 5_000;
 const MAX_INPUT_BYTES: usize = 64 * 1024;
 const MAX_KEYS: usize = 32;
 const NOT_FOUND: &str = "TMUX_SESSION_NOT_FOUND";
+const SESSION_FORMAT: &str = "#{session_name}\t#{session_id}\t#{pane_id}\t#{session_created}\t#{session_activity}\t#{pane_current_path}";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalTmuxSession {
     name: String,
+    session_id: String,
+    pane_id: String,
     created_at: Option<u64>,
     last_activity_at: Option<u64>,
     cwd: Option<String>,
@@ -65,13 +68,9 @@ impl TmuxInvocation {
 
 #[tauri::command]
 pub async fn terminal_tmux_list() -> Result<Vec<LocalTmuxSession>, String> {
-    let output = TmuxInvocation::new([
-        "list-sessions",
-        "-F",
-        "#{session_name}\t#{session_created}\t#{session_activity}\t#{pane_current_path}",
-    ])
-    .output()
-    .await?;
+    let output = TmuxInvocation::new(["list-sessions", "-F", SESSION_FORMAT])
+        .output()
+        .await?;
     if !output.status.success() {
         let stderr = output_text(&output.stderr);
         if no_server_running(&stderr) {
@@ -84,11 +83,17 @@ pub async fn terminal_tmux_list() -> Result<Vec<LocalTmuxSession>, String> {
 }
 
 #[tauri::command]
-pub async fn terminal_tmux_create(name: String, project_dir: Option<String>) -> Result<(), String> {
+pub async fn terminal_tmux_create(
+    name: String,
+    project_dir: Option<String>,
+) -> Result<LocalTmuxSession, String> {
     validate_session_name(&name)?;
     let mut args = vec![
         OsString::from("new-session"),
         OsString::from("-d"),
+        OsString::from("-P"),
+        OsString::from("-F"),
+        OsString::from(SESSION_FORMAT),
         OsString::from("-s"),
         OsString::from(&name),
     ];
@@ -97,19 +102,34 @@ pub async fn terminal_tmux_create(name: String, project_dir: Option<String>) -> 
         args.push(OsString::from("-c"));
         args.push(cwd.into_os_string());
     }
-    run_checked("create session", TmuxInvocation::new(args)).await?;
-    ensure_exact_session(&name).await
+    let output = run_checked("create session", TmuxInvocation::new(args)).await?;
+    let session = parse_session_list(&output)
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "tmux created a session without returning a stable pane identity".to_owned()
+        })?;
+    if session.name != name {
+        return Err("tmux returned a different session than Studio created".to_owned());
+    }
+    ensure_exact_session(&name).await?;
+    Ok(session)
 }
 
 #[tauri::command]
-pub async fn terminal_tmux_capture(name: String, lines: u32) -> Result<LocalTmuxCapture, String> {
+pub async fn terminal_tmux_capture(
+    name: String,
+    pane_id: String,
+    lines: u32,
+) -> Result<LocalTmuxCapture, String> {
     validate_session_name(&name)?;
+    validate_pane_id(&pane_id)?;
     if !(1..=MAX_CAPTURE_LINES).contains(&lines) {
         return Err(format!(
             "Capture lines must be between 1 and {MAX_CAPTURE_LINES}"
         ));
     }
-    let target = exact_pane_target(&name);
+    let target = exact_pane_target(&name, &pane_id)?;
     let snapshot = run_checked(
         "capture session",
         TmuxInvocation::new(vec![
@@ -153,11 +173,13 @@ pub async fn terminal_tmux_capture(name: String, lines: u32) -> Result<LocalTmux
 #[tauri::command]
 pub async fn terminal_tmux_send(
     name: String,
+    pane_id: String,
     text: Option<String>,
     keys: Vec<String>,
     enter: bool,
 ) -> Result<(), String> {
     validate_session_name(&name)?;
+    validate_pane_id(&pane_id)?;
     if !text.as_deref().is_some_and(|value| !value.is_empty()) && keys.is_empty() && !enter {
         return Err("Terminal input cannot be empty".to_owned());
     }
@@ -178,7 +200,7 @@ pub async fn terminal_tmux_send(
         ));
     }
 
-    let invocations = send_invocations(&name, text.as_deref(), &keys, enter)?;
+    let invocations = send_invocations(&name, &pane_id, text.as_deref(), &keys, enter)?;
     for invocation in invocations {
         run_checked("send terminal input", invocation).await?;
     }
@@ -186,8 +208,14 @@ pub async fn terminal_tmux_send(
 }
 
 #[tauri::command]
-pub async fn terminal_tmux_resize(name: String, columns: u16, rows: u16) -> Result<(), String> {
+pub async fn terminal_tmux_resize(
+    name: String,
+    pane_id: String,
+    columns: u16,
+    rows: u16,
+) -> Result<(), String> {
     validate_session_name(&name)?;
+    validate_pane_id(&pane_id)?;
     if !(2..=1_000).contains(&columns) || !(1..=1_000).contains(&rows) {
         return Err("Terminal size must be between 2x1 and 1000x1000".to_owned());
     }
@@ -196,7 +224,7 @@ pub async fn terminal_tmux_resize(name: String, columns: u16, rows: u16) -> Resu
         TmuxInvocation::new(vec![
             OsString::from("resize-window"),
             OsString::from("-t"),
-            OsString::from(exact_pane_target(&name)),
+            OsString::from(exact_pane_target(&name, &pane_id)?),
             OsString::from("-x"),
             OsString::from(columns.to_string()),
             OsString::from("-y"),
@@ -316,26 +344,51 @@ fn validate_session_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_session_id(session_id: &str) -> Result<(), String> {
+    validate_tmux_id(session_id, b'$', "session")
+}
+
+fn validate_pane_id(pane_id: &str) -> Result<(), String> {
+    validate_tmux_id(pane_id, b'%', "pane")
+}
+
+fn validate_tmux_id(value: &str, prefix: u8, kind: &str) -> Result<(), String> {
+    let bytes = value.as_bytes();
+    if !(2..=21).contains(&bytes.len())
+        || bytes[0] != prefix
+        || !bytes[1..].iter().all(u8::is_ascii_digit)
+    {
+        return Err(format!("Invalid tmux {kind} identity"));
+    }
+    Ok(())
+}
+
 fn exact_target(name: &str) -> String {
     format!("={name}")
 }
 
-fn exact_pane_target(name: &str) -> String {
-    // `=` makes the session segment exact; the trailing `:` selects its
-    // active window/pane. Passing only `=name` to a target-pane command is
-    // rejected by tmux (and dropping `=` would reintroduce prefix matching).
-    format!("={name}:")
+fn exact_pane_target(name: &str, pane_id: &str) -> Result<String, String> {
+    validate_session_name(name)?;
+    validate_pane_id(pane_id)?;
+    // The exact session qualifier prevents a valid pane id from crossing the
+    // session boundary if a pane is moved. The immutable `%pane_id` prevents
+    // another tmux client changing the active window/pane from retargeting IO.
+    Ok(format!("={name}:.{pane_id}"))
 }
 
 fn parse_session_list(stdout: &str) -> Vec<LocalTmuxSession> {
     stdout
         .lines()
         .filter_map(|line| {
-            let mut fields = line.splitn(4, '\t');
+            let mut fields = line.splitn(6, '\t');
             let name = fields.next()?.to_owned();
             // Studio only operates exact, tmux-stable identifiers. Existing
             // sessions with names outside this set stay untouched and hidden.
             validate_session_name(&name).ok()?;
+            let session_id = fields.next()?.to_owned();
+            validate_session_id(&session_id).ok()?;
+            let pane_id = fields.next()?.to_owned();
+            validate_pane_id(&pane_id).ok()?;
             let created_at = fields.next().and_then(|value| value.parse().ok());
             let last_activity_at = fields.next().and_then(|value| value.parse().ok());
             let cwd = fields
@@ -344,6 +397,8 @@ fn parse_session_list(stdout: &str) -> Vec<LocalTmuxSession> {
                 .map(str::to_owned);
             Some(LocalTmuxSession {
                 name,
+                session_id,
+                pane_id,
                 created_at,
                 last_activity_at,
                 cwd,
@@ -354,23 +409,33 @@ fn parse_session_list(stdout: &str) -> Vec<LocalTmuxSession> {
 
 fn send_invocations(
     name: &str,
+    pane_id: &str,
     text: Option<&str>,
     keys: &[String],
     enter: bool,
 ) -> Result<Vec<TmuxInvocation>, String> {
-    let target = exact_pane_target(name);
+    let target = exact_pane_target(name, pane_id)?;
     let mut result = Vec::new();
     if let Some(text) = text.filter(|value| !value.is_empty()) {
         result.push(exit_copy_mode_invocation(&target));
+        // The command-composer path sends text + Enter as one literal byte
+        // sequence, so even pane destruction cannot split the command from
+        // its submission. A carriage return is the PTY byte for Enter.
+        let literal = if enter && keys.is_empty() {
+            format!("{text}\r")
+        } else {
+            text.to_owned()
+        };
         result.push(TmuxInvocation::new(vec![
             OsString::from("send-keys"),
             OsString::from("-l"),
             OsString::from("-t"),
             OsString::from(&target),
             OsString::from("--"),
-            OsString::from(text),
+            OsString::from(literal),
         ]));
     }
+    let enter = enter && !(text.is_some_and(|value| !value.is_empty()) && keys.is_empty());
     for key in keys
         .iter()
         .map(|value| validate_key(value))
@@ -438,23 +503,46 @@ mod tests {
     #[test]
     fn literal_input_is_one_argv_and_never_a_shell_program() {
         let hostile = "; rm -rf / && $(reboot) `id` | tee /tmp/pwned";
-        let plans = send_invocations("alpha", Some(hostile), &[], true).unwrap();
+        let plans = send_invocations("alpha", "%17", Some(hostile), &[], true).unwrap();
         assert!(plans.iter().all(|plan| plan.program == "tmux"));
         assert!(plans
             .iter()
             .all(|plan| !args(plan).iter().any(|arg| arg == "-c")));
         assert_eq!(
             args(&plans[1]),
-            vec!["send-keys", "-l", "-t", "=alpha:", "--", hostile]
+            vec![
+                "send-keys",
+                "-l",
+                "-t",
+                "=alpha:.%17",
+                "--",
+                &format!("{hostile}\r"),
+            ]
         );
         assert_eq!(
             plans
                 .iter()
                 .flat_map(args)
-                .filter(|value| value == hostile)
+                .filter(|value| value == &format!("{hostile}\r"))
                 .count(),
             1
         );
+        assert_eq!(
+            plans
+                .iter()
+                .filter(|plan| args(plan).iter().any(|value| value == "Enter"))
+                .count(),
+            0,
+            "text + Enter must be one literal PTY write"
+        );
+    }
+
+    #[test]
+    fn pane_targets_are_exact_scoped_immutable_ids() {
+        assert_eq!(exact_pane_target("alpha", "%42").unwrap(), "=alpha:.%42");
+        for invalid in ["42", "%", "%1:2", "%$(id)", "%1.other"] {
+            assert!(validate_pane_id(invalid).is_err(), "{invalid}");
+        }
     }
 
     #[test]
@@ -468,7 +556,7 @@ mod tests {
     #[test]
     fn session_list_filters_names_that_cannot_be_operated_exactly() {
         let parsed = parse_session_list(
-            "alpha\t1\t2\t/work/alpha\nbuild.js\t3\t4\t/work/dot\nbeta\t5\t6\t/work/beta\n",
+            "alpha\t$1\t%2\t1\t2\t/work/alpha\nbuild.js\t$3\t%4\t3\t4\t/work/dot\nbeta\t$5\t%6\t5\t6\t/work/beta\n",
         );
         assert_eq!(
             parsed
@@ -477,6 +565,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["alpha", "beta"]
         );
+        assert_eq!(parsed[0].session_id, "$1");
+        assert_eq!(parsed[0].pane_id, "%2");
         assert_eq!(parsed[0].cwd.as_deref(), Some("/work/alpha"));
     }
 
@@ -485,5 +575,84 @@ mod tests {
         assert!(validate_key("C-c").is_ok());
         assert!(validate_key("C-b").is_err());
         assert!(validate_key("; kill-server").is_err());
+    }
+
+    #[test]
+    fn immutable_pane_target_survives_an_active_window_switch() {
+        use std::process::Command as StdCommand;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        if StdCommand::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let socket = format!("studio-pane-test-{}-{nonce}", std::process::id());
+        let tmux = |args: &[&str]| {
+            StdCommand::new("tmux")
+                .arg("-L")
+                .arg(&socket)
+                .args(args)
+                .output()
+                .expect("run isolated tmux")
+        };
+        let checked = |args: &[&str]| {
+            let output = tmux(args);
+            assert!(
+                output.status.success(),
+                "tmux {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output
+        };
+
+        checked(&["new-session", "-d", "-s", "alpha", "-n", "one"]);
+        checked(&["new-window", "-d", "-t", "=alpha", "-n", "two"]);
+        let pane_one_output = checked(&["list-panes", "-t", "=alpha:one", "-F", "#{pane_id}"]);
+        let pane_one = String::from_utf8_lossy(&pane_one_output.stdout)
+            .trim()
+            .to_owned();
+        let plans = send_invocations(
+            "alpha",
+            &pane_one,
+            Some("printf STUDIO_IMMUTABLE_PANE"),
+            &[],
+            true,
+        )
+        .unwrap();
+        assert_eq!(plans.len(), 2, "text + Enter is one send-keys invocation");
+
+        // Exit copy mode while window one is active, then let another client
+        // switch the session before Studio sends the command.
+        for plan in plans.iter().take(1) {
+            let plan_args = args(plan);
+            checked(&plan_args.iter().map(String::as_str).collect::<Vec<_>>());
+        }
+        checked(&["select-window", "-t", "=alpha:two"]);
+        for plan in plans.iter().skip(1) {
+            let plan_args = args(plan);
+            checked(&plan_args.iter().map(String::as_str).collect::<Vec<_>>());
+        }
+
+        let mut pane_one_capture = String::new();
+        for _ in 0..20 {
+            let captured = checked(&["capture-pane", "-p", "-t", &pane_one]);
+            pane_one_capture = String::from_utf8_lossy(&captured.stdout).into_owned();
+            if pane_one_capture.contains("STUDIO_IMMUTABLE_PANE") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pane_two_capture = checked(&["capture-pane", "-p", "-t", "=alpha:two"]);
+        let pane_two_capture = String::from_utf8_lossy(&pane_two_capture.stdout);
+        assert!(pane_one_capture.contains("STUDIO_IMMUTABLE_PANE"));
+        assert!(!pane_two_capture.contains("STUDIO_IMMUTABLE_PANE"));
+
+        // The isolated server exits when its only exact session is removed;
+        // production code never invokes kill-server.
+        checked(&["kill-session", "-t", "=alpha"]);
     }
 }

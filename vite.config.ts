@@ -1,9 +1,10 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import solid from "vite-plugin-solid";
 import { assertSafeBridgeBuild } from "./scripts/build-security.mjs";
 
-export default defineConfig(({ mode }) => {
-  assertSafeBridgeBuild(mode);
+export default defineConfig(({ command, mode }) => {
+  const environment = { ...loadEnv(mode, process.cwd(), ""), ...process.env };
+  assertSafeBridgeBuild(command, environment);
   return {
     plugins: [solid()],
     clearScreen: false,

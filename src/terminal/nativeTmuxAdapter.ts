@@ -34,11 +34,15 @@ const LOCAL_TMUX_KEYS = [
 ] as const;
 const LOCAL_TMUX_KEY_SET = new Set<string>(LOCAL_TMUX_KEYS);
 const LOCAL_TMUX_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
+const LOCAL_TMUX_SESSION_ID = /^\$[0-9]{1,20}$/;
+const LOCAL_TMUX_PANE_ID = /^%[0-9]{1,20}$/;
 
 export type NativeTmuxInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 interface NativeTmuxSessionWire {
   name: string;
+  sessionId: string;
+  paneId: string;
   createdAt?: number;
   lastActivityAt?: number;
   cwd?: string;
@@ -55,6 +59,12 @@ interface PollAttachment {
   previous: string;
   observer: TerminalAttachmentObserver;
   timer?: ReturnType<typeof setTimeout>;
+}
+
+interface NativeTmuxBinding {
+  sessionId: string;
+  paneId: string;
+  studioOwned: boolean;
 }
 
 export interface NativeTmuxAdapterOptions {
@@ -79,6 +89,7 @@ export class NativeTmuxAdapter implements TerminalBackend {
   private readonly invokeNative: NativeTmuxInvoke;
   private readonly pollIntervalMs: number;
   private readonly attachments = new Map<string, PollAttachment>();
+  private readonly bindings = new Map<string, NativeTmuxBinding>();
 
   constructor(options: NativeTmuxAdapterOptions) {
     if (options.host.kind !== "local" || options.host.transport !== "native") {
@@ -97,7 +108,9 @@ export class NativeTmuxAdapter implements TerminalBackend {
       rename: true,
       capture: true,
       send: "input",
-      resize: true,
+      // Existing tmux sessions may be attached in Terminal or MUX Plex.
+      // Session-level capabilities opt in only sessions this instance creates.
+      resize: false,
       reconnect: true,
       independentAttachments: true,
       scrollbackPaging: false,
@@ -109,7 +122,7 @@ export class NativeTmuxAdapter implements TerminalBackend {
   async list(): Promise<TerminalSession[]> {
     const response = await this.invokeNative<unknown>("terminal_tmux_list");
     if (!Array.isArray(response)) throw new Error("Studio's tmux bridge returned an invalid session list");
-    return response.map((value) => this.sessionFromWire(requireSessionWire(value)));
+    return response.map((value) => this.sessionFromWire(requireSessionWire(value), false));
   }
 
   async create(request: CreateTerminalRequest): Promise<TerminalSession> {
@@ -118,11 +131,13 @@ export class NativeTmuxAdapter implements TerminalBackend {
       throw new Error("Local tmux does not run configurable command profiles; it starts the user's default shell");
     }
     const project = request.project || this.project;
-    await this.invokeNative("terminal_tmux_create", {
+    const response = await this.invokeNative<unknown>("terminal_tmux_create", {
       name,
       projectDir: project?.root,
     });
-    return this.sessionFromWire({ name, cwd: project?.root });
+    const wire = requireSessionWire(response);
+    if (wire.name !== name) throw new Error("Studio's tmux bridge returned a different session than it created");
+    return this.sessionFromWire(wire, true);
   }
 
   async attach(terminal: TerminalSession, observer: TerminalAttachmentObserver): Promise<TerminalAttachment> {
@@ -184,13 +199,16 @@ export class NativeTmuxAdapter implements TerminalBackend {
     await this.invokeNative("terminal_tmux_terminate", {
       name: requireExactTmuxName(terminal.backendId),
     });
+    this.bindings.delete(terminal.id);
   }
 
   async rename(terminal: TerminalSession, name: string): Promise<TerminalSession> {
     const oldName = requireExactTmuxName(terminal.backendId);
     const newName = requireExactTmuxName(name);
+    if (oldName === newName) return terminal;
+    const binding = this.bindingFor(terminal);
     await this.invokeNative("terminal_tmux_rename", { name: oldName, newName });
-    return {
+    const renamed = {
       ...terminal,
       id: terminalId(this.host.id, newName),
       backendId: newName,
@@ -198,6 +216,9 @@ export class NativeTmuxAdapter implements TerminalBackend {
       liveOutput: "",
       connection: detachedConnection(),
     };
+    this.bindings.delete(terminal.id);
+    this.bindings.set(renamed.id, binding);
+    return renamed;
   }
 
   async capture(terminal: TerminalSession, request: CaptureTerminalRequest = {}): Promise<TerminalCapture> {
@@ -211,6 +232,7 @@ export class NativeTmuxAdapter implements TerminalBackend {
     );
     const response = await this.invokeNative<NativeTmuxCaptureWire>("terminal_tmux_capture", {
       name: requireExactTmuxName(terminal.backendId),
+      paneId: this.bindingFor(terminal).paneId,
       lines,
     });
     if (!response || typeof response.snapshot !== "string") {
@@ -243,6 +265,7 @@ export class NativeTmuxAdapter implements TerminalBackend {
     if (!text && !keys.length && !request.enter) throw new Error("Terminal input cannot be empty");
     await this.invokeNative("terminal_tmux_send", {
       name: requireExactTmuxName(terminal.backendId),
+      paneId: this.bindingFor(terminal).paneId,
       text: text || undefined,
       keys,
       enter: request.enter === true,
@@ -259,18 +282,31 @@ export class NativeTmuxAdapter implements TerminalBackend {
   }
 
   async resize(terminal: TerminalSession, size: TerminalSize): Promise<void> {
+    const binding = this.bindingFor(terminal);
+    if (!binding.studioOwned) {
+      throw new Error("Studio does not resize tmux sessions created outside this Studio window");
+    }
     await this.invokeNative("terminal_tmux_resize", {
       name: requireExactTmuxName(terminal.backendId),
+      paneId: binding.paneId,
       columns: clampInteger(size.columns, 2, 1_000),
       rows: clampInteger(size.rows, 1, 1_000),
     });
   }
 
-  private sessionFromWire(wire: NativeTmuxSessionWire): TerminalSession {
+  private sessionFromWire(wire: NativeTmuxSessionWire, studioOwned: boolean): TerminalSession {
     const name = requireExactTmuxName(wire.name);
+    const sessionId = requireTmuxIdentity(wire.sessionId, LOCAL_TMUX_SESSION_ID, "session");
+    const paneId = requireTmuxIdentity(wire.paneId, LOCAL_TMUX_PANE_ID, "pane");
     const cwd = typeof wire.cwd === "string" && wire.cwd ? wire.cwd : undefined;
+    const id = terminalId(this.host.id, name);
+    const existing = this.bindings.get(id);
+    const binding = existing?.sessionId === sessionId
+      ? { ...existing, studioOwned: existing.studioOwned || studioOwned }
+      : { sessionId, paneId, studioOwned };
+    this.bindings.set(id, binding);
     return {
-      id: terminalId(this.host.id, name),
+      id,
       backendId: name,
       name,
       host: this.host,
@@ -282,8 +318,14 @@ export class NativeTmuxAdapter implements TerminalBackend {
       liveOutput: "",
       attention: { needsAttention: false, unseenCount: 0 },
       connection: detachedConnection(),
-      capabilities: { ...this.capabilities },
+      capabilities: { ...this.capabilities, resize: binding.studioOwned },
     };
+  }
+
+  private bindingFor(terminal: TerminalSession): NativeTmuxBinding {
+    const binding = this.bindings.get(terminal.id);
+    if (!binding) throw new Error(`${terminal.name} has no stable tmux pane identity; refresh terminals`);
+    return binding;
   }
 
   private schedulePoll(poller: PollAttachment, poll: () => Promise<void>): void {
@@ -340,10 +382,21 @@ export function terminalSnapshotDelta(previous: string, current: string): string
 }
 
 function requireSessionWire(value: unknown): NativeTmuxSessionWire {
-  if (!value || typeof value !== "object" || typeof (value as NativeTmuxSessionWire).name !== "string") {
+  if (
+    !value
+    || typeof value !== "object"
+    || typeof (value as NativeTmuxSessionWire).name !== "string"
+    || typeof (value as NativeTmuxSessionWire).sessionId !== "string"
+    || typeof (value as NativeTmuxSessionWire).paneId !== "string"
+  ) {
     throw new Error("Studio's tmux bridge returned an invalid terminal session");
   }
   return value as NativeTmuxSessionWire;
+}
+
+function requireTmuxIdentity(value: string, pattern: RegExp, kind: "session" | "pane"): string {
+  if (!pattern.test(value)) throw new Error(`Studio's tmux bridge returned an invalid ${kind} identity`);
+  return value;
 }
 
 function projectFor(

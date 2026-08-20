@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { onBackButtonPress } from "@tauri-apps/api/app";
 import { AttentionBar, type AttentionResponse } from "./components/AttentionBar";
 import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
@@ -159,6 +160,7 @@ export default function App() {
   const [transcription, setTranscription] = createSignal<TranscriptionStatus>();
   const connections = new Map<string, SessionConnection>();
   const detachedSessions = new Map<string, SessionViewState>();
+  const [detachedSessionsVersion, setDetachedSessionsVersion] = createSignal(0);
   const initialized = new Set<string>();
   const statusPollers = new Map<string, number>();
   const restoreTimers = new Map<string, number>();
@@ -172,9 +174,14 @@ export default function App() {
     : undefined;
 
   const active = createMemo(() => sessions().find((session) => session.guiId === activeId()));
+  const detachedSessionList = createMemo(() => {
+    detachedSessionsVersion();
+    return [...detachedSessions.values()];
+  });
+  const openSessionViews = createMemo(() => [...sessions(), ...detachedSessionList()]);
   const lanes = createMemo(() => Object.values(active()?.lanes || {}));
   const selectedLane = createMemo(() => active()?.lanes[selectedLaneId() || ""]);
-  const updateBlocked = createMemo(() => sessions().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
+  const updateBlocked = createMemo(() => openSessionViews().some((session) => session.busy || session.phase === "starting" || session.phase === "degraded" || session.phase === "closing"));
   const updateInProgress = createMemo(() => appUpdate().status === "downloading" || appUpdate().status === "installing");
   const autopilotActive = createMemo(() => active()?.autopilot === true || active()?.goal?.state === "continuing");
   const sessionHomeHost = createMemo(() => runtimeHosts().find((host) => host.id === sessionHomeHostId())
@@ -197,6 +204,41 @@ export default function App() {
     if (!root) return undefined;
     return { id: root, label: projectDisplayName(root), root };
   });
+  const mobileOverlayOpen = createMemo(() => Boolean(
+    stopRuntimeRequest()
+    || storedSessionDialog()
+    || providerSetupOpen()
+    || capabilitiesOpen()
+    || settingsOpen()
+    || dialog()
+    || rightOpen()
+    || drawerOpen(),
+  ));
+
+  const dismissTopMobileOverlay = () => {
+    if (stopRuntimeRequest()) setStopRuntimeRequest(undefined);
+    else if (storedSessionDialog()) setStoredSessionDialog(undefined);
+    else if (providerSetupOpen()) setProviderSetupOpen(false);
+    else if (capabilitiesOpen()) setCapabilitiesOpen(false);
+    else if (settingsOpen()) setSettingsOpen(false);
+    else if (dialog()) setDialog(undefined);
+    else if (rightOpen()) setRightOpen(false);
+    else if (drawerOpen()) setDrawerOpen(false);
+  };
+
+  createEffect(() => {
+    if (!isTauriRuntime() || !/Android/i.test(navigator.userAgent) || !mobileOverlayOpen()) return;
+    let disposed = false;
+    let listener: Awaited<ReturnType<typeof onBackButtonPress>> | undefined;
+    void onBackButtonPress(() => dismissTopMobileOverlay()).then((registered) => {
+      if (disposed) void registered.unregister();
+      else listener = registered;
+    }).catch((error) => setRuntimeError(cleanError(error)));
+    onCleanup(() => {
+      disposed = true;
+      if (listener) void listener.unregister();
+    });
+  });
 
   const refreshHostProjectRoot = async (host: RuntimeHost): Promise<string> => {
     if (!host.url) return knownHostProjectRoot(host);
@@ -207,9 +249,12 @@ export default function App() {
   };
 
   const setSessionHomeHost = (id: string) => {
-    const selected = runtimeHosts().some((host) => host.id === id) ? id : "local";
+    const selected = runtimeHosts().some((host) => host.id === id)
+      ? id
+      : runtimeHosts()[0]?.id || (isMobileRuntime() ? "" : "local");
     setSessionHomeHostId(selected);
-    localStorage.setItem(SESSION_HOME_HOST_KEY, selected);
+    if (selected) localStorage.setItem(SESSION_HOME_HOST_KEY, selected);
+    else localStorage.removeItem(SESSION_HOME_HOST_KEY);
   };
 
   createEffect(() => {
@@ -226,14 +271,13 @@ export default function App() {
       if (rememberedProject) setDefaultDir(rememberedProject);
       else void defaultProjectDir(undefined, "local").then(setDefaultDir).catch(() => undefined);
     }
-    void refreshRuntime();
+    if (!isMobileRuntime()) void refreshRuntime();
     void listRuntimeHosts().then((hosts) => {
       setRuntimeHosts(hosts);
       if (!hosts.some((host) => host.id === sessionHomeHostId())) {
-        setSessionHomeHost("local");
-      } else if (sessionHomeHostId() !== "local") {
-        void refreshRuntime();
+        setSessionHomeHost(hosts[0]?.id || (isMobileRuntime() ? "" : "local"));
       }
+      void refreshRuntime();
       const home = hosts.find((host) => host.id === sessionHomeHostId()) || hosts[0];
       if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
@@ -275,11 +319,15 @@ export default function App() {
 
   const update = (guiId: string, transform: (state: SessionViewState) => SessionViewState) => {
     const detached = detachedSessions.get(guiId);
-    if (detached) detachedSessions.set(guiId, transform(detached));
+    if (detached) {
+      detachedSessions.set(guiId, transform(detached));
+      setDetachedSessionsVersion((version) => version + 1);
+    }
     setSessions((items) => items.map((item) => (item.guiId === guiId ? transform(item) : item)));
   };
 
-  const sessionForGuiId = (guiId: string) => sessions().find((item) => item.guiId === guiId) || detachedSessions.get(guiId);
+  const sessionForGuiId = (guiId: string) => sessions().find((item) => item.guiId === guiId)
+    || detachedSessionList().find((item) => item.guiId === guiId);
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
     update(guiId, (state) => reduceRecord(state, record));
@@ -388,16 +436,28 @@ export default function App() {
       return;
     }
     detachedSessions.set(guiId, session);
+    setDetachedSessionsVersion((version) => version + 1);
     const remaining = sessions().filter((item) => item.guiId !== guiId);
     setSessions(remaining);
     if (activeId() === guiId) setActiveId(remaining.at(-1)?.guiId);
     if (stopRuntimeRequest()?.guiId === guiId) setStopRuntimeRequest(undefined);
   };
 
+  const activateSessionView = (guiId: string) => {
+    const detached = detachedSessions.get(guiId);
+    if (detached) {
+      detachedSessions.delete(guiId);
+      setDetachedSessionsVersion((version) => version + 1);
+      setSessions((items) => items.some((item) => item.guiId === guiId) ? items : [...items, detached]);
+    }
+    setActiveId(guiId);
+    setWorkbenchSurface("agent");
+  };
+
   const discardSessionView = (guiId: string) => {
     connections.get(guiId)?.dispose();
     connections.delete(guiId);
-    detachedSessions.delete(guiId);
+    if (detachedSessions.delete(guiId)) setDetachedSessionsVersion((version) => version + 1);
     initialized.delete(guiId);
     pendingInitialPrompts.delete(guiId);
     clearStatusPolling(guiId);
@@ -419,7 +479,7 @@ export default function App() {
   };
 
   const requestRuntimeStop = (guiId: string) => {
-    const session = sessions().find((item) => item.guiId === guiId);
+    const session = sessionForGuiId(guiId);
     if (!session || session.phase === "exited" || session.phase === "error") return;
     setStopRuntimeRequest({ guiId, stopping: false });
   };
@@ -807,7 +867,7 @@ export default function App() {
     }
     if (current.status !== "available" || updateBlocked()) return;
     try {
-      saveUpdateRestorePlan(localStorage, sessions(), activeId());
+      saveUpdateRestorePlan(localStorage, openSessionViews(), activeId());
     } catch {
       // Update installation remains available even when WebView storage is unavailable.
     }
@@ -834,7 +894,13 @@ export default function App() {
         onSettings={() => setSettingsOpen(true)}
         inspectorOpen={workbenchSurface() === "agent" && rightOpen()}
         inspectorAvailable={workbenchSurface() === "agent" && Boolean(active())}
-        onToggleInspector={() => setRightOpen((value) => !value)}
+        onToggleInspector={(attentionSessionId) => {
+          const opening = !rightOpen();
+          if (opening && attentionSessionId) activateSessionView(attentionSessionId);
+          setWorkbenchSurface("agent");
+          if (opening) setInspectorTab("run");
+          setRightOpen(opening);
+        }}
         onOpenExecution={() => openInspector("map")}
         onOpenPlan={() => openInspector("plan")}
         terminalAvailable={Boolean(terminalCoordinator)}
@@ -1029,7 +1095,8 @@ export default function App() {
       <Show when={drawerOpen()}>
         <SessionDrawer
           sessions={stored()}
-          openSessions={sessions()}
+          openSessions={openSessionViews()}
+          detachedSessionIds={detachedSessionList().map((session) => session.guiId)}
           activeId={activeId()}
           loading={storedLoading()}
           error={storedError()}
@@ -1039,7 +1106,7 @@ export default function App() {
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
           onResume={requestStoredResume}
-          onSelectOpen={setActiveId}
+          onSelectOpen={activateSessionView}
           onDetachOpen={detachSessionView}
           onStopOpen={requestRuntimeStop}
           onNew={openNew}
@@ -1058,7 +1125,7 @@ export default function App() {
         />
       )}</Show>
       <Show when={stopRuntimeRequest()} keyed>{(request) => (
-        <Show when={sessions().find((session) => session.guiId === request.guiId)} keyed>{(session) => (
+        <Show when={sessionForGuiId(request.guiId)} keyed>{(session) => (
           <SessionLifecycleDialog
             session={session}
             stopping={request.stopping}
@@ -1286,17 +1353,12 @@ export default function App() {
       setStoredSessionDialog(undefined);
       return;
     }
-    const detachedGuiId = openGuiIdForStoredSession([...detachedSessions.values()], session.sessionId, session);
+    const detachedGuiId = openGuiIdForStoredSession(detachedSessionList(), session.sessionId, session);
     if (detachedGuiId) {
-      const detached = detachedSessions.get(detachedGuiId);
-      if (detached) {
-        detachedSessions.delete(detachedGuiId);
-        setSessions((items) => [...items, detached]);
-        setActiveId(detachedGuiId);
-        setDrawerOpen(false);
-        setStoredSessionDialog(undefined);
-        return;
-      }
+      activateSessionView(detachedGuiId);
+      setDrawerOpen(false);
+      setStoredSessionDialog(undefined);
+      return;
     }
     const host = runtimeHostForStoredSession(session, runtimeHosts());
     if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);

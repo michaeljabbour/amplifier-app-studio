@@ -77,6 +77,7 @@ export function createSessionState(
     activity: "Starting turn",
     replaying: Boolean(input.resumeId),
     replayedTranscriptMessageIds: {},
+    acceptedReplayTranscriptMessages: 0,
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
     context: emptyContext(),
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
@@ -281,6 +282,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         ...next,
         replaying: true,
         restoreSource: record.source === "transcript" ? "transcript" : "ui-events",
+        acceptedReplayTranscriptMessages: 0,
         phase: next.restoreProgress && next.phase !== "degraded" ? "starting" : next.phase,
         bootLabel: "Replaying durable history",
       };
@@ -292,11 +294,12 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       const replayedTranscriptMessageIds = messageId
         ? { ...next.replayedTranscriptMessageIds, [messageId]: true as const }
         : next.replayedTranscriptMessageIds;
+      const acceptedReplayTranscriptMessages = (next.acceptedReplayTranscriptMessages || 0) + 1;
       if (record.role === "user") {
-        return appendBlock({ ...next, replayedTranscriptMessageIds }, { kind: "user", text, mode: next.mode });
+        return appendBlock({ ...next, replayedTranscriptMessageIds, acceptedReplayTranscriptMessages }, { kind: "user", text, mode: next.mode });
       }
       if (record.role === "assistant") {
-        return appendBlock({ ...next, replayedTranscriptMessageIds }, { kind: "answer", text, final: true });
+        return appendBlock({ ...next, replayedTranscriptMessageIds, acceptedReplayTranscriptMessages }, { kind: "answer", text, final: true });
       }
       return next;
     }
@@ -304,6 +307,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       const expectedMessages = Math.max(0, next.expectedHistoryMessages || 0);
       const replayedEvents = Math.max(0, numberValue(record.count));
       const replayedTranscript = Math.max(0, numberValue(record.transcript_count));
+      const acceptedTranscript = Math.max(0, next.acceptedReplayTranscriptMessages || 0);
       const hasVisibleConversation = next.blocks.some((block) => block.kind === "user" || block.kind === "answer");
       if (
         next.restoreProgress
@@ -316,6 +320,16 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         return markRestoreDegraded(
           next,
           `Amplifier found ${expectedMessages} saved transcript record${expectedMessages === 1 ? "" : "s"}. ${delivery} It may still be running an older runtime. Restart the Studio window or runtime that owns this session, then retry the restore.`,
+        );
+      }
+      if (
+        next.restoreProgress
+        && record.source === "transcript"
+        && acceptedTranscript !== replayedTranscript
+      ) {
+        return markRestoreDegraded(
+          next,
+          `The runtime reported ${replayedTranscript} transcript message${replayedTranscript === 1 ? "" : "s"}, but Studio accepted ${acceptedTranscript}. The conversation replay is incomplete; retry the restore before continuing.`,
         );
       }
       return markRestoreProgress({
@@ -608,6 +622,7 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       restoreSource: undefined,
       restoredTranscriptMessages: undefined,
       replayedTranscriptMessageIds: {},
+      acceptedReplayTranscriptMessages: 0,
       liveTail: undefined,
       openThinkingId: undefined,
       nextBlock: 1,

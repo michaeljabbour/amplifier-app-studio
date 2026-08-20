@@ -11,13 +11,17 @@ describe("mobile open-session actions", () => {
     expect(source).toContain("void props.onStopOpen(session.guiId)");
     expect(source).toContain("Leave the runtime running");
     expect(source).toContain("End the runtime and close");
+    expect(source).toContain("Return to this live runtime");
+    expect(source).toContain("detachedSessionIds().has(session.guiId)");
+    expect(source).toContain("Live runtimes with detached views");
+    expect(source).toContain("detachedOpenSessions()");
   });
 
   it("exposes a named, keyboard-reachable overflow menu for each open session", () => {
     expect(source).toContain("aria-label={`Session actions for ${session.title}`}");
     expect(source).toContain("aria-expanded={openSessionMenu() === session.guiId}");
     expect(source).toContain('role="menu"');
-    expect(source.match(/role="menuitem"/g)).toHaveLength(2);
+    expect(source.match(/role="menuitem"/g)).toHaveLength(3);
   });
 
   it("exposes stored history as a named modal with an explicit search control", () => {

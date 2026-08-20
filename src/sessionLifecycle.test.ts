@@ -80,4 +80,11 @@ describe("safe session lifecycle", () => {
     expect(dialogSource).toContain('props.error ? "Retry stop"');
     expect(dialogSource).toContain("Detach view");
   });
+
+  it("keeps detached live runtimes reachable and stoppable from the session drawer", () => {
+    expect(appSource).toContain("const openSessionViews = createMemo");
+    expect(appSource).toContain("openSessions={openSessionViews()}");
+    expect(appSource).toContain("onSelectOpen={activateSessionView}");
+    expect(appSource).toContain("const session = sessionForGuiId(guiId)");
+  });
 });

@@ -198,7 +198,7 @@ export function StudioSettingsDialog(props: Props) {
       const host = await props.onAddRuntimeHost(url(), token());
       setUrl("");
       setToken("");
-      if (sessionHomeHostId() === "local" && props.runtimeHosts.filter((candidate) => candidate.id !== "local").length === 1) {
+      if (sessionHomeHostId() === "local" || !props.runtimeHosts.some((candidate) => candidate.id === sessionHomeHostId())) {
         setSessionHomeHostId(host.id);
       }
     } catch (caught) {

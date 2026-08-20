@@ -46,7 +46,24 @@ describe("mobile Work summaries", () => {
       "Which rollout ring should go first?",
       "Accessibility review · Needs contrast confirmation",
     ]);
-    expect(workAttentionSummary([state])).toEqual({ count: 3, name: "Allow the release upload?" });
+    expect(workAttentionSummary([state])).toEqual({
+      count: 3,
+      name: "Allow the release upload?",
+      sessionId: "alpha",
+      sessionTitle: "Release follow-up",
+    });
+
+    const background = session("beta", "Background review");
+    background.pendingDecision = {
+      decisionId: "background-decision",
+      question: "Approve the background release?",
+      reason: "",
+      choices: ["Yes"],
+      descriptions: [],
+      multiple: false,
+      custom: false,
+    };
+    expect(workAttentionSummary([session("active", "Active"), background]).sessionId).toBe("beta");
   });
 
   it("keeps host and full project placement explicit", () => {

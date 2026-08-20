@@ -95,6 +95,9 @@
 :root[data-theme="made"] .home-continue:hover { border-color: #b68235; background: rgba(182,130,53,.05); }
 :root[data-theme="made"] .home-continue span { color: #7d5411; }
 :root[data-theme="made"] .home-continue strong { color: #201f1d; font-family: var(--font-display); font-size: 13px; }
+:root[data-theme="made"] .runtime-setup-card { border-color: rgba(182,130,53,.28); border-radius: 1px; background: rgba(182,130,53,.055); color: #201f1d; }
+:root[data-theme="made"] .runtime-setup-card strong { color: #2e2c2a; }
+:root[data-theme="made"] .runtime-setup-card p { color: #605d5d; }
 :root[data-theme="made"] .home-composer,
 :root[data-theme="made"] .composer-shell { border-color: var(--line-strong); border-radius: 1px; background: rgba(248,244,244,.97); box-shadow: 0 15px 38px rgba(32,31,29,.08); }
 :root[data-theme="made"] .home-composer:focus-within,

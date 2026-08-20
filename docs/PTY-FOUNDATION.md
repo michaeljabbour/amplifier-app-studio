@@ -21,7 +21,8 @@ again and never calls `create`, so the durable tmux session is not respawned.
 ## Native local tmux
 
 `NativeTmuxAdapter` is the zero-service backend for a desktop Studio running on
-the same machine as tmux. It polls bounded pane captures for attachment data;
+the same machine as tmux. It binds each attachment to tmux's immutable
+`%pane_id` and polls bounded pane captures for attachment data;
 closing the poller detaches Studio and deliberately leaves tmux running.
 Reconnect starts a new poller and never invokes the create command.
 
@@ -29,11 +30,14 @@ Seven desktop-only Tauri commands form the native boundary: list, create,
 capture, send, resize, rename, and terminate. Rust launches the local `tmux`
 binary with literal argv through `tokio::process::Command` and never invokes a
 shell. Session names use the tmux-stable exact subset
-`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`; every target is then addressed with tmux's
-exact `=name` syntax (`=name:` for the active pane). Input text is one literal
-argv item, named keys are allowlisted, working directories are canonical
-absolute directories, and payload/geometry/capture sizes are bounded in both
-TypeScript and Rust.
+`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`; session lifecycle uses exact `=name`
+targets while capture and input use the exact session plus the immutable
+`%pane_id`. Input text is one literal argv item, named keys are allowlisted,
+working directories are canonical absolute directories, and
+payload/geometry/capture sizes are bounded in both TypeScript and Rust. Command
+text plus Enter is emitted as one literal PTY write. Sessions merely discovered
+by Studio advertise resize as unsupported, so passive viewing never changes an
+external user's terminal dimensions.
 
 Terminate is exactly `tmux kill-session -t =name`. Studio never calls
 `kill-server`, never clears a global selection, and never kills a session on
@@ -96,8 +100,10 @@ with a terminal emulator without changing the coordinator or adapter.
 Desktop Studio now constructs a native `TerminalCoordinator`, disposes it with
 the workbench, and exposes it through the top `Terminal` switcher. The Agent
 view stays mounted as durable application state rather than being stopped when
-the user supervises terminal work. New terminals inherit the current local
-project when one exists. The same surface supplies an explicit return to Agent.
+the user supervises terminal work. Command and rename drafts are keyed by
+terminal identity, so changing the selected session cannot retarget an existing
+draft. New terminals inherit the current local project when one exists. The
+same surface supplies an explicit return to Agent.
 
 The remote `MuxplexTerminalAdapter` remains an opt-in backend until its native
 credentialed HTTP/WebSocket transport is implemented. Mobile does not expose a

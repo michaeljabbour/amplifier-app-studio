@@ -12,6 +12,8 @@ const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.
 const transcriptSource = readFileSync(new URL("./components/Transcript.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("./components/Inspector.tsx", import.meta.url), "utf8");
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
+const coordinatorHomeSource = readFileSync(new URL("./components/CoordinatorHome.tsx", import.meta.url), "utf8");
+const madeThemeCss = readFileSync(new URL("./madeTheme.css", import.meta.url), "utf8");
 
 describe("mobile layout contracts", () => {
   it("exposes iOS safe-area insets without disabling user zoom", () => {
@@ -72,7 +74,7 @@ describe("mobile layout contracts", () => {
   it("opens a full-screen Work hub from Activity with explicit return controls", () => {
     expect(tabStripSource).toContain('class="mobile-topbar-button mobile-work-button"');
     expect(tabStripSource).toContain('class="mobile-work-label">Work');
-    expect(tabStripSource).toContain("onClick={props.onToggleInspector}");
+    expect(tabStripSource).toContain("onClick={() => props.onToggleInspector(attention().sessionId)}");
     expect(inspectorSource).toContain('aria-label="Back to session"');
     expect(inspectorSource).toContain('aria-label="Close Work"');
     expect(inspectorSource).toContain("{props.state.title}");
@@ -83,6 +85,25 @@ describe("mobile layout contracts", () => {
     }
     expect(mobileCss).toMatch(/\.machine-inspector,[\s\S]*top:\s*0;[\s\S]*height:\s*100dvh;[\s\S]*display:\s*flex/);
     expect(mobileCss).toMatch(/\.inspector-tabs button,[\s\S]*min-height:\s*48px/);
+  });
+
+  it("routes Android system Back through the topmost Studio overlay", () => {
+    expect(appSource).toContain('import { onBackButtonPress } from "@tauri-apps/api/app"');
+    expect(appSource).toContain("onBackButtonPress(() => dismissTopMobileOverlay())");
+    const dismiss = appSource.slice(
+      appSource.indexOf("const dismissTopMobileOverlay"),
+      appSource.indexOf("createEffect(() =>", appSource.indexOf("const dismissTopMobileOverlay")),
+    );
+    for (const close of [
+      "setStopRuntimeRequest(undefined)",
+      "setStoredSessionDialog(undefined)",
+      "setProviderSetupOpen(false)",
+      "setCapabilitiesOpen(false)",
+      "setSettingsOpen(false)",
+      "setDialog(undefined)",
+      "setRightOpen(false)",
+      "setDrawerOpen(false)",
+    ]) expect(dismiss).toContain(close);
   });
 
   it("keeps open-session lifecycle actions explicit and touch sized", () => {
@@ -108,5 +129,22 @@ describe("mobile layout contracts", () => {
 
   it("does not report desktop host persistence as a mobile session error", () => {
     expect(appSource).toMatch(/async function rememberRuntimeHost[\s\S]*if \(isMobileRuntime\(\)\) return;/);
+  });
+
+  it("hydrates the real mobile compute id before checking runtime readiness", () => {
+    expect(appSource).toContain("if (!isMobileRuntime()) void refreshRuntime();");
+    expect(appSource).toContain('setSessionHomeHost(hosts[0]?.id || (isMobileRuntime() ? "" : "local"))');
+    expect(appSource).toMatch(/void listRuntimeHosts\(\)\.then\(\(hosts\) => \{[\s\S]*void refreshRuntime\(\);/);
+  });
+
+  it("uses one legible compute-host action when mobile has no local installer", () => {
+    const engineSetup = coordinatorHomeSource.slice(
+      coordinatorHomeSource.indexOf("ENGINE SETUP"),
+      coordinatorHomeSource.indexOf("RUNTIME UPDATE"),
+    );
+    expect(engineSetup).toContain("Connect compute host");
+    expect(engineSetup).not.toContain("Configure bridge");
+    expect(madeThemeCss).toMatch(/:root\[data-theme="made"\] \.runtime-setup-card \{[^}]*background:\s*rgba\(182,130,53,\.055\)/);
+    expect(madeThemeCss).toMatch(/:root\[data-theme="made"\] \.runtime-setup-card p \{[^}]*color:\s*#605d5d/);
   });
 });

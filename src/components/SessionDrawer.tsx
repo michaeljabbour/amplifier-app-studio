@@ -7,6 +7,7 @@ import { storedSessionMatchesQuery } from "../storedSessions";
 interface Props {
   sessions: StoredSession[];
   openSessions: SessionViewState[];
+  detachedSessionIds: string[];
   activeId?: string;
   loading: boolean;
   error?: string;
@@ -29,6 +30,8 @@ export function SessionDrawer(props: Props) {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [openSessionMenu, setOpenSessionMenu] = createSignal<string>();
   const [limit, setLimit] = createSignal(500);
+  const detachedSessionIds = createMemo(() => new Set(props.detachedSessionIds));
+  const detachedOpenSessions = createMemo(() => props.openSessions.filter((session) => detachedSessionIds().has(session.guiId)));
   const matching = createMemo(() => {
     const needle = query().trim();
     const resumable = props.sessions.filter(storedSessionShouldList);
@@ -112,9 +115,16 @@ export function SessionDrawer(props: Props) {
                   ><MoreHorizontal aria-hidden="true" /></button>
                   <Show when={openSessionMenu() === session.guiId}>
                     <div class="mobile-open-session-menu" role="menu" aria-label={`Actions for ${session.title}`}>
-                      <button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); void props.onDetachOpen(session.guiId); }}>
-                        <Unplug aria-hidden="true" /><span><strong>Detach</strong><small>Leave the runtime running</small></span>
-                      </button>
+                      <Show
+                        when={!detachedSessionIds().has(session.guiId)}
+                        fallback={<button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); props.onSelectOpen(session.guiId); props.onClose(); }}>
+                          <MessageCircle aria-hidden="true" /><span><strong>Reopen</strong><small>Return to this live runtime</small></span>
+                        </button>}
+                      >
+                        <button type="button" role="menuitem" onClick={() => { setOpenSessionMenu(undefined); void props.onDetachOpen(session.guiId); }}>
+                          <Unplug aria-hidden="true" /><span><strong>Detach</strong><small>Leave the runtime running</small></span>
+                        </button>
+                      </Show>
                       <button type="button" role="menuitem" class="danger" onClick={() => { setOpenSessionMenu(undefined); void props.onStopOpen(session.guiId); }}>
                         <Square aria-hidden="true" /><span><strong>Stop</strong><small>End the runtime and close</small></span>
                       </button>
@@ -141,6 +151,22 @@ export function SessionDrawer(props: Props) {
         </div>
 
         <div class="stored-list" onScroll={revealMoreNearBottom}>
+          <Show when={detachedOpenSessions().length > 0}>
+            <section class="drawer-detached-sessions" aria-labelledby="drawer-detached-heading">
+              <h3 id="drawer-detached-heading">Live runtimes with detached views</h3>
+              <For each={detachedOpenSessions()}>{(session) => (
+                <div>
+                  <button type="button" onClick={() => { props.onSelectOpen(session.guiId); props.onClose(); }}>
+                    <MessageCircle aria-hidden="true" />
+                    <span><strong>{session.title}</strong><small>{session.activity || session.phase}</small></span>
+                  </button>
+                  <button type="button" class="danger" aria-label={`Stop ${session.title}`} onClick={() => void props.onStopOpen(session.guiId)}>
+                    <Square aria-hidden="true" />
+                  </button>
+                </div>
+              )}</For>
+            </section>
+          </Show>
           <Show when={props.loading}><div class="drawer-state"><span class="mini-spinner" /> Scanning every configured compute host…</div></Show>
           <Show when={props.error}><div class="drawer-error">{props.error}</div></Show>
           <Show when={!props.loading && !props.error && visible().length === 0}>

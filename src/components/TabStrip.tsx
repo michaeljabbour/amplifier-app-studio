@@ -19,7 +19,7 @@ interface Props {
   onSettings: () => void;
   inspectorOpen: boolean;
   inspectorAvailable: boolean;
-  onToggleInspector: () => void;
+  onToggleInspector: (attentionSessionId?: string) => void;
   onOpenPlan: () => void;
   onOpenExecution: () => void;
   terminalAvailable: boolean;
@@ -57,7 +57,7 @@ export function TabStrip(props: Props) {
             : props.inspectorAvailable ? "Open Work" : "Work is unavailable without an open session"}
           aria-pressed={props.inspectorAvailable ? props.inspectorOpen : undefined}
           disabled={!props.inspectorAvailable}
-          onClick={props.onToggleInspector}
+          onClick={() => props.onToggleInspector(attention().sessionId)}
         >
           <Activity aria-hidden="true" />
           <span class="mobile-work-label">Work</span>
@@ -134,7 +134,7 @@ export function TabStrip(props: Props) {
           class="inspector-toggle"
           classList={{ active: props.inspectorAvailable && props.inspectorOpen }}
           disabled={!props.inspectorAvailable}
-          onClick={props.onToggleInspector}
+          onClick={() => props.onToggleInspector()}
           aria-label={!props.inspectorAvailable ? "Session inspector unavailable without an open session" : props.inspectorOpen ? "Hide session inspector" : "Show session inspector"}
           title={!props.inspectorAvailable ? "Open or start a session to inspect its run" : props.inspectorOpen ? "Hide session inspector" : "Show run, plan, agents, setup, outputs, and context"}
         >

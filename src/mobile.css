@@ -884,6 +884,7 @@
   }
 
   .mobile-drawer-shell { display: block; flex: 0 0 auto; }
+  .drawer-detached-sessions { display: none; }
   .drawer-heading,
   .drawer-search,
   .drawer-footer { display: none; }

@@ -26,9 +26,19 @@ export function workAttentionItems(state: SessionViewState): WorkAttentionItem[]
   return items;
 }
 
-export function workAttentionSummary(states: SessionViewState[]): { count: number; name?: string } {
+export function workAttentionSummary(states: SessionViewState[]): {
+  count: number;
+  name?: string;
+  sessionId?: string;
+  sessionTitle?: string;
+} {
   const items = states.flatMap(workAttentionItems);
-  return { count: items.length, name: items[0]?.name };
+  return {
+    count: items.length,
+    name: items[0]?.name,
+    sessionId: items[0]?.sessionId,
+    sessionTitle: items[0]?.sessionTitle,
+  };
 }
 
 export function sessionPlacement(state: SessionViewState): { host: string; project: string } {

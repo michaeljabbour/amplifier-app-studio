@@ -1,8 +1,8 @@
 const EMBEDDED_BRIDGE_TOKEN = "VITE_STUDIO_BRIDGE_TOKEN";
 const QA_OVERRIDE = "STUDIO_ALLOW_EMBEDDED_BRIDGE_TOKEN";
 
-export function assertSafeBridgeBuild(mode, environment = process.env) {
-  if (mode !== "production" || !environment[EMBEDDED_BRIDGE_TOKEN]) return;
+export function assertSafeBridgeBuild(command, environment = process.env) {
+  if (command !== "build" || !environment[EMBEDDED_BRIDGE_TOKEN]) return;
   if (environment[QA_OVERRIDE] === "1") return;
   throw new Error(
     `${EMBEDDED_BRIDGE_TOKEN} would be compiled into the client bundle. `

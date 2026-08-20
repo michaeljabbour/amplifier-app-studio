@@ -43,24 +43,28 @@ reviewed OS-keychain/keystore implementation and signed physical-device proof.
 
 | Area | Change | User-visible result |
 | --- | --- | --- |
-| History | Hardened incomplete-replay detection, added the exact 49-message release regression, and reveal the last restored exchange | A restored conversation opens at useful context and reports the saved-message count |
-| Lifecycle | Split **Detach view** from destructive **Stop runtime**; added confirmation, retry, and retained error state | Closing a view no longer silently stops or hides paid work |
+| History | Require the accepted transcript batch to match the runtime's exact replay count, add the 49-message release regression, and reveal the last restored exchange | A partial or empty replay cannot masquerade as a complete restore |
+| Lifecycle | Split **Detach view** from destructive **Stop runtime**; keep detached live runtimes in the mobile and desktop drawers; retain failed-stop state | Closing a view no longer silently stops or makes paid work unreachable |
 | Tabs | Added native tab semantics, roving Arrow/Home/End focus, and separate close buttons | Parallel sessions are keyboard-operable and screen-reader coherent |
 | Remote state | Bound outputs to the owning host and surfaced connected/reconnecting state | Drafts remain visible and sending is disabled honestly while offline |
 | Desktop setup | Opened the Studio setup sheet before the native folder picker | The user understands project, host, bundle, and model choices before leaving the app |
-| Mobile Work | Added a full-screen Work hub with Run, Loop, Plan, Setup, Bundles, Outputs, and Context | The phone can supervise the same work as desktop |
+| Mobile Work | Added a full-screen Work hub with Run, Loop, Plan, Setup, Bundles, Outputs, and Context; global attention opens its owning session | A background approval never opens an unrelated session |
 | Mobile lifecycle | Added touch-sized overflow actions for Detach and Stop | A phone user can stop cost-bearing work explicitly |
+| Mobile navigation | Hydrate the real compute-host ID before readiness checks and route Android Back through the topmost Studio surface | Cold start no longer falls back to a false local-runtime error, and Back dismisses UI before leaving the app |
+| Mobile setup | Replaced the dark-theme engine card and duplicate remote actions with one MADE surface and **Connect compute host** action | The setup blocker is legible and unambiguous on phone |
 | Reading scale | Raised MADE operational text and terminal scale while preserving the existing typography and palette | Dense controls remain legible without changing the product character |
-| PTY workbench | Added backend-neutral terminal contracts, a coordinator, MUX Plex adapter boundary, native tmux adapter, and Studio-native work surface | Local durable shells can be created and supervised without leaving Studio |
-| Release security | Release checks reject `VITE_STUDIO_BRIDGE_TOKEN`; disposable QA builds require an explicit override | A bearer credential cannot be accidentally baked into a published client |
+| PTY workbench | Added backend-neutral contracts, a coordinator, MUX Plex adapter boundary, native tmux adapter, and Studio-native work surface; bind IO to immutable pane IDs and key drafts by terminal | Local durable shells can be supervised without another tmux client redirecting a command |
+| Release security | Every Vite build mode and release check inspect loaded env files and reject `VITE_STUDIO_BRIDGE_TOKEN`; disposable QA builds require an explicit override | A bearer credential cannot be smuggled into a published client through a custom build mode or env file |
 
 ## PTY ownership and safety
 
 The native desktop backend is a thin Rust argv bridge. It never invokes a
-shell, uses exact tmux targets, bounds names/input/capture/geometry, and only
+shell, uses an exact session plus immutable `%pane_id` for pane IO, bounds
+names/input/capture/geometry, and only
 terminates with `tmux kill-session -t =name`. Detach, reconnect, polling
 failure, and Studio shutdown never create or terminate a tmux session. Studio
-does not call `kill-server` and does not own the tmux process tree.
+does not call `kill-server` and does not own the tmux process tree. Text plus
+Enter is one literal PTY write, and passive/external sessions are not resized.
 
 MUX Plex remains a reference and optional remote backend. Studio does not
 import its server package or frontend. A future remote adapter must receive
@@ -89,13 +93,17 @@ Required acceptance before advertising durable mobile hosts:
 
 ## Validation record
 
-- Frontend: full Vitest and release suites, typecheck, and production build.
-- Rust: formatting, all-target tests, and all-target check.
-- Native tmux: isolated exact-name create, resize, literal input, capture,
-  detach/reconnect, and exact single-session cleanup.
-- Mobile: source-level layout and interaction contracts plus iOS/Android build
-  gates. Physical-device credential persistence is explicitly not claimed.
-- Visual: reported screenshots and same-state audit captures are preserved on
-  the Figma board. The final Mac accessibility/render controller had no visible
-  windows in the host session, so that attempt is recorded as an environment
-  limitation rather than a passed visual-interaction gate.
+- Frontend: 40 Vitest files / 229 tests, 10 release tests, typecheck, production
+  build, and version advance check all passed.
+- Rust: formatting, 60 all-target tests, and all-target check passed.
+- Native tmux: isolated exact-name create, immutable-pane input after another
+  client switched the active window, capture, detach/reconnect, and exact
+  single-session cleanup passed.
+- Mobile: iPhone 17 Pro simulator build/install/launch passed; the same-viewport
+  before/after comparison verifies the MADE setup-card contrast and single CTA.
+  Android universal debug APK build passed. Physical-device credential
+  persistence is explicitly not claimed.
+- Visual: reported screenshots and audit captures are preserved on the Figma
+  board. The final Mac accessibility/render controller had no visible windows
+  in the host session, so that attempt is an environment limitation rather than
+  a passed visual-interaction gate.

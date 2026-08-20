@@ -21,7 +21,14 @@ interface NativeCall {
 
 class FakeNativeTmux {
   readonly calls: NativeCall[] = [];
-  sessions: unknown = [{ name: "alpha", createdAt: 10, lastActivityAt: 20, cwd: "/work/alpha" }];
+  sessions: unknown = [{
+    name: "alpha",
+    sessionId: "$1",
+    paneId: "%1",
+    createdAt: 10,
+    lastActivityAt: 20,
+    cwd: "/work/alpha",
+  }];
   captures: Array<unknown | Error | string> = [
     { snapshot: "$", historySize: 0, paneHeight: 24 },
   ];
@@ -33,6 +40,14 @@ class FakeNativeTmux {
       const response = this.captures.length > 1 ? this.captures.shift() : this.captures[0];
       if (response instanceof Error || typeof response === "string") throw response;
       return response as T;
+    }
+    if (command === "terminal_tmux_create") {
+      return {
+        name: args?.name,
+        sessionId: "$2",
+        paneId: "%2",
+        cwd: args?.projectDir,
+      } as T;
     }
     return undefined as T;
   };
@@ -61,12 +76,14 @@ describe("native tmux adapter", () => {
       backendId: "alpha",
       cwd: "/work/alpha",
       project: { id: "project", root: "/work/alpha" },
+      capabilities: { resize: false },
     });
 
     const created = await backend.create({
       name: "studio-build",
       project: { id: "other", label: "Other", root: "/work/other" },
     });
+    expect(created.capabilities.resize).toBe(true);
     const renamed = await backend.rename(created, "studio-ready");
     const hostile = "; rm -rf / && $(reboot) `id` | tee /tmp/pwned";
     await backend.send(renamed, { text: hostile, keys: ["C-c"], enter: true });
@@ -80,9 +97,9 @@ describe("native tmux adapter", () => {
       { command: "terminal_tmux_rename", args: { name: "studio-build", newName: "studio-ready" } },
       {
         command: "terminal_tmux_send",
-        args: { name: "studio-ready", text: hostile, keys: ["C-c"], enter: true },
+        args: { name: "studio-ready", paneId: "%2", text: hostile, keys: ["C-c"], enter: true },
       },
-      { command: "terminal_tmux_resize", args: { name: "studio-ready", columns: 120, rows: 40 } },
+      { command: "terminal_tmux_resize", args: { name: "studio-ready", paneId: "%2", columns: 120, rows: 40 } },
       { command: "terminal_tmux_terminate", args: { name: "studio-ready" } },
     ]);
     expect(fake.calls.some((call) => /server/i.test(call.command))).toBe(false);
@@ -152,6 +169,39 @@ describe("native tmux adapter", () => {
     await expect(backend.create({ name: "$(touch /tmp/pwned)" })).rejects.toThrow(/Terminal names/);
     await expect(backend.rename(alpha, "build.js")).rejects.toThrow(/Terminal names/);
     await expect(backend.send(alpha, { keys: ["C-b"] })).rejects.toThrow("Unsupported terminal key: C-b");
+    expect(fake.calls.map((call) => call.command)).toEqual(["terminal_tmux_list"]);
+  });
+
+  it("keeps the first pane binding when another tmux client changes the active window", async () => {
+    const fake = new FakeNativeTmux();
+    const backend = adapter(fake);
+    const [alpha] = await backend.list();
+    fake.sessions = [{
+      name: "alpha",
+      sessionId: "$1",
+      paneId: "%99",
+      cwd: "/work/alpha",
+    }];
+    await backend.list();
+    await backend.capture(alpha, { lines: 25 });
+    await backend.send(alpha, { keys: ["C-c"] });
+
+    expect(fake.calls.slice(-2)).toEqual([
+      { command: "terminal_tmux_capture", args: { name: "alpha", paneId: "%1", lines: 25 } },
+      {
+        command: "terminal_tmux_send",
+        args: { name: "alpha", paneId: "%1", text: undefined, keys: ["C-c"], enter: false },
+      },
+    ]);
+  });
+
+  it("does not resize passive sessions created outside this Studio window", async () => {
+    const fake = new FakeNativeTmux();
+    const backend = adapter(fake);
+    const [alpha] = await backend.list();
+
+    expect(alpha.capabilities.resize).toBe(false);
+    await expect(backend.resize(alpha, { columns: 120, rows: 40 })).rejects.toThrow(/does not resize/);
     expect(fake.calls.map((call) => call.command)).toEqual(["terminal_tmux_list"]);
   });
 

@@ -374,6 +374,11 @@ export interface SessionViewState {
   /** Synthetic transcript message ids already folded into this view. Native
    * retries do not pass through the bridge transport's replay deduplicator. */
   replayedTranscriptMessageIds?: Record<string, true>;
+  /** User/assistant transcript records accepted since the latest
+   * history.begin. This is compared with history.end.transcript_count while
+   * the initial restore gate is active; reported delivery counts alone are
+   * not proof that Studio received the conversation. */
+  acceptedReplayTranscriptMessages?: number;
   restoreProgress?: {
     history: boolean;
     status: boolean;

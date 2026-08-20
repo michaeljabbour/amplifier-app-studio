@@ -609,6 +609,7 @@ describe("session reducer", () => {
       replaying: false,
       restoreSource: "transcript",
       restoredTranscriptMessages: 49,
+      acceptedReplayTranscriptMessages: 49,
       restoreProgress: { history: true, status: false },
     });
     expect(state.blocks
@@ -742,6 +743,77 @@ describe("session reducer", () => {
     expect(state.restoreProgress).toMatchObject({ history: false });
     expect(state.restoreIssue?.message).toContain("reported 8628 durable events and 1487 transcript messages");
     expect(state.restoreIssue?.message).toContain("delivered no visible conversation");
+  });
+
+  it("rejects a partial transcript batch instead of trusting history.end's reported count", () => {
+    let state = createSessionState("gui-partial-transcript", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryMessages: 49,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.begin",
+      since: 0,
+      source: "transcript",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:1",
+      role: "user",
+      text: "Only the first of 49 messages arrived",
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 0,
+      count: 0,
+      source: "transcript",
+      transcript_count: 49,
+    });
+
+    expect(state).toMatchObject({
+      phase: "degraded",
+      replaying: false,
+      restoreProgress: { history: false, status: false },
+      acceptedReplayTranscriptMessages: 1,
+    });
+    expect(state.restoreIssue?.message).toContain("reported 49 transcript messages");
+    expect(state.restoreIssue?.message).toContain("Studio accepted 1");
+  });
+
+  it("does not reclassify a deduplicated post-restore transcript reconnect as an initial restore failure", () => {
+    let state = started();
+    const replayedPrompt = {
+      schema_version: 1,
+      type: "transcript.message",
+      replay: true,
+      message_id: "runtime-1:transcript:1",
+      role: "user",
+      text: "Persist this once",
+    };
+    const historyEnd = {
+      schema_version: 1,
+      type: "history.end",
+      cursor: 0,
+      count: 0,
+      source: "transcript",
+      transcript_count: 1,
+    };
+
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0, source: "transcript" });
+    state = reduceRecord(state, replayedPrompt);
+    state = reduceRecord(state, historyEnd);
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0, source: "transcript" });
+    state = reduceRecord(state, replayedPrompt);
+    state = reduceRecord(state, historyEnd);
+
+    expect(state.phase).toBe("ready");
+    expect(state.restoreIssue).toBeUndefined();
+    expect(state.blocks.filter((block) => block.kind === "user")).toHaveLength(1);
   });
 
   it("keeps replayed agents inspectable without calling them live after an idle restore", () => {

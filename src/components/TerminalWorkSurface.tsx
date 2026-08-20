@@ -7,6 +7,15 @@ import type {
   TerminalProjectIdentity,
   TerminalSession,
 } from "../terminal";
+import {
+  clearCommandDraft,
+  commandDraftFor,
+  commandDraftSubmission,
+  renameDraftFor,
+  renameDraftSubmission,
+  setCommandDraft as updateCommandDrafts,
+  type TerminalRenameDraft,
+} from "../terminal/sessionDrafts";
 import { terminalPlainText } from "../terminalPlainText";
 import "./TerminalWorkSurface.css";
 
@@ -21,10 +30,9 @@ interface Props {
 export function TerminalWorkSurface(props: Props) {
   const [state, setState] = createSignal<TerminalCoordinatorSnapshot>(props.coordinator.snapshot());
   const [createName, setCreateName] = createSignal("");
-  const [renameValue, setRenameValue] = createSignal("");
   const [creating, setCreating] = createSignal(false);
-  const [renaming, setRenaming] = createSignal(false);
-  const [command, setCommand] = createSignal("");
+  const [renameDraft, setRenameDraft] = createSignal<TerminalRenameDraft>();
+  const [commandDrafts, setCommandDrafts] = createSignal<Record<string, string>>({});
   const [working, setWorking] = createSignal<string>();
   const [actionError, setActionError] = createSignal<string>();
   let terminalViewport: HTMLPreElement | undefined;
@@ -93,25 +101,28 @@ export function TerminalWorkSurface(props: Props) {
     });
   };
 
-  const submitRename = async (event: SubmitEvent) => {
+  const submitRename = async (event: SubmitEvent, terminalId: string) => {
     event.preventDefault();
-    const terminal = selected();
-    const name = renameValue().trim();
-    if (!terminal || !name) return;
+    const submission = renameDraftSubmission(renameDraft(), terminalId);
+    if (!submission) return;
     await run("rename", async () => {
-      const renamed = await props.coordinator.rename(terminal.id, name);
-      setRenaming(false);
+      const renamed = await props.coordinator.rename(submission.terminalId, submission.value);
+      setRenameDraft((current) => current?.terminalId === terminalId ? undefined : current);
       await props.coordinator.attach(renamed.id);
     });
   };
 
-  const send = async (request: TerminalInputRequest) => {
-    const terminal = selected();
-    if (!terminal) return;
+  const send = async (terminalId: string, request: TerminalInputRequest) => {
     await run("send", async () => {
-      await props.coordinator.send(terminal.id, request);
-      if (request.text) setCommand("");
+      await props.coordinator.send(terminalId, request);
+      if (request.text) {
+        setCommandDrafts((current) => clearCommandDraft(current, terminalId));
+      }
     });
+  };
+
+  const updateCommandDraft = (terminalId: string, value: string) => {
+    setCommandDrafts((current) => updateCommandDrafts(current, terminalId, value));
   };
 
   const selectTerminal = (terminal: TerminalSession) => {
@@ -203,11 +214,16 @@ export function TerminalWorkSurface(props: Props) {
             <header class="terminal-session-heading">
               <div>
                 <span>{terminal.host.label} · {terminal.project?.label || "No project"}</span>
-                <Show when={renaming()} fallback={<h3>{terminal.name}</h3>}>
-                  <form onSubmit={(event) => void submitRename(event)}>
-                    <input value={renameValue()} onInput={(event) => setRenameValue(event.currentTarget.value)} aria-label="New terminal name" autofocus />
-                    <button type="submit" disabled={!renameValue().trim() || Boolean(working())}>Save</button>
-                    <button type="button" onClick={() => setRenaming(false)}>Cancel</button>
+                <Show when={renameDraftFor(renameDraft(), terminal.id) !== undefined} fallback={<h3>{terminal.name}</h3>}>
+                  <form onSubmit={(event) => void submitRename(event, terminal.id)}>
+                    <input
+                      value={renameDraftFor(renameDraft(), terminal.id) || ""}
+                      onInput={(event) => setRenameDraft({ terminalId: terminal.id, value: event.currentTarget.value })}
+                      aria-label="New terminal name"
+                      autofocus
+                    />
+                    <button type="submit" disabled={!renameDraftSubmission(renameDraft(), terminal.id) || Boolean(working())}>Save</button>
+                    <button type="button" onClick={() => setRenameDraft(undefined)}>Cancel</button>
                   </form>
                 </Show>
                 <code>{terminal.cwd || terminal.project?.root || "Working directory unavailable"}</code>
@@ -215,8 +231,7 @@ export function TerminalWorkSurface(props: Props) {
               <div class="terminal-session-actions">
                 <span class={`terminal-connection ${terminal.connection.status}`}>{connectionLabel(terminal)}</span>
                 <button type="button" onClick={() => {
-                  setRenameValue(terminal.name);
-                  setRenaming(true);
+                  setRenameDraft({ terminalId: terminal.id, value: terminal.name });
                 }} disabled={!terminal.capabilities.rename || Boolean(working())}>Rename</button>
                 <Show
                   when={terminal.connection.status !== "detached"}
@@ -258,21 +273,22 @@ export function TerminalWorkSurface(props: Props) {
 
             <form class="terminal-command-bar" onSubmit={(event) => {
               event.preventDefault();
-              if (command().trim()) void send({ text: command(), enter: true, captureLines: 200, mode: "command" });
+              const submission = commandDraftSubmission(commandDrafts(), terminal.id);
+              if (submission) void send(submission.terminalId, { text: submission.value, enter: true, captureLines: 200, mode: "command" });
             }}>
               <label for={`terminal-command-${terminal.id}`}>Send to {terminal.name}</label>
               <textarea
                 id={`terminal-command-${terminal.id}`}
                 rows="2"
-                value={command()}
-                onInput={(event) => setCommand(event.currentTarget.value)}
+                value={commandDraftFor(commandDrafts(), terminal.id)}
+                onInput={(event) => updateCommandDraft(terminal.id, event.currentTarget.value)}
                 placeholder={terminal.capabilities.send === "input" ? "Type a command or response…" : "Input is disabled by host policy"}
                 disabled={terminal.capabilities.send !== "input" || Boolean(working())}
               />
               <div>
-                <button type="button" onClick={() => void send({ keys: ["C-c"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Stop</button>
-                <button type="button" onClick={() => void send({ keys: ["Escape"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Escape</button>
-                <button type="submit" class="primary" disabled={terminal.capabilities.send !== "input" || !command().trim() || Boolean(working())}>
+                <button type="button" onClick={() => void send(terminal.id, { keys: ["C-c"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Stop</button>
+                <button type="button" onClick={() => void send(terminal.id, { keys: ["Escape"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Escape</button>
+                <button type="submit" class="primary" disabled={terminal.capabilities.send !== "input" || !commandDraftSubmission(commandDrafts(), terminal.id) || Boolean(working())}>
                   {working() === "send" ? "Sending…" : "Send"}
                 </button>
               </div>
