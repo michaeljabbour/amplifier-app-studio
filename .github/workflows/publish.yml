@@ -142,8 +142,14 @@ jobs:
           # silently fails to reach codesign is exactly the failure this is here to catch.
           codesign -d --entitlements :- --xml "$APP_PATH" > /tmp/studio-entitlements.plist 2>/dev/null
           plutil -p /tmp/studio-entitlements.plist
-          plutil -extract com.apple.security.device.audio-input raw /tmp/studio-entitlements.plist \
+          # plutil splits key paths on '.', so the entitlement name has to be escaped or it is
+          # read as a nested path and never found. The unescaped form failed against a build
+          # that carried the entitlement correctly, i.e. it would have blocked a good release.
+          test "$(plutil -extract 'com\.apple\.security\.device\.audio-input' raw /tmp/studio-entitlements.plist)" = "true" \
             || { echo "signed app is missing com.apple.security.device.audio-input; voice input would fail for every user" >&2; exit 1; }
+          # The entitlement only does anything under the Hardened Runtime, so assert both.
+          codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -q "flags=.*runtime" \
+            || { echo "signed app is not using the Hardened Runtime" >&2; exit 1; }
 
   publish-release:
     needs: publish-desktop
