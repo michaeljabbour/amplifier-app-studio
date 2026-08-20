@@ -72,6 +72,7 @@ export function sessionToolbarStatus(state: SessionViewState): string {
     case "exited": return "Session stopped";
     case "error": return state.error || "Session error";
     case "ready": {
+      if (state.connectivity?.status === "reconnecting") return "Reconnecting to compute · runtime remains available";
       if (state.busy) return state.activity;
       if (state.restoreProgress?.history && state.restoreProgress.status) {
         return state.restoredTranscriptMessages

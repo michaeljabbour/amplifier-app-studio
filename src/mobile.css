@@ -484,7 +484,8 @@
   .mobile-runtime-dot.phase-ready { background: #3f805b; }
   .mobile-runtime-dot.phase-starting,
   .mobile-runtime-dot.phase-degraded,
-  .mobile-runtime-dot.phase-closing { background: #b68235; }
+  .mobile-runtime-dot.phase-closing,
+  .mobile-runtime-dot.phase-reconnecting { background: #b68235; }
   .mobile-runtime-dot.phase-error,
   .mobile-runtime-dot.phase-exited { background: #a84c4c; }
 

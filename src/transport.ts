@@ -20,6 +20,7 @@ export interface SessionHandlers {
   onRecord: (record: ProtocolRecord) => void;
   onLog: (log: ProcessLog) => void;
   onExit: (exit: ProcessExit) => void;
+  onConnectionChange?: (state: { status: "connected" | "reconnecting"; message?: string }) => void;
 }
 
 export interface SessionConnection {
@@ -910,6 +911,10 @@ async function launchBridgeSession(
           acknowledged = true;
           initiallyReady = true;
           connection.reconnectAttempt = 0;
+          handlers.onConnectionChange?.({
+            status: "connected",
+            message: reattach ? "Reattached to the runtime" : "Connected to the runtime host",
+          });
           window.clearTimeout(timer);
           if (!settled) {
             settled = true;
@@ -967,7 +972,9 @@ async function launchBridgeSession(
         }
         const delay = Math.min(8_000, 300 * (2 ** connection.reconnectAttempt));
         connection.reconnectAttempt = Math.min(connection.reconnectAttempt + 1, 6);
-        handlers.onLog({ stream: "bridge", message: `Bridge connection lost; reconnecting in ${delay} ms` });
+        const message = `Bridge connection lost; reconnecting in ${delay} ms`;
+        handlers.onConnectionChange?.({ status: "reconnecting", message });
+        handlers.onLog({ stream: "bridge", message });
         connection.reconnectTimer = window.setTimeout(() => connect(true), delay);
       });
     };

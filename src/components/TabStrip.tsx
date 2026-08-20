@@ -58,7 +58,7 @@ export function TabStrip(props: Props) {
         >
           <Activity aria-hidden="true" />
           <span class="mobile-work-label">Work</span>
-          <span class={`mobile-runtime-dot phase-${active()?.phase || "idle"}`} aria-hidden="true" />
+          <span class={`mobile-runtime-dot phase-${active()?.connectivity?.status === "reconnecting" ? "reconnecting" : active()?.phase || "idle"}`} aria-hidden="true" />
           <Show when={attention().count > 0}>
             <span class="mobile-work-attention-count" aria-hidden="true">{attention().count}</span>
           </Show>
@@ -84,7 +84,7 @@ export function TabStrip(props: Props) {
                 onKeyDown={(event) => selectAdjacentTab(event, index())}
                 title={`${session.title}\n${session.projectDir}`}
               >
-                <span class={`tab-status phase-${session.phase}`} aria-hidden="true" />
+                <span class={`tab-status phase-${session.connectivity?.status === "reconnecting" ? "reconnecting" : session.phase}`} aria-hidden="true" />
                 <span class="tab-title">{session.title}</span>
                 <Show when={session.hostName && session.hostId !== "local"}>
                   <span class="tab-host" title={`Runtime host: ${session.hostName}`}>{session.hostName}</span>

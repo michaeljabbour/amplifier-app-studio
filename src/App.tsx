@@ -324,6 +324,7 @@ export default function App() {
         {
           onRecord: (record) => handleRecord(guiId, record),
           onLog: (log) => update(guiId, (current) => addProcessLog(current, log.stream, log.message)),
+          onConnectionChange: (connectivity) => update(guiId, (current) => ({ ...current, connectivity })),
           onExit: (exit) => {
             clearStatusPolling(guiId);
             clearRestoreTimeout(guiId);

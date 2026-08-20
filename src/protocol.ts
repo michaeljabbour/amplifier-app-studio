@@ -346,6 +346,12 @@ export interface SessionViewState {
   model: string;
   mode: string;
   phase: SessionPhase;
+  /** Remote bridge reachability is independent of the runtime lifecycle. A
+   * ready runtime can remain alive while Studio reconnects its view. */
+  connectivity?: {
+    status: "connected" | "reconnecting";
+    message?: string;
+  };
   bootLabel: string;
   busy: boolean;
   pendingPrompt?: {

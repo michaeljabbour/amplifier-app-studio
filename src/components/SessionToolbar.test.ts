@@ -35,6 +35,18 @@ describe("session toolbar status", () => {
     })).toBe("Ready · 49 saved messages restored");
   });
 
+  it("does not claim a ready remote view is connected while it is reconnecting", () => {
+    const ready = reduceRecord(createSessionState("remote", { projectDir: "/tmp/project" }), {
+      schema_version: 1,
+      type: "session.started",
+      session_id: "runtime-session",
+    });
+    expect(sessionToolbarStatus({
+      ...ready,
+      connectivity: { status: "reconnecting" },
+    })).toBe("Reconnecting to compute · runtime remains available");
+  });
+
   it("distinguishes a connected runtime from an actively running coordinator", () => {
     const ready = reduceRecord(createSessionState("new", { projectDir: "/tmp/project" }), {
       schema_version: 1,
