@@ -144,14 +144,12 @@ export async function renderTurnLoopSvg(loop: TurnLoopState): Promise<string> {
 }
 
 export function sanitizeAndAnnotateTurnLoopSvg(raw: string, loop: TurnLoopState): string {
-  const clean = sanitizeSvg(raw);
-  const documentNode = new DOMParser().parseFromString(clean, "image/svg+xml");
-  const svg = documentNode.documentElement;
-  if (svg.tagName.toLowerCase() !== "svg" || documentNode.querySelector("parsererror")) return "";
+  const svg = sanitizeSvgElement(raw);
+  if (!svg) return "";
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", `Amplifier turn loop, current state ${turnLoopPhaseLabel(loop.phase)}`);
   const statuses = turnLoopNodeStatuses(loop);
-  documentNode.querySelectorAll("g.node").forEach((group) => {
+  svg.querySelectorAll("g.node").forEach((group) => {
     const id = group.querySelector("title")?.textContent?.trim() || "";
     const status = statuses[id] || "pending";
     const explanation = turnLoopNodeExplanation(id, status, loop);
@@ -175,7 +173,7 @@ export function sanitizeAndAnnotateTurnLoopSvg(raw: string, loop: TurnLoopState)
             : loop.phase === "complete"
               ? "response->complete"
               : "";
-  documentNode.querySelectorAll("g.edge").forEach((group) => {
+  svg.querySelectorAll("g.edge").forEach((group) => {
     if (group.querySelector("title")?.textContent?.trim() === activeEdge) group.classList.add("loop-active-edge");
   });
   return new XMLSerializer().serializeToString(svg);
@@ -216,13 +214,11 @@ export async function renderPipelineSvg(dot: string, pipeline: PipelineState): P
 }
 
 export function sanitizeAndAnnotateSvg(raw: string, pipeline: PipelineState): string {
-  const clean = sanitizeSvg(raw);
-  const documentNode = new DOMParser().parseFromString(clean, "image/svg+xml");
-  const svg = documentNode.documentElement;
-  if (svg.tagName.toLowerCase() !== "svg" || documentNode.querySelector("parsererror")) return "";
+  const svg = sanitizeSvgElement(raw);
+  if (!svg) return "";
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", `Execution graph for ${pipeline.graphName || "pipeline"}`);
-  documentNode.querySelectorAll("g.node").forEach((group) => {
+  svg.querySelectorAll("g.node").forEach((group) => {
     const id = group.querySelector("title")?.textContent?.trim() || "";
     const node = pipeline.nodes[id];
     group.classList.add(`pipeline-${node?.status || "pending"}`);
@@ -233,7 +229,7 @@ export function sanitizeAndAnnotateSvg(raw: string, pipeline: PipelineState): st
     const title = group.querySelector("title");
     if (title) title.textContent = explanation;
   });
-  documentNode.querySelectorAll("g.edge").forEach((group) => {
+  svg.querySelectorAll("g.edge").forEach((group) => {
     const title = group.querySelector("title")?.textContent?.trim() || "";
     const selected = Object.values(pipeline.edges).some((edge) => edge.selected && title === `${edge.from}->${edge.to}`);
     if (selected) group.classList.add("pipeline-selected");
@@ -269,12 +265,25 @@ function pipelineNodeExplanation(id: string, node: PipelineState["nodes"][string
   return `${id} — ${node.status}. ${details || "No additional runtime detail was reported."}`;
 }
 
-function sanitizeSvg(source: string): string {
-  return DOMPurify.sanitize(source, {
+/**
+ * Sanitise an SVG and hand back the element, never a serialised string.
+ *
+ * Serialising here and re-parsing as `image/svg+xml` silently dropped most real graphs: DOMPurify
+ * serialises as HTML, which writes U+00A0 as `&nbsp;`, and XML predefines only five named
+ * entities. Graphviz emits `&#160;` for any leading or trailing space in a label, so one padded
+ * label discarded the whole diagram. See the matching note in VisualArtifact.
+ */
+function sanitizeSvgElement(source: string): Element | undefined {
+  const holder = DOMPurify.sanitize(source, {
     USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ["script", "style", "foreignObject", "a", "image", "use"],
     FORBID_ATTR: ["href", "xlink:href", "style"],
+    RETURN_DOM: true,
   });
+  // RETURN_DOM hands back the containing element; DOMPurify types it as the wider Node.
+  const svg = holder instanceof Element ? holder.firstElementChild : null;
+  if (!svg || svg.tagName.toLowerCase() !== "svg" || svg.nextElementSibling) return undefined;
+  return svg;
 }
 
 function formatDuration(milliseconds: number): string {

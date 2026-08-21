@@ -4,6 +4,25 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.66 — 2026-08-21
+
+Diagrams render again. The DOT viewer and the execution graph both discarded
+most real graphs and reported "its SVG output was rejected by the sanitizer".
+
+The sanitiser ran DOMPurify and then re-parsed its output as `image/svg+xml`.
+DOMPurify parses as HTML and serialises with the HTML serialiser, which writes
+U+00A0 as the named entity `&nbsp;`. XML predefines exactly five named entities,
+so the re-parse failed with "undefined entity" and the whole diagram was thrown
+away. Graphviz emits `&#160;` for every leading or trailing space in a label, so
+ordinary padding such as `label="  this session  "` was enough to lose the
+graph -- which is why it kept coming back. Three of the four diagrams in local
+session history failed this way; all four render now.
+
+Both viewers now keep DOMPurify's DOM instead of re-parsing a serialised string.
+The sanitiser configuration is untouched, so the same tags and attributes are
+stripped -- verified against script, anchor, image, use, foreignObject, style,
+inline event handlers, `href`, and `javascript:` payloads.
+
 ## 0.1.65 — 2026-08-21
 
 Four Rust major upgrades, each on a path hardened earlier in this cycle, so each
