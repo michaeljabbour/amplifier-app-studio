@@ -514,7 +514,7 @@ export function stringList(value: unknown): string[] {
  * Truncating keeps the block readable and bounds memory; the untruncated result is still on
  * disk in the durable session.
  */
-export const MAX_TOOL_PAYLOAD_CHARS = 32 * 1024;
+const MAX_TOOL_PAYLOAD_CHARS = 32 * 1024;
 
 export function safeJson(value: unknown): string {
   let rendered: string;
