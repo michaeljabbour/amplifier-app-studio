@@ -26,7 +26,11 @@ Three independent problems had to be separated before any of this could land.
   Vitest 4 does not. The two configs now describe the same pipeline. With the
   plugin present solid-js resolves to its browser build and touches `window` at
   import time, so six suites that import a component join the eleven already
-  opting into jsdom.
+  opting into jsdom. The plugin is configured `hot: false` for tests: Vitest runs
+  it with `command === "serve"`, so it injected solid-refresh aliased to the
+  virtual path `/@solid-refresh`, which Windows resolves to
+  `file:///@solid-refresh` and Node rejects. That failed ten suites on
+  windows-latest while macOS and Linux passed.
 
 ## 0.1.63 — 2026-08-21
 
