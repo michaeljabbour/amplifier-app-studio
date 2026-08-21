@@ -1149,6 +1149,68 @@ describe("session reducer", () => {
     expect(state.blocks.some((block) => block.kind === "notice" && block.text.includes("Protocol sequence gap: expected 45, received 99"))).toBe(true);
   });
 
+  // Regression: outputs were read only from the tool RESULT. A Claude-Code-shaped Write replies
+  // {content: "File created successfully at: ..."} and states the path only in its INPUT, so the
+  // file never reached the Outputs tab or the "N outputs" counter. An Edit that happened to echo
+  // file_path did get captured, which made the inventory depend on the runtime's reply shape.
+  it("attributes written files from the tool call, not just its reply", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "tool_pre",
+      tool_name: "Write",
+      tool_call_id: "tool-write-1",
+      tool_input: { file_path: "/tmp/project/hello.py", content: "print(1)\n" },
+    }));
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_post",
+      tool_name: "Write",
+      tool_call_id: "tool-write-1",
+      tool_input: { file_path: "/tmp/project/hello.py", content: "print(1)\n" },
+      result: { content: "File created successfully at: /tmp/project/hello.py" },
+    }));
+
+    expect(state.outputs.map((output) => output.path)).toContain("/tmp/project/hello.py");
+    expect(state.outputs.at(-1)?.title).toBe("hello.py");
+  });
+
+  // The row said "write_file · src/main.rs" while running and "write_file completed" once it
+  // finished, dropping the only useful fact exactly when the row became final.
+  it("keeps the written path on a tool row after it settles", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "tool_pre",
+      tool_name: "Write",
+      tool_call_id: "tool-write-2",
+      tool_input: { file_path: "/tmp/project/main.rs" },
+    }));
+    const running = state.blocks.find((block) => block.kind === "tool");
+    expect(running).toMatchObject({ summary: expect.stringContaining("/tmp/project/main.rs") });
+
+    state = reduceRecord(state, runtime(3, {
+      kind: "tool_post",
+      tool_name: "Write",
+      tool_call_id: "tool-write-2",
+      tool_input: { file_path: "/tmp/project/main.rs" },
+      result: { ok: true },
+    }));
+    const settled = state.blocks.find((block) => block.kind === "tool");
+    expect(settled).toMatchObject({ status: "completed" });
+    expect((settled as { summary: string }).summary).toContain("/tmp/project/main.rs");
+    expect((settled as { summary: string }).summary).toContain("completed");
+  });
+
+  it("ignores placeholder paths a tool call may carry", () => {
+    let state = started();
+    state = reduceRecord(state, runtime(2, {
+      kind: "tool_post",
+      tool_name: "Write",
+      tool_call_id: "tool-write-3",
+      tool_input: { file_path: "/dev/null" },
+      result: { ok: true },
+    }));
+    expect(state.outputs).toEqual([]);
+  });
+
   it("surfaces sequence gaps without dropping the record", () => {
     let state = started();
     state = reduceRecord(state, runtime(4, { kind: "notification", message: "still visible" }));

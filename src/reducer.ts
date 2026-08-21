@@ -1697,10 +1697,29 @@ function outputArtifacts(event: UIEvent): Array<{
         }];
       })
     : [];
-  const artifacts = typedArtifacts.length
-    ? typedArtifacts
-    : collectOutputPaths(event.result).map((path) => ({ path, kind: outputKind(path) }));
-  return artifacts;
+  if (typedArtifacts.length) return typedArtifacts;
+
+  const fromResult = collectOutputPaths(event.result).map((path) => ({ path, kind: outputKind(path) }));
+  if (fromResult.length) return fromResult;
+
+  // Fall back to the tool's INPUT. Which file a write touched is stated in the call, not
+  // necessarily in the reply: a Claude-Code-shaped Write returns only
+  // {content: "File created successfully at: ..."}, so reading the result alone made Studio's
+  // output inventory depend on the runtime's reply shape. An Edit that echoes file_path was
+  // captured; a Write that does not was silently dropped.
+  return toolInputPaths(event.tool_input).map((path) => ({ path, kind: outputKind(path) }));
+}
+
+/** Path-shaped fields a write-like tool call uses to name its target. */
+const TOOL_INPUT_PATH_KEYS = ["file_path", "filePath", "path", "filename", "target_file", "TargetFile"];
+
+export function toolInputPaths(input: unknown): string[] {
+  if (!isRecord(input)) return [];
+  const paths = TOOL_INPUT_PATH_KEYS
+    .map((key) => stringValue(input[key]).trim())
+    // "/dev/null" is a real value some tools pass and never an artifact worth listing.
+    .filter((value) => value.length > 0 && value !== "/dev/null" && value !== "undefined" && value !== "null");
+  return [...new Set(paths)];
 }
 
 function isOutputProducingTool(toolName: string): boolean {
@@ -2403,7 +2422,13 @@ function settleTool(
   const block = state.blocks[index];
   if (block.kind !== "tool") return state;
   const blocks = [...state.blocks];
-  blocks[index] = { ...block, status, summary: `${block.toolName} ${status}`, detail };
+  // Keep the target in the summary. Overwriting with "<tool> <status>" turned
+  // "write_file · src/main.rs" into "write_file completed" the moment the call finished, so the
+  // one useful fact on the row disappeared exactly when the row became final.
+  const settledSummary = block.summary.includes(" · ")
+    ? `${block.summary} — ${status}`
+    : `${block.toolName} ${status}`;
+  blocks[index] = { ...block, status, summary: settledSummary, detail };
   return { ...state, blocks };
 }
 
@@ -2545,7 +2570,8 @@ function isChildEvent(state: SessionViewState, event: UIEvent): boolean {
 function toolSummary(event: UIEvent): string {
   const tool = stringValue(event.tool_name, "tool");
   const input = typeof event.tool_input === "object" && event.tool_input !== null ? (event.tool_input as Record<string, unknown>) : {};
-  const target = stringValue(input.path, stringValue(input.command, stringValue(input.query)));
+  const target = toolInputPaths(input)[0]
+    || stringValue(input.command, stringValue(input.query));
   return target ? `${tool} · ${target.slice(0, 120)}` : tool;
 }
 
