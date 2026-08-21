@@ -205,3 +205,24 @@ jobs:
               }
             }
           '
+      # The check above proves a url field exists, not that it resolves. The manifest builds each
+      # url from an asset filename, so any divergence between what is uploaded and what is named
+      # publishes a feed of 404s that still passes every structural check -- an update button that
+      # does nothing, which is how this class of breakage is actually reported. Fetch one byte of
+      # each artifact so a dead link fails the release instead of the user.
+      - name: Verify every advertised artifact actually downloads
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const manifest = JSON.parse(readFileSync("public-latest.json", "utf8"));
+            for (const p of Object.values(manifest.platforms)) console.log(p.url);
+          ' > updater-urls.txt
+          # A pipe into `while` would also report success when the list is empty, which is
+          # "verified nothing" wearing the same green check as "verified everything".
+          test -s updater-urls.txt || { echo "::error::no updater artifacts to verify"; exit 1; }
+          while read -r url; do
+            echo "checking $url"
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
+              --range 0-0 --output /dev/null "$url" \
+              || { echo "::error::updater artifact does not download: $url"; exit 1; }
+          done < updater-urls.txt

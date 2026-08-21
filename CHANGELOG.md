@@ -4,6 +4,36 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.65 — 2026-08-21
+
+Four Rust major upgrades, each on a path hardened earlier in this cycle, so each
+was verified individually rather than on the aggregate suite.
+
+- `zip` 2.4.2 → 4.6.1 — two majors, and the crate behind `.docx` extraction. The
+  zip-bomb cap added in 0.1.46 still refuses an archive that inflates past
+  64 MB.
+- `sha2` 0.10.9 → 0.11.0 — installer digest verification. Re-fetched the pinned
+  `install.sh` and confirmed it still hashes to the constant in
+  `runtime_setup.rs`; the known-vector test also passes.
+- `tower-http` 0.6.11 → 0.7.0 — the web server's CORS layer and static serving.
+  The unknown-API-path 404-inside-CORS behaviour and the browser security
+  headers both still hold.
+- `base64` 0.22.1 → 0.23.1 — token and attachment encoding.
+
+Two release-path fixes rode along:
+
+- The publish workflow verified that the public updater feed carried a url and a
+  signature per platform, but never that the url resolved. It now downloads one
+  byte of each advertised artifact, so a dead link fails the release instead of
+  the user. An empty artifact list is an explicit failure rather than a silent
+  pass.
+- A release-gate test used `HEAD` as its base ref, so bumping the version and
+  then running the suite -- the order anyone actually uses -- produced a phantom
+  failure that vanished after committing. It now derives the base from the
+  working tree.
+
+110 Rust tests, 279 frontend tests, 19 release checks.
+
 ## 0.1.64 — 2026-08-21
 
 Toolchain: TypeScript 7, Vite 8, Vitest 4, jsdom 30, @types/node 26.
