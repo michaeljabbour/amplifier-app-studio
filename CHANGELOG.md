@@ -4,6 +4,34 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.64 — 2026-08-21
+
+Toolchain: TypeScript 7, Vite 8, Vitest 4, jsdom 30, @types/node 26.
+
+Three independent problems had to be separated before any of this could land.
+
+- **npm could not install it at all.** `npm error Cannot read properties of null
+  (reading 'edgesOut')`, thrown from arborist's `#loadPeerSet` while resolving
+  vitest 4's peer graph. Bisected in a scratch project: `vitest@4` alone crashes
+  npm 10.9.4, which is what Node 22 bundles, and installs cleanly on npm 11.
+  Vite 8, TypeScript 7 and vite-plugin-solid are each fine alone. Every workflow
+  that installs now upgrades npm first; without it CI fails before a test runs.
+- **`Cannot find name 'node:fs'` under TypeScript 7.** Not a compiler bug:
+  `tsconfig.json` declared `"types": ["vite/client"]`, which excludes
+  `@types/node`. TypeScript 5 was lenient; 7 enforces what the config always
+  said. Now `["vite/client", "node"]`.
+- **Ten suites failed with "invalid JS syntax ... do not set jsx to preserve".**
+  `vite.config.ts` loads `vite-plugin-solid`; `vitest.config.ts` loaded no
+  plugins at all, so JSX reached Vitest untransformed. Vitest 3 tolerated it,
+  Vitest 4 does not. The two configs now describe the same pipeline. With the
+  plugin present solid-js resolves to its browser build and touches `window` at
+  import time, so six suites that import a component join the eleven already
+  opting into jsdom. The plugin is configured `hot: false` for tests: Vitest runs
+  it with `command === "serve"`, so it injected solid-refresh aliased to the
+  virtual path `/@solid-refresh`, which Windows resolves to
+  `file:///@solid-refresh` and Node rejects. That failed ten suites on
+  windows-latest while macOS and Linux passed.
+
 ## 0.1.63 — 2026-08-21
 
 Small cleanups from the dead-code sweep. Zero behaviour change.

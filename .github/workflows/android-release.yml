@@ -43,6 +43,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Node 22 bundles npm 10.9.x, whose arborist crashes resolving vitest 4's peer graph
+      # ("Cannot read properties of null (reading 'edgesOut')" in #loadPeerSet). npm 11 resolves
+      # it. Without this every runner fails at install, before a single test runs.
+      - name: Use npm 11
+        run: npm install -g npm@11
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

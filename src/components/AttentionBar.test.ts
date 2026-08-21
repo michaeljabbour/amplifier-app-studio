@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import { attentionControlsUnavailable, attentionResponseFor, decisionChoiceRows, goalAlignedRecommendedChoice } from "./AttentionBar";
 import { createSessionState } from "../reducer";

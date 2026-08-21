@@ -25,6 +25,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Node 22 bundles npm 10.9.x, whose arborist crashes resolving vitest 4's peer graph
+      # ("Cannot read properties of null (reading 'edgesOut')" in #loadPeerSet). npm 11 resolves
+      # it. Without this every runner fails at install, before a single test runs.
+      - name: Use npm 11
+        run: npm install -g npm@11
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -54,6 +59,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Node 22 bundles npm 10.9.x, whose arborist crashes resolving vitest 4's peer graph
+      # ("Cannot read properties of null (reading 'edgesOut')" in #loadPeerSet). npm 11 resolves
+      # it. Without this every runner fails at install, before a single test runs.
+      - name: Use npm 11
+        run: npm install -g npm@11
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cross-compilation target
         if: matrix.target != ''
@@ -166,6 +176,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # Node 22 bundles npm 10.9.x, whose arborist crashes resolving vitest 4's peer graph
+      # ("Cannot read properties of null (reading 'edgesOut')" in #loadPeerSet). npm 11 resolves
+      # it. Without this every runner fails at install, before a single test runs.
+      - name: Use npm 11
+        run: npm install -g npm@11
       - name: Download the complete draft release
         run: gh release download "$TAG_NAME" --dir release-assets
       - name: Build one cross-platform updater manifest
