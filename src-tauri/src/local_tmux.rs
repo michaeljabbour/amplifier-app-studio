@@ -58,7 +58,14 @@ impl TmuxInvocation {
             .await
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
-                    "tmux is not installed or is not available on Studio's PATH".to_owned()
+                    // The commands are registered for every desktop target, so Windows reaches
+                    // here too. "Install tmux" is not advice a Windows user can act on, and the
+                    // old wording implied a PATH problem they could fix.
+                    if cfg!(windows) {
+                        "The terminal workbench needs tmux, which does not run on Windows. Use a session on a macOS or Linux compute host instead.".to_owned()
+                    } else {
+                        "tmux is not installed or is not available on Studio's PATH".to_owned()
+                    }
                 } else {
                     format!("Could not invoke tmux: {error}")
                 }

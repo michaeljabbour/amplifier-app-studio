@@ -119,6 +119,50 @@ describe("bridge trust storage", () => {
     });
   });
 
+  // Regression, reported from the field: a stored Spark session became unreachable at
+  // http://127.0.0.1:4318. Host ids are derived from the URL, and these URLs are loopback ports
+  // handed out by an SSH/Tailscale forward. When the forward returned on a different port the
+  // URL no longer matched, a new host record and keychain entry were minted, and every session
+  // pinned to the old id was orphaned with nothing in the UI able to re-point it.
+  it("re-points an existing named host when its forward moves to a new port", () => {
+    const hosts = [{
+      id: "host-127.0.0.1-4318-dmtm1b",
+      name: "Spark 288f",
+      url: "http://127.0.0.1:4318/",
+      tokenRef: "keychain:host-127.0.0.1-4318-dmtm1b",
+      defaultProjectRoot: "/home/mjabbour/dev",
+    }];
+
+    const moved = durableRuntimeHostForSession(
+      { projectDir: "/home/mjabbour/dev", hostId: "configured", hostName: "Spark 288f", hostUrl: "http://127.0.0.1:4322" },
+      hosts,
+    );
+
+    // Same record, new address: the id and credential reference survive, so sessions pinned to
+    // this host follow it instead of being stranded.
+    expect(moved?.id).toBe("host-127.0.0.1-4318-dmtm1b");
+    expect(moved?.tokenRef).toBe("keychain:host-127.0.0.1-4318-dmtm1b");
+    expect(moved?.url).toBe("http://127.0.0.1:4322/");
+    expect(moved?.name).toBe("Spark 288f");
+  });
+
+  it("never merges two computes that only share an auto-generated name", () => {
+    const hosts = [{
+      id: "host-127.0.0.1-4318-aaa",
+      name: "Configured host",
+      url: "http://127.0.0.1:4318/",
+      tokenRef: "keychain:host-127.0.0.1-4318-aaa",
+    }];
+
+    const fresh = durableRuntimeHostForSession(
+      { projectDir: "/home/mjabbour/dev", hostId: "configured", hostName: "Configured host", hostUrl: "http://127.0.0.1:4399" },
+      hosts,
+    );
+
+    expect(fresh?.id).not.toBe("host-127.0.0.1-4318-aaa");
+    expect(fresh?.url).toBe("http://127.0.0.1:4399/");
+  });
+
   it("keeps a named host pinned to the host-configured project home", () => {
     const saved = {
       id: "spark-288f",

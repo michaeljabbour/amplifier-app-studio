@@ -4,6 +4,31 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.52 — 2026-08-20
+
+- A compute host whose forward moves to a new port is now re-pointed instead of
+  duplicated. Host ids are derived from the URL, and these URLs are loopback
+  ports handed out by SSH or Tailscale — inherently ephemeral. When a forward
+  came back on a different port the URL stopped matching, a new host record and
+  keychain entry were minted, and every stored session pinned to the old id was
+  stranded with nothing in the UI able to re-point it. A user-assigned host name
+  is now treated as the stable identity; auto-generated names are excluded so
+  two unrelated computes are never merged.
+- Every modal now traps Tab focus. `aria-modal="true"` promises assistive
+  technology that the rest of the page is inert, and four of Studio's five
+  dialogs broke that promise — keyboard and screen-reader users tabbed straight
+  out into the frozen background. The one existing implementation also relied on
+  `querySelectorAll` returning document order for a comma-separated selector,
+  which is not guaranteed; the shared version sorts explicitly.
+- The streaming answer is announced to screen readers. It is the product's
+  primary output and was the only region without a live region — the boot,
+  working and fatal cards all had one.
+- The terminal workbench now says tmux does not run on Windows instead of
+  telling Windows users to check their PATH for it.
+- Added Dependabot (npm, cargo, actions) and `npm audit` / `cargo audit` gates
+  in CI. Pinning makes builds reproducible, not unvulnerable, and nothing was
+  checking whether a pinned version had a known advisory. Both are clean today.
+
 ## 0.1.51 — 2026-08-20
 
 - Host request failures no longer assert a cause the client cannot know. Every

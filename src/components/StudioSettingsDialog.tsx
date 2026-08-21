@@ -6,6 +6,7 @@ import {
   type RuntimeSettingDefinition,
   type RuntimeSettingScope,
 } from "../settingsSchema";
+import { keepModalFocus } from "../focusTrap";
 import type { StudioTheme } from "../theme";
 import { isPathInsideRoot } from "../projectFolders";
 import {
@@ -273,7 +274,7 @@ export function StudioSettingsDialog(props: Props) {
   };
 
   return (
-    <div class="settings-backdrop" role="presentation">
+    <div class="settings-backdrop" role="presentation" onKeyDown={keepModalFocus}>
       <section class="settings-window" role="dialog" aria-modal="true" aria-labelledby="studio-settings-title">
         <header class="settings-header">
           <div class="settings-wordmark" aria-hidden="true"><strong>AMPLIFIER</strong><span><i /><i /><i /><i /></span></div>

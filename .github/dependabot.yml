@@ -1,0 +1,22 @@
+# Pinning (npm ci + a committed Cargo.lock) guarantees reproducible builds, not safe ones.
+# Without this the pinned versions silently rot: nothing in CI was checking whether any
+# dependency had a known advisory.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+  - package-ecosystem: cargo
+    directory: "/src-tauri"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
