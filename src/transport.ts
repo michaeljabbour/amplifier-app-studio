@@ -1300,7 +1300,10 @@ async function fetchJson<T>(url: URL, init?: RequestInit, bridgeUrl?: string): P
   try {
     response = await fetch(url, { ...init, headers });
   } catch (caught) {
-    throw new Error(hostRequestFailureMessage(url.origin, caught), { cause: caught });
+    throw new Error(
+      hostRequestFailureMessage(url.origin, caught, `${init?.method ?? "GET"} ${url.pathname}`),
+      { cause: caught },
+    );
   }
   const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
   if (!response.ok) throw new Error(value?.error || `Bridge request failed (${response.status})`);
@@ -1331,11 +1334,15 @@ function clean(value: string | undefined): string | undefined {
  * host was listening, CORS-correct, and answering curl the entire time. State what is actually
  * known, keep the underlying error for diagnosis, and list the candidates without picking one.
  */
-export function hostRequestFailureMessage(origin: string, caught: unknown): string {
+export function hostRequestFailureMessage(origin: string, caught: unknown, request?: string): string {
   const detail = caught instanceof Error && caught.message && caught.message !== "Load failed"
     ? ` (${caught.name}: ${caught.message})`
     : "";
-  return `No response from ${origin}${detail}. The host never answered, so this is not an error it reported:`
+  // Naming the request matters: the most common cause is an endpoint the host is too old to
+  // implement, and knowing WHICH one turns "the host is unreachable" into "this host predates
+  // stored-session export".
+  const attempted = request ? ` on ${request}` : "";
+  return `No response from ${origin}${attempted}${detail}. The host never answered, so this is not an error it reported:`
     + " check that the SSH or Tailscale forward is still listening, that the host allows Studio's origin,"
     + " and that the saved URL still points at the right port.";
 }

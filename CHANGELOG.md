@@ -4,6 +4,27 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.55 — 2026-08-20
+
+- Amplifier Host answers an unimplemented API path with JSON 404 from inside its
+  CORS layer, instead of falling through to the SPA. axum only nests an inner
+  router's fallback when it has one, so an unknown `/v1/api/*` path reached the
+  root `fallback_service(assets)` and returned `index.html` — HTTP 200,
+  `text/html`, and no `access-control-allow-origin`, because that fallback sits
+  outside the CORS layer. To curl it looked like a healthy 200; to the WebView it
+  was a CORS failure, and `fetch` rejected with an opaque TypeError
+  indistinguishable from a dead tunnel.
+  That is the root cause of the reported "could not reach Amplifier Host at
+  http://127.0.0.1:4318" on a Spark session: the host was answering normally, but
+  predates `stored-session-export`, which the stored-session Duplicate action
+  calls. The 404 now says which endpoint is missing and that the host is older
+  than the client.
+- Host request failures name the request. "No response from
+  http://127.0.0.1:4318 on GET /v1/api/stored-session-export" identifies an
+  old-host mismatch immediately; the origin alone never could.
+- `/config` advertises a `sessionTransfer` capability so a client can detect a
+  host too old for stored-session transfer before attempting it.
+
 ## 0.1.54 — 2026-08-20
 
 - Artifact previews are sized by CSS instead of a script handshake. Studio used
