@@ -4,6 +4,33 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.61 — 2026-08-21
+
+From a sweep for duplicated logic — specifically for copies that are supposed
+to agree and no longer do.
+
+- The Amplifier Host no longer blocks its only worker to answer
+  `/v1/api/runtime`. `runtime_setup::status()` shells out twice (`--version` and
+  `provider status`), and the host runs on a `current_thread` tokio runtime, so
+  calling it inline stopped **every live session WebSocket on that host** until
+  both children exited — around a second cold, unbounded on a stalled mount or a
+  first-run resolve. The Tauri command wrapper had always used `spawn_blocking`;
+  the HTTP handler was the copy that did not. `transcription_status` had the same
+  omission and is fixed alongside it.
+- The bearer-token directory is created `0700`. `write_config` ran first with
+  `create_dir_all`, and `DirBuilder::mode(0o700)` is a no-op on a directory that
+  already exists, so `~/.amplifier/host` stayed at the process umask — measured
+  0755. The token file itself was always 0600, so the secret was never readable;
+  what leaked was the listing, meaning the token's filename and its mtime, which
+  is when it was last rotated. The README already claimed 0700; now that is true.
+- One definition of "canonical project directory", replacing six. They disagreed
+  on two axes that matter: `store.rs` trimmed its input and `session.rs` did not,
+  so `"/tmp/project "` resolved through one path and failed through the other;
+  and `catalog.rs` omitted the `is_dir` check entirely, so a FILE canonicalized
+  successfully and was handed to `Command::current_dir`, which failed later as
+  "Not a directory (os error 20)" instead of naming the problem at the boundary.
+  `local_tmux.rs` keeps its stricter absolute-path requirement layered on top.
+
 ## 0.1.60 — 2026-08-21
 
 Corrections found by sweeping for statements the code no longer supports.

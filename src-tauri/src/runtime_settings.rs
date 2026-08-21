@@ -126,17 +126,7 @@ pub async fn apply(
 }
 
 fn project_directory(value: &str) -> Result<PathBuf, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err("Choose a project folder before editing Amplifier settings".to_owned());
-    }
-    let path = PathBuf::from(trimmed)
-        .canonicalize()
-        .map_err(|error| format!("Could not open the settings project folder: {error}"))?;
-    if !path.is_dir() {
-        return Err("The settings project folder is not a directory".to_owned());
-    }
-    Ok(path)
+    crate::project_dir::canonical_project_dir(value)
 }
 
 async fn run<const N: usize>(project: &Path, args: [&str; N]) -> Result<String, String> {

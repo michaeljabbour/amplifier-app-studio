@@ -320,17 +320,12 @@ fn missing_session(stderr: &str) -> bool {
 }
 
 fn validate_project_dir(value: &str) -> Result<PathBuf, String> {
-    let path = Path::new(value);
-    if !path.is_absolute() {
+    // The absolute-path requirement is genuinely stricter than the shared rule, so it layers on
+    // top rather than being folded in.
+    if !Path::new(value.trim()).is_absolute() {
         return Err("The terminal project folder must be an absolute path".to_owned());
     }
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| format!("Could not open terminal project folder: {error}"))?;
-    if !canonical.is_dir() {
-        return Err("The terminal project folder is not a directory".to_owned());
-    }
-    Ok(canonical)
+    crate::project_dir::canonical_project_dir(value)
 }
 
 fn validate_session_name(name: &str) -> Result<(), String> {

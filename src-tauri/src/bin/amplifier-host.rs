@@ -179,8 +179,13 @@ fn write_config(config: &HostConfig) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Host config has no parent".to_owned())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    // This is the directory that will also hold the bearer token, and write_config runs first.
+    // `DirBuilder::mode(0o700)` is a no-op on a directory that already exists, so creating it
+    // here with create_dir_all left it at the process umask (0755 measured) and write_secret's
+    // later 0700 builder could never narrow it. The token file itself is 0600, so the secret was
+    // not readable -- but the directory listing exposed the token's filename and mtime, i.e. when
+    // it was last rotated, to any local user. README.md said 0700; now it is.
+    amplifier_studio_lib::amplifier_home::create_private_dir(parent)?;
     let encoded = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("Could not encode Amplifier Host configuration: {error}"))?;
     let temporary = path.with_extension("json.new");
