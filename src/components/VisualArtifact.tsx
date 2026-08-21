@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import { createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createResource, createSignal, Show } from "solid-js";
 import { renderGraphvizSvg } from "../dotRenderer";
 
 export type VisualArtifactFormat = "html" | "svg" | "dot";
@@ -16,83 +16,11 @@ interface Props {
 }
 
 const MAX_ARTIFACT_SOURCE = 300_000;
-const MIN_ARTIFACT_HEIGHT = 300;
-const MAX_ARTIFACT_HEIGHT = 12_000;
-export const ARTIFACT_RESIZE_MESSAGE = "amplifier-studio:artifact-resize";
 export const VISUAL_ARTIFACT_SANDBOX = "allow-scripts";
-/** How long to wait for the frame's first resize report before assuming its script never ran. */
-const ARTIFACT_RESIZE_GRACE_MS = 2_500;
-
-/**
- * The artifact frame's resize script, verbatim.
- *
- * A `srcdoc` frame INHERITS Studio's policy container instead of replacing it, so this inline
- * script must satisfy Studio's own CSP -- the artifact's inner `script-src 'unsafe-inline'` is
- * intersected with the outer policy, not substituted for it. The outer policy therefore carries
- * a `'sha256-...'` entry for exactly these bytes (see `app.security.csp` in
- * `src-tauri/tauri.conf.json`). Verified against WKWebView: without the hash the script is
- * silently blocked in packaged builds while working fine under `npm run dev`, whose Vite dev
- * server sends no CSP at all.
- *
- * Keep these bytes stable. After ANY edit run `node scripts/artifact-csp-hash.mjs --write`;
- * `VisualArtifact.test.ts` fails the build if the hash and the script disagree.
- *
- * Always emit it through `artifactResizeScript()`, never directly: a CRLF checkout would
- * otherwise change the hashed bytes and silently reintroduce the very bug this guards against.
- */
-export const ARTIFACT_RESIZE_SCRIPT = `(() => {
-  const MESSAGE = "amplifier-studio:artifact-resize";
-  let lastHeight = 0;
-  let scheduled = false;
-  const measure = () => {
-    scheduled = false;
-    const root = document.documentElement;
-    const body = document.body;
-    if (!body) return;
-    const childBottom = Array.from(body.children).reduce((bottom, child) => {
-      const rect = child.getBoundingClientRect();
-      return Math.max(bottom, rect.bottom + window.scrollY);
-    }, 0);
-    const height = Math.ceil(Math.max(root.scrollHeight, body.scrollHeight, childBottom));
-    if (height > 0 && height !== lastHeight) {
-      lastHeight = height;
-      parent.postMessage({ type: MESSAGE, height }, "*");
-    }
-  };
-  const schedule = () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(measure);
-  };
-  addEventListener("load", schedule);
-  addEventListener("resize", schedule);
-  document.addEventListener("DOMContentLoaded", () => {
-    new ResizeObserver(schedule).observe(document.documentElement);
-    new ResizeObserver(schedule).observe(document.body);
-    schedule();
-  });
-})();`;
-
-/**
- * The resize script exactly as it is embedded and hashed, normalised to LF.
- *
- * Git for Windows checks out with `core.autocrlf=true` by default, so on a Windows build the
- * literal above arrives with CRLF line endings. Hashing is byte-exact: without this the emitted
- * script would no longer match the `'sha256-...'` in the app CSP, and artifacts would break on
- * Windows in precisely the silent way they broke everywhere before.
- */
-export function artifactResizeScript(): string {
-  return ARTIFACT_RESIZE_SCRIPT.replace(/\r\n/g, "\n");
-}
 
 export function VisualArtifact(props: Props) {
-  let frame: HTMLIFrameElement | undefined;
   const [expanded, setExpanded] = createSignal(false);
   const [showSource, setShowSource] = createSignal(false);
-  const [frameHeight, setFrameHeight] = createSignal(420);
-  // If the frame never reports a height its script did not run, and `scrolling="no"` would make
-  // the artifact permanently unreachable below 420px. Degrade to a scrollable frame instead.
-  const [scrollFallback, setScrollFallback] = createSignal(false);
   const sourceError = createMemo(() => visualArtifactSourceError(props.source));
   const [dotSvg, { refetch: refetchDot }] = createResource(
     () => props.format === "dot" && !sourceError() ? props.source : undefined,
@@ -103,31 +31,13 @@ export function VisualArtifact(props: Props) {
   const staticSvg = createMemo(() => props.format === "svg" && !sourceError() ? sanitizeVisualSvg(props.source) : undefined);
   const title = createMemo(() => visualArtifactTitle(props.format, props.source));
 
-  onMount(() => {
-    // `event.source` identity is the correlation check: it is strictly stronger than the
-    // guessable frame-id string it replaced, and it keeps the frame script byte-stable.
-    let reported = false;
-    const resize = (event: MessageEvent) => {
-      if (event.source !== frame?.contentWindow || !isArtifactResizeMessage(event.data)) return;
-      reported = true;
-      setScrollFallback(false);
-      setFrameHeight(clampArtifactHeight(event.data.height));
-    };
-    window.addEventListener("message", resize);
-    const grace = setTimeout(() => { if (!reported) setScrollFallback(true); }, ARTIFACT_RESIZE_GRACE_MS);
-    onCleanup(() => {
-      window.removeEventListener("message", resize);
-      clearTimeout(grace);
-    });
-  });
-
   return (
     <section class="visual-artifact" classList={{ expanded: expanded() }} aria-label={`${title()} visual artifact`}>
       <header>
         <div>
           <span>{artifactFormatLabel(props.format)}</span>
           <strong>{title()}</strong>
-          <small>{props.format === "html" ? "Sandboxed · scripts local · network off" : "Sanitized · links and remote media removed"}</small>
+          <small>{props.format === "html" ? "Sandboxed · no scripts · network off" : "Sanitized · links and remote media removed"}</small>
         </div>
         <nav aria-label="Visual artifact controls">
           <button type="button" aria-pressed={showSource()} onClick={() => setShowSource((value) => !value)}>{showSource() ? "Preview" : "Source"}</button>
@@ -142,9 +52,6 @@ export function VisualArtifact(props: Props) {
                 title={title()}
                 sandbox={VISUAL_ARTIFACT_SANDBOX}
                 referrerPolicy="no-referrer"
-                scrolling={scrollFallback() ? "yes" : "no"}
-                style={{ height: `${frameHeight()}px` }}
-                ref={(element) => { frame = element; }}
                 srcdoc={buildSandboxedHtmlDocument(props.source)}
               />
             </Show>
@@ -191,29 +98,15 @@ export function buildSandboxedHtmlDocument(source: string): string {
     :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; margin: 0; }
-    /* auto, not hidden: if the frame's resize script is ever blocked the host falls back to
-       a scrollable frame, and a hidden overflow would make that fallback do nothing. */
+    /* The host gives the frame a definite height and the artifact scrolls inside it, so the
+       document must be scrollable rather than clipped. */
     body { overflow: auto; padding: 18px; background: #0b1118; color: #e7eef7; }
     svg, canvas { max-width: 100%; }
     @media (prefers-color-scheme: light) { body { background: #f8f6f3; color: #24211e; } }
   </style>
-  <script>${artifactResizeScript()}</script>
 </head>
 <body>${source}</body>
 </html>`;
-}
-
-export function clampArtifactHeight(height: unknown): number {
-  const numeric = typeof height === "number" && Number.isFinite(height) ? Math.ceil(height) : MIN_ARTIFACT_HEIGHT;
-  return Math.min(MAX_ARTIFACT_HEIGHT, Math.max(MIN_ARTIFACT_HEIGHT, numeric));
-}
-
-export function isArtifactResizeMessage(value: unknown): value is { type: string; height: number } {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return record.type === ARTIFACT_RESIZE_MESSAGE
-    && typeof record.height === "number"
-    && Number.isFinite(record.height);
 }
 
 export function sanitizeVisualSvg(source: string): string {
@@ -269,7 +162,7 @@ function isEngineFailure(detail: string): boolean {
 export function visualArtifactTitle(format: VisualArtifactFormat, source: string): string {
   if (format === "html") {
     const match = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || source.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-    return match ? stripMarkup(match[1]).slice(0, 100) || "Interactive visual" : "Interactive visual";
+    return match ? stripMarkup(match[1]).slice(0, 100) || "HTML visual" : "HTML visual";
   }
   if (format === "svg") {
     const match = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
@@ -280,7 +173,7 @@ export function visualArtifactTitle(format: VisualArtifactFormat, source: string
 }
 
 function artifactFormatLabel(format: VisualArtifactFormat): string {
-  return format === "html" ? "INTERACTIVE HTML" : format === "svg" ? "INLINE SVG" : "GRAPHVIZ DOT";
+  return format === "html" ? "RENDERED HTML" : format === "svg" ? "INLINE SVG" : "GRAPHVIZ DOT";
 }
 
 function stripMarkup(value: string): string {

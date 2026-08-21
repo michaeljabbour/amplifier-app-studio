@@ -1,17 +1,12 @@
 // @vitest-environment jsdom
 
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  ARTIFACT_RESIZE_MESSAGE,
   buildSandboxedHtmlDocument,
-  clampArtifactHeight,
   dotArtifactFailureMessage,
   dotArtifactIsPending,
-  artifactResizeScript,
-  isArtifactResizeMessage,
   renderDotArtifact,
   sanitizeVisualSvg,
   visualArtifactSourceError,
@@ -26,50 +21,30 @@ describe("visual artifacts", () => {
     expect(VISUAL_ARTIFACT_SANDBOX).not.toContain("allow-same-origin");
     expect(document).toContain("connect-src 'none'");
     expect(document).toContain("form-action 'none'");
+    // The artifact's own markup and scripts survive into the document verbatim. Whether that
+    // script EXECUTES is decided by the inherited policy, not by us -- see the test below.
     expect(document).toContain("<script>document.body.dataset.ready='yes'</script>");
-    expect(document).toContain(ARTIFACT_RESIZE_MESSAGE);
-    expect(document).toContain("ResizeObserver");
-    // `auto`, not `hidden`: the host degrades to scrolling="yes" when no resize ever arrives,
-    // and a hidden overflow would make that fallback inert.
     expect(document).toContain("overflow: auto");
   });
 
-  // Regression: a srcdoc frame INHERITS Studio's policy container instead of replacing it, so
-  // the frame's inline script has to be allowed by Studio's own script-src. Verified against
-  // WKWebView: with the hash absent the child script is blocked in packaged builds
-  // (script-src-elem violation) while `npm run dev`, which serves no CSP, works fine. A
-  // string-matching test on the generated markup structurally cannot catch that, so assert the
-  // hash instead.
-  it("keeps Studio's CSP hash in sync with the artifact frame's inline script", () => {
-    // Hash the value the component actually embeds, not the raw source text: that is what the
-    // browser sees, and it is already LF-normalised so a CRLF checkout cannot shift the digest.
-    const script = artifactResizeScript();
-    expect(script).not.toContain("\r");
-    expect(buildSandboxedHtmlDocument("<p>x</p>")).toContain(`<script>${script}</script>`);
+  // Studio no longer injects any script into artifact frames, so `script-src` needs no hash.
+  //
+  // The hash only ever bought one thing. A srcdoc frame inherits the embedder's policy container,
+  // and under that policy the ARTIFACT's own inline scripts are blocked regardless -- verified in
+  // WKWebView and Chrome: with the hash present only Studio's own hashed script ran, the
+  // artifact's did not. So hash-allowlisting restored Studio's sizing script, never author
+  // interactivity. Sizing is now pure CSS, and this asserts the machinery stays gone.
+  it("injects no host script into the artifact frame and pins no hash", () => {
+    const document = buildSandboxedHtmlDocument("<h1>Chart</h1>");
+    expect(document).not.toContain("postMessage");
+    expect(document).not.toContain("ResizeObserver");
+    expect(document).not.toContain("requestAnimationFrame");
+    // The only <script> in the document is whatever the artifact itself supplied -- here, none.
+    expect(document).not.toContain("<script>");
 
-    const hash = `sha256-${createHash("sha256").update(script, "utf8").digest("base64")}`;
-    // process.cwd() rather than import.meta.url: the jsdom environment does not give this
-    // module a file: URL, and join() keeps the path valid on Windows too.
-    const tauriConf = join(process.cwd(), "src-tauri", "tauri.conf.json");
-    const csp = JSON.parse(readFileSync(tauriConf, "utf8")).app.security.csp as string;
+    const csp = JSON.parse(readFileSync(join(process.cwd(), "src-tauri", "tauri.conf.json"), "utf8")).app.security.csp as string;
     const scriptSrc = csp.split(";").map((directive) => directive.trim()).find((directive) => directive.startsWith("script-src "));
-
-    expect(scriptSrc, "tauri.conf.json must declare script-src").toBeDefined();
-    expect(scriptSrc, `run: node scripts/artifact-csp-hash.mjs --write`).toContain(`'${hash}'`);
-    expect(scriptSrc).not.toContain("'unsafe-inline'");
-  });
-
-  it("accepts resize messages from the frame and bounds pathological document heights", () => {
-    // Correlation is `event.source === frame.contentWindow` in the host; the payload only has
-    // to be well formed. Dropping the frame id from the payload is what keeps the frame script
-    // byte-stable enough to hash.
-    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, height: 940 })).toBe(true);
-    expect(isArtifactResizeMessage({ type: "other", height: 940 })).toBe(false);
-    expect(isArtifactResizeMessage({ type: ARTIFACT_RESIZE_MESSAGE, height: "940" })).toBe(false);
-    expect(isArtifactResizeMessage(null)).toBe(false);
-    expect(clampArtifactHeight(940.2)).toBe(941);
-    expect(clampArtifactHeight(-1)).toBe(300);
-    expect(clampArtifactHeight(99_000)).toBe(12_000);
+    expect(scriptSrc).toBe("script-src 'self' 'wasm-unsafe-eval'");
   });
 
   it("removes active SVG content, remote links, and fixed sizing", () => {
