@@ -1290,12 +1290,7 @@ async function fetchJson<T>(url: URL, init?: RequestInit, bridgeUrl?: string): P
   try {
     response = await fetch(url, { ...init, headers });
   } catch (caught) {
-    const reason = caught instanceof Error && caught.message && caught.message !== "Load failed"
-      ? ` (${caught.message})`
-      : "";
-    throw new Error(
-      `Could not reach Amplifier Host at ${url.origin}${reason}. Check the SSH/Tailscale connection and make sure the host allows the native Studio origin.`,
-    );
+    throw new Error(hostRequestFailureMessage(url.origin, caught), { cause: caught });
   }
   const value = await response.json().catch(() => undefined) as { error?: string } | undefined;
   if (!response.ok) throw new Error(value?.error || `Bridge request failed (${response.status})`);
@@ -1315,6 +1310,24 @@ function isProcessExit(value: unknown): value is ProcessExit {
 function clean(value: string | undefined): string | undefined {
   const cleaned = value?.trim();
   return cleaned || undefined;
+}
+
+/**
+ * Describes a request that never produced a response.
+ *
+ * A rejected `fetch` tells us only that: a dead tunnel, a CORS rejection, and a blocked scheme
+ * are indistinguishable from here. The previous wording asserted one of them -- "Check the
+ * SSH/Tailscale connection" -- and that sent a real investigation down the wrong path while the
+ * host was listening, CORS-correct, and answering curl the entire time. State what is actually
+ * known, keep the underlying error for diagnosis, and list the candidates without picking one.
+ */
+export function hostRequestFailureMessage(origin: string, caught: unknown): string {
+  const detail = caught instanceof Error && caught.message && caught.message !== "Load failed"
+    ? ` (${caught.name}: ${caught.message})`
+    : "";
+  return `No response from ${origin}${detail}. The host never answered, so this is not an error it reported:`
+    + " check that the SSH or Tailscale forward is still listening, that the host allows Studio's origin,"
+    + " and that the saved URL still points at the right port.";
 }
 
 function requireBridgeToken(bridgeUrl = configuredBridgeUrl()): string {

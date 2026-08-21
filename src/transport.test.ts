@@ -251,9 +251,15 @@ describe("bridge trust storage", () => {
     saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:4318");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Load failed")));
 
-    await expect(probeRuntimeHost("http://127.0.0.1:4318", "configured")).rejects.toThrow(
-      "Check the SSH/Tailscale connection and make sure the host allows the native Studio origin",
-    );
+    // The message names the origin and tells the user what to check, without echoing WebKit's
+    // contentless "Load failed" and without asserting which link in the chain broke -- a
+    // rejected fetch cannot distinguish a dead tunnel from a CORS rejection.
+    const failure = (await probeRuntimeHost("http://127.0.0.1:4318", "configured").catch((error: unknown) => error)) as Error;
+    expect(failure.message).toContain("http://127.0.0.1:4318");
+    expect(failure.message).toMatch(/check that/i);
+    expect(failure.message).not.toContain("Load failed");
+    expect(failure.message).not.toMatch(/Could not reach/i);
+    expect(failure.cause).toBeInstanceOf(TypeError);
   });
 
   it("reconnects from a durable cursor and deduplicates replay by event id", async () => {
