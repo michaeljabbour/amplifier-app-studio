@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import { appendTranscript, audioCaptureAvailable } from "./transcription";
 import { promiseWithTimeout } from "./components/VoiceInputButton";

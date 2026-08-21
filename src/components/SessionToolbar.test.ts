@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import { createSessionState, reduceRecord } from "../reducer";
 import { coordinatorExecutionLabel, runtimeProofLabel, sessionToolbarStatus } from "./SessionToolbar";
