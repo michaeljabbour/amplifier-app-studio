@@ -4,6 +4,27 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.59 — 2026-08-21
+
+- Advanced the pinned amplifier-runtime revision from `b9568a2` to `6d46915`,
+  picking up `#11` (distinguish an unreadable session store from an empty one)
+  and `#12` (scope capability claims to the active session). Both installer
+  digests were regenerated; they are unchanged, because the two commits touch no
+  file under `scripts/` — confirmed against the compare API rather than assumed.
+- Studio now verifies the runtime **commit**, not just its version. The pin is a
+  commit for security reasons, but `current` was decided by
+  `REQUIRED_RUNTIME_VERSION = "0.1.8"` — and the runtime's version only advances
+  on release commits, so `b9568a2`, `7447612` and `6d46915` all honestly report
+  `0.1.8`. The check therefore passed in exactly the case it existed to catch: a
+  guard that validates a coarser identity than the thing it guards cannot see
+  the difference that matters. The installed revision is read from the PEP 610
+  `direct_url.json` the package manager writes; an install with no recorded
+  revision still falls back to the version rather than being failed.
+  Verified against the real installation before the bump: `current=false`,
+  `version=0.1.8`, `commit=b9568a25…` — drift the old check reported as ready.
+- The mismatch message names both revisions instead of saying "0.1.8 update
+  required", which is baffling when the installed runtime reports exactly 0.1.8.
+
 ## 0.1.58 — 2026-08-20
 
 Found by comparing against kepler, an earlier app of the same author that had
