@@ -302,6 +302,13 @@ impl SessionManager {
                 .map(|resume_id| (project_dir_string.clone(), resume_id)),
             detached_owner,
         };
+        tracing::info!(
+            gui_id = %options.gui_id,
+            project_dir = %project_dir_string,
+            resume_id = ?options.resume_id,
+            detached_owner,
+            "runtime session started",
+        );
         sessions.insert(options.gui_id.clone(), handle.clone());
         drop(sessions);
 
@@ -396,6 +403,7 @@ impl SessionManager {
     /// Remove a subscriber only if it still owns the current attachment lease.
     /// The child process, stdin, and durable session remain alive.
     pub async fn detach(&self, gui_id: &str, attachment_id: AttachmentId) -> Result<bool, String> {
+        tracing::debug!(gui_id, attachment_id, "detach requested");
         let sessions = self.sessions.lock().await;
         let handle = match sessions.get(gui_id) {
             Some(handle) => handle,
@@ -810,6 +818,7 @@ async fn deliver_exit_after_readers(
         code,
         message: exit_message(code),
     };
+    tracing::info!(gui_id = %gui_id, exit_code = ?code, "runtime session exited");
     deliver_serialized(sink, gui_id, "exit", payload).await;
 }
 
@@ -975,8 +984,19 @@ fn spawn_stdout_reader(
                     }
                     _ => deliver_log(&sink, &gui_id, "stdout", line).await,
                 },
-                Ok(None) => break,
+                Ok(None) => {
+                    tracing::debug!(gui_id = %gui_id, "runtime stdout closed");
+                    break;
+                }
                 Err(error) => {
+                    // A read error here ends the reader exactly like EOF, so the session goes
+                    // quiet with the runtime still alive. Before this line it did so with no
+                    // trace anywhere, which made a wedged session undiagnosable after the fact.
+                    tracing::error!(
+                        gui_id = %gui_id,
+                        %error,
+                        "runtime stdout read failed; ending reader with the child still running",
+                    );
                     deliver_log(
                         &sink,
                         &gui_id,

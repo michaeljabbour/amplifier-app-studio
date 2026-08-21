@@ -3,6 +3,7 @@ mod catalog;
 mod image_drop;
 #[cfg(desktop)]
 mod local_tmux;
+pub mod observability;
 mod protocol;
 #[cfg(desktop)]
 mod remote_hosts;
@@ -363,6 +364,10 @@ async fn apply_runtime_settings(
 async fn load_attachment_paths(
     paths: Vec<String>,
 ) -> Result<Vec<image_drop::NativeAttachment>, String> {
+    // Arbitrary-path read, scoped only by the JS-side picker. Logged so misuse is at least
+    // visible; see docs/IPC-COMMAND-SURFACE.md for why an allowlist does not solve this and what
+    // the real fix is.
+    tracing::info!(count = paths.len(), "load_attachment_paths invoked");
     let paths = paths
         .into_iter()
         .map(std::path::PathBuf::from)
@@ -375,6 +380,10 @@ async fn load_attachment_paths(
 #[cfg(desktop)]
 #[tauri::command]
 async fn write_diagnostics(path: String, contents: String) -> Result<(), String> {
+    // Arbitrary-path write, scoped only by the JS-side save dialog. Logged so misuse is at least
+    // visible; the real fix is to let the backend own the dialog. See
+    // docs/IPC-COMMAND-SURFACE.md.
+    tracing::info!(path = %path, bytes = contents.len(), "write_diagnostics invoked");
     const MAX_DIAGNOSTICS_BYTES: usize = 64 * 1024 * 1024;
     if contents.len() > MAX_DIAGNOSTICS_BYTES {
         return Err("Diagnostics exceed Studio's 64 MB export limit".to_owned());
@@ -483,6 +492,7 @@ pub(crate) fn output_media_type(path: &std::path::Path) -> Option<&'static str> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    observability::init("studio");
     let app = tauri::Builder::default()
         .setup(|_app| {
             #[cfg(desktop)]
