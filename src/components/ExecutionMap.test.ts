@@ -25,6 +25,23 @@ function pipeline(): PipelineState {
 }
 
 describe("execution map", () => {
+  // Same defect as the DOT artifact viewer: Graphviz writes padded labels as `&#160;`, DOMPurify's
+  // HTML serialiser turns that into `&nbsp;`, and re-parsing as XML rejected the undefined entity,
+  // so the execution graph silently rendered as nothing.
+  it("keeps a pipeline graph whose labels carry the non-breaking spaces Graphviz emits", () => {
+    const rendered = sanitizeAndAnnotateSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg">'
+      + "<g class=\"node\"><title>inspect</title><text>&#160;inspect&#160;</text></g>"
+      + "</svg>",
+      pipeline(),
+    );
+
+    expect(rendered).not.toBe("");
+    expect(rendered).toContain("inspect");
+    expect(rendered).not.toContain("&nbsp;");
+    expect(rendered).toContain("pipeline-completed");
+  });
+
   it("sanitizes untrusted SVG and annotates live node and edge status", () => {
     const rendered = sanitizeAndAnnotateSvg(`
       <svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">

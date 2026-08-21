@@ -109,17 +109,32 @@ export function buildSandboxedHtmlDocument(source: string): string {
 </html>`;
 }
 
+/**
+ * Sanitise an SVG document, keeping the DOM rather than re-parsing a serialised string.
+ *
+ * This used to hand DOMPurify's output back to `DOMParser` as `image/svg+xml`, which quietly
+ * discarded most real diagrams. DOMPurify parses as HTML and serialises with the HTML serialiser,
+ * and that serialiser writes U+00A0 as `&nbsp;`. XML predefines exactly five named entities, so
+ * re-parsing hit "undefined entity" and the whole graph was dropped. Graphviz emits `&#160;` for
+ * every leading or trailing space in a label -- ordinary padding like `label="  stage  "` -- so a
+ * single padded label anywhere was enough to lose the diagram. Three of the four graphs in local
+ * session history failed this way.
+ *
+ * Taking `RETURN_DOM` skips the lossy round trip entirely. The sanitiser configuration is
+ * unchanged, so the same tags and attributes are stripped; only the handoff differs.
+ */
 export function sanitizeVisualSvg(source: string): string {
   const svgSource = extractSvgDocument(source);
   if (!svgSource) return "";
-  const clean = DOMPurify.sanitize(svgSource, {
+  const sanitizedRoot = DOMPurify.sanitize(svgSource, {
     USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ["script", "style", "foreignObject", "a", "image", "use"],
     FORBID_ATTR: ["href", "xlink:href", "style", "onload", "onclick"],
+    RETURN_DOM: true,
   });
-  const documentNode = new DOMParser().parseFromString(clean, "image/svg+xml");
-  const svg = documentNode.documentElement;
-  if (svg.tagName.toLowerCase() !== "svg" || documentNode.querySelector("parsererror")) return "";
+  // RETURN_DOM hands back the containing element; DOMPurify types it as the wider Node.
+  const svg = sanitizedRoot instanceof Element ? sanitizedRoot.firstElementChild : null;
+  if (!svg || svg.tagName.toLowerCase() !== "svg" || svg.nextElementSibling) return "";
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", visualArtifactTitle("svg", source));
   svg.removeAttribute("width");

@@ -15,6 +15,39 @@ import {
 } from "./VisualArtifact";
 
 describe("visual artifacts", () => {
+  // Graphviz writes a leading or trailing space in a label as the numeric reference `&#160;`.
+  // The sanitiser used to serialise through DOMPurify's HTML serialiser, which rewrites U+00A0 as
+  // the named `&nbsp;`, and then re-parse that as XML -- where only five named entities exist. The
+  // diagram was discarded with "its SVG output was rejected by the sanitizer", which is how this
+  // reached a user. Three of four graphs in local session history hit it.
+  it("keeps a diagram whose labels contain the non-breaking spaces Graphviz emits for padded labels", () => {
+    const svg = sanitizeVisualSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20">'
+      + "<text>&#160;this session&#160;</text></svg>",
+    );
+    expect(svg).not.toBe("");
+    expect(svg).toContain("this session");
+    expect(svg).not.toContain("&nbsp;");
+    // The survivor must still be well-formed XML: it is injected into an XML-parsed sandbox.
+    const reparsed = new DOMParser().parseFromString(svg, "image/svg+xml");
+    expect(reparsed.querySelector("parsererror")).toBeNull();
+  });
+
+  it("still strips active content from an SVG that also carries non-breaking spaces", () => {
+    const svg = sanitizeVisualSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg"><text>&#160;pad&#160;</text>'
+      + "<script>alert(1)</script>"
+      + '<a xlink:href="javascript:alert(2)"><text>link</text></a>'
+      + '<image href="https://example.com/x.png"/><use href="#x"/>'
+      + "<foreignObject><span>html</span></foreignObject>"
+      + '<rect onload="alert(3)" style="fill:red"/></svg>',
+    );
+    expect(svg).toContain("pad");
+    for (const forbidden of ["<script", "<a ", "<image", "<use", "foreignObject", "onload", "style=", "href=", "javascript:"]) {
+      expect(svg).not.toContain(forbidden);
+    }
+  });
+
   it("renders artifact HTML only inside a unique-origin, network-disabled sandbox", () => {
     const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>");
     expect(VISUAL_ARTIFACT_SANDBOX).toBe("allow-scripts");
