@@ -4,6 +4,23 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.53 — 2026-08-20
+
+- The dependency audit gates added in 0.1.52 never ran. Their condition was
+  `startsWith(matrix.platform, 'ubuntu')`, copied from `publish.yml`, but
+  `ci.yml`'s matrix key is `os` — so the expression was always false and all
+  three steps were silently skipped while CI stayed green. Exactly the failure
+  mode the gates were added to prevent, in the gates themselves. Baseline with
+  the gates actually running: `npm audit --audit-level=high` reports zero, and
+  `cargo audit` exits clean with 18 unmaintained/unsound warnings, almost all
+  GTK3 bindings reached through Tauri's Linux backend and not ours to fix. The
+  gate fails on vulnerabilities, not on those warnings.
+- Added `scripts/bump-version.mjs`. Every pull request must advance both the
+  app version and the mobile build number, and those numbers live in six files
+  that `check-release-version.mjs` compares. A hand-edit that misses one — most
+  often `gen/apple/project.yml` — reds all three runners on a diff that has
+  nothing to do with versioning.
+
 ## 0.1.52 — 2026-08-20
 
 - A compute host whose forward moves to a new port is now re-pointed instead of
