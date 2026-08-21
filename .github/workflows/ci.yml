@@ -42,11 +42,11 @@ jobs:
       # Reproducible != unvulnerable. These fail the build on a known advisory rather than
       # leaving it to a human to remember to look.
       - name: Audit npm dependencies
-        if: startsWith(matrix.platform, 'ubuntu')
+        if: matrix.os == 'ubuntu-22.04'
         run: npm audit --audit-level=high
       - name: Install cargo-audit
-        if: startsWith(matrix.platform, 'ubuntu')
+        if: matrix.os == 'ubuntu-22.04'
         run: cargo install cargo-audit --locked || true
       - name: Audit Rust dependencies
-        if: startsWith(matrix.platform, 'ubuntu')
+        if: matrix.os == 'ubuntu-22.04'
         run: cargo audit --file src-tauri/Cargo.lock
