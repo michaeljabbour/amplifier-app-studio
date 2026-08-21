@@ -654,8 +654,18 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
                 // before it. A malformed-but-complete line, or a file that is nothing but
                 // garbage, is still corruption.
                 if lines.peek().is_none() && tail_may_be_torn && count > 0 {
+                    tracing::warn!(
+                        path = %candidate.display(),
+                        recovered_records = count,
+                        "recovered a transcript whose final append was cut short",
+                    );
                     break;
                 }
+                tracing::error!(
+                    path = %candidate.display(),
+                    records_before_damage = count,
+                    "transcript is damaged; a record before the end of the file did not parse",
+                );
                 valid = false;
                 break;
             };

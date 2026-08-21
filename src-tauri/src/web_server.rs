@@ -413,6 +413,14 @@ async fn require_bearer(
     if request_authenticated(request.headers(), &state.security.bearer_token) {
         return next.run(request).await;
     }
+    // Auth rejections were entirely unlogged, so a token-guessing campaign against a
+    // tailnet-exposed host was invisible. Log the method and path but never the presented
+    // credential.
+    tracing::warn!(
+        method = %request.method(),
+        path = %request.uri().path(),
+        "rejected an unauthenticated Amplifier Host request",
+    );
     let mut response = (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "A valid Amplifier Host bearer token is required" })),

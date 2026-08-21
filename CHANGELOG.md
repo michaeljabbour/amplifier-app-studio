@@ -4,6 +4,29 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.50 — 2026-08-20
+
+- Studio now has logging. There was none: sixteen `println!` calls, no
+  `tracing`, no panic hook, so every failure the hardening audit found was
+  invisible in production. An operator running `amplifier-host` under systemd
+  got a startup banner and then silence. Adds a `RUST_LOG`-controlled
+  subscriber (the iOS scheme already set `RUST_LOG=info`, which previously did
+  nothing), a panic hook that records location and payload before the process
+  dies, and instrumentation on the paths that used to fail silently: session
+  spawn/exit/detach, a runtime stdout read error that ends the reader while the
+  child keeps running, unauthenticated request rejections, and transcript
+  damage versus torn-tail recovery. Logs go to stderr so they cannot
+  desynchronize the JSONL protocol on stdout.
+- Audited all 35 `#[tauri::command]` entry points and documented them in
+  `docs/IPC-COMMAND-SURFACE.md`. Tauri v2 capabilities do not gate app-defined
+  commands, so the minimal capability allowlist gave false assurance about this
+  surface. Three commands are broader than they need to be —
+  `load_attachment_paths` (arbitrary read), `write_diagnostics` (arbitrary
+  write) and `resolve_runtime_host_token` (hands a bearer token to JS) — and
+  are now logged. Logging is not a control: the real fix is to move the native
+  dialog into Rust so the backend owns the path, which changes the picker flow
+  and needs interactive testing per platform, so it is not bundled here.
+
 ## 0.1.49 — 2026-08-20
 
 - Fixed an update deadlock found while driving the live app: a session whose

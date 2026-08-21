@@ -20,6 +20,7 @@ struct HostConfig {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    amplifier_studio_lib::observability::init("amplifier-host");
     if let Err(error) = run().await {
         eprintln!("{error}");
         std::process::exit(1);
