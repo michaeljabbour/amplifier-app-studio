@@ -15,7 +15,7 @@ import {
 } from "./VisualArtifact";
 
 describe("visual artifacts", () => {
-  it("runs interactive HTML only inside a unique-origin, network-disabled sandbox", () => {
+  it("renders artifact HTML only inside a unique-origin, network-disabled sandbox", () => {
     const document = buildSandboxedHtmlDocument("<h1>Architecture</h1><script>document.body.dataset.ready='yes'</script>");
     expect(VISUAL_ARTIFACT_SANDBOX).toBe("allow-scripts");
     expect(VISUAL_ARTIFACT_SANDBOX).not.toContain("allow-same-origin");

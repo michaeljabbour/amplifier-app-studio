@@ -91,9 +91,11 @@ place.
   `MODULES.md` catalog; app control remains a capability of the active runtime
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
-- Bounded microphone speech-to-text into an editable draft. Studio uses an existing
-  runtime-host `OPENAI_API_KEY` with `gpt-transcribe`, never creates or
-  overwrites a key, and never submits the resulting text automatically.
+- Bounded microphone speech-to-text into an editable draft. On desktop Studio uses
+  this computer's existing `OPENAI_API_KEY` (environment or `~/.amplifier/keys.env`)
+  with `gpt-transcribe`, falling back to the runtime host only when there is no local
+  key; mobile and browser clients always use the host. It never creates or overwrites
+  a key, and never submits the resulting text automatically.
 - Recoverable setup conditions (such as a missing stored bundle) live in the
   machine inspector instead of masquerading as chat messages
 - Read-only all-project session drawer with project-path recovery for TUI/CLI

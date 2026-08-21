@@ -220,7 +220,7 @@ impl ServerOptions {
 
 /// Content-Security-Policy served to the browser client.
 ///
-/// Mirrors `app.security.csp` in tauri.conf.json minus the Tauri-only `ipc:` and `asset:`
+/// Mirrors `app.security.csp` in tauri.conf.json minus the Tauri-only `ipc:`
 /// schemes. The host previously sent NO CSP at all, which made the "network off" promise on
 /// `amplifier-html` artifacts true only in the desktop app: in a browser the sandboxed frame
 /// could navigate ITSELF to an external URL and beacon its contents out. `frame-src` is what
@@ -230,8 +230,8 @@ impl ServerOptions {
 /// `connect-src` deliberately stays as broad as the desktop policy: a browser client may be
 /// pointed at a bridge on another origin, and narrowing it to 'self' would break that.
 ///
-/// Studio injects no script into artifact frames, so `script-src` needs no hash: an artifact's
-/// own inline scripts are blocked by this inherited policy, which is the intended behaviour.
+/// Artifact frames inherit this policy, and `script-src` has no `'unsafe-inline'`, so an
+/// artifact's own inline scripts do not execute. That is the intended behaviour, not a gap.
 const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
 /// Attaches the browser client's security headers to every response.

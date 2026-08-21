@@ -77,7 +77,10 @@ one-time roadmap.
     restrictive CSP. The browser host must preserve equivalent response
     headers when deployed behind a TLS proxy.
 16. **Can sessions be retained, exported, deleted, or placed on legal hold?**
-    Not through Studio yet. The current drawer is intentionally read-only.
+    Export and import are live: a stored session can be exported to a portable
+    checkpoint and duplicated onto another compute host, over IPC and over the
+    HTTP bridge. Deletion, retention windows and legal hold are still not
+    offered through Studio.
 
 ## Composition, speed, and release operations
 
