@@ -5,6 +5,7 @@ mod image_drop;
 #[cfg(desktop)]
 mod local_tmux;
 pub mod observability;
+mod project_dir;
 mod protocol;
 #[cfg(desktop)]
 mod remote_hosts;

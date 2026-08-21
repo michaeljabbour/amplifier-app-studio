@@ -89,9 +89,9 @@ pub fn add_bundle(
 
 fn resolve_cwd(project_dir: Option<String>) -> Result<PathBuf, String> {
     match project_dir.filter(|value| !value.trim().is_empty()) {
-        Some(value) => PathBuf::from(value)
-            .canonicalize()
-            .map_err(|error| format!("Could not open project directory: {error}")),
+        // Previously canonicalize-only. canonicalize succeeds on a FILE, and the result went to
+        // Command::current_dir, which failed later as "Not a directory (os error 20)".
+        Some(value) => crate::project_dir::canonical_project_dir(&value),
         None => std::env::current_dir()
             .map_err(|error| format!("Could not read the current directory: {error}")),
     }

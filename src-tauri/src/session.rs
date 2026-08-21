@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
     future::Future,
-    path::{Path, PathBuf},
+    path::PathBuf,
     pin::Pin,
     process::Stdio,
     sync::{
@@ -1087,17 +1087,9 @@ fn exit_message(code: Option<i32>) -> String {
 }
 
 fn canonical_project_dir(value: &str) -> Result<PathBuf, String> {
-    let path = Path::new(value);
-    let canonical = path.canonicalize().map_err(|error| {
-        format!(
-            "Project directory '{}' is unavailable: {error}",
-            path.display()
-        )
-    })?;
-    if !canonical.is_dir() {
-        return Err(format!("'{}' is not a directory", canonical.display()));
-    }
-    Ok(canonical)
+    // Now trims. attach_resume passes a caller-supplied &str straight through, so this path
+    // previously rejected a directory that store.rs accepted.
+    crate::project_dir::canonical_project_dir(value)
 }
 
 fn push_option(command: &mut Command, flag: &str, value: Option<&str>) {

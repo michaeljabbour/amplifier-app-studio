@@ -751,7 +751,16 @@ async fn register_bundle(
 }
 
 async fn runtime_status() -> Result<Json<Value>, ServerError> {
-    serde_json::to_value(runtime_setup::status())
+    // `runtime_setup::status()` shells out twice -- `--version` and `provider status` -- and
+    // amplifier-host runs on a current_thread tokio runtime, so calling it inline stops the ONLY
+    // worker: every live session WebSocket on the host quits pumping until both children exit.
+    // Measured at ~1s cold and unbounded on a stalled mount or a first-run resolve. Every other
+    // handler that touches the filesystem or spawns a process already does this; this one and
+    // `transcription_status` were the two that did not.
+    let status = tokio::task::spawn_blocking(runtime_setup::status)
+        .await
+        .map_err(|error| ServerError::internal(format!("Runtime check failed: {error}")))?;
+    serde_json::to_value(status)
         .map(Json)
         .map_err(|error| ServerError::internal(format!("Could not encode runtime status: {error}")))
 }
@@ -888,11 +897,13 @@ async fn output_preview(
 }
 
 async fn transcription_status() -> Result<Json<Value>, ServerError> {
-    serde_json::to_value(crate::transcription::status())
-        .map(Json)
-        .map_err(|error| {
-            ServerError::internal(format!("Could not encode transcription status: {error}"))
-        })
+    // Reads keys.env from disk; small, but same rule as `runtime_status` above.
+    let status = tokio::task::spawn_blocking(crate::transcription::status)
+        .await
+        .map_err(|error| ServerError::internal(format!("Transcription check failed: {error}")))?;
+    serde_json::to_value(status).map(Json).map_err(|error| {
+        ServerError::internal(format!("Could not encode transcription status: {error}"))
+    })
 }
 
 async fn transcribe_audio(

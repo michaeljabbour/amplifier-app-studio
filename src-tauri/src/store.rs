@@ -469,14 +469,7 @@ fn import_stored_session_into(
 }
 
 fn canonical_project_dir(project_dir: &str) -> Result<PathBuf, String> {
-    let trimmed = project_dir.trim();
-    let project = Path::new(trimmed)
-        .canonicalize()
-        .map_err(|error| format!("Project directory '{trimmed}' is unavailable: {error}"))?;
-    if !project.is_dir() {
-        return Err(format!("'{}' is not a directory", project.display()));
-    }
-    Ok(project)
+    crate::project_dir::canonical_project_dir(project_dir)
 }
 
 fn validate_session_id(session_id: &str) -> Result<(), String> {
