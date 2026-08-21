@@ -14,11 +14,35 @@ interface Props {
   onActiveChange?: (active: boolean) => void;
 }
 
+/**
+ * Turns a getUserMedia rejection into something a user can act on.
+ *
+ * macOS reports a denied microphone as a bare DOMException; "Microphone recording could not
+ * start" left the user with no idea that the fix is one checkbox in System Settings.
+ */
+export function microphoneFailureMessage(cause: unknown): string {
+  // Read `name`/`message` structurally rather than via `instanceof`: DOMException does not
+  // reliably inherit from Error across engines (it does not under jsdom), and an instanceof
+  // check silently dropped the useful part of every rejection it was meant to explain.
+  const record = typeof cause === "object" && cause !== null ? cause as { name?: unknown; message?: unknown } : undefined;
+  const name = typeof record?.name === "string" ? record.name : undefined;
+  const message = typeof record?.message === "string" ? record.message : undefined;
+
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Microphone access was denied. Allow Amplifier Studio in System Settings → Privacy & Security → Microphone.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No microphone was found on this computer.";
+  }
+  if (name && message) return `${name}: ${message}`;
+  if (message) return message;
+  return typeof cause === "string" ? cause : "Microphone recording could not start.";
+}
+
 export function VoiceInputButton(props: Props) {
   const [active, setActive] = createSignal(false);
   const [processing, setProcessing] = createSignal(false);
   const [error, setError] = createSignal<string>();
-  const captureAvailable = audioCaptureAvailable();
   let capture: AudioCaptureSession | undefined;
   let baseDraft = "";
 
@@ -58,31 +82,37 @@ export function VoiceInputButton(props: Props) {
     }
 
     setError(undefined);
+    if (!audioCaptureAvailable()) {
+      setError("This build of Studio cannot reach a microphone from its WebView.");
+      return;
+    }
+    if (!props.available) {
+      setError(props.unavailableReason || "Speech-to-text is not configured, so there is nowhere to send the recording.");
+      return;
+    }
     baseDraft = props.draft;
     try {
       capture = await startAudioCapture();
       setActive(true);
       setBlocked(true);
     } catch (cause) {
-      setError(cause instanceof Error
-        ? cause.message
-        : typeof cause === "string"
-          ? cause
-          : "Microphone recording could not start.");
+      setError(microphoneFailureMessage(cause));
       setBlocked(false);
     }
   };
 
   onCleanup(() => capture?.abort());
 
-  const usable = () => captureAvailable && props.available;
-  const tooltip = () => !captureAvailable
+  // Deliberately NOT used to disable the button. A disabled control with a tooltip is a dead end:
+  // it cannot be focused on some platforms, tooltips are invisible to touch and to screen readers,
+  // and the reason is exactly what the user needs. Clicking now always produces an explanation.
+  const tooltip = () => !audioCaptureAvailable()
     ? "Voice input is not available in this WebView"
     : !props.available
-      ? props.unavailableReason || "Configure speech-to-text on the runtime host"
+      ? props.unavailableReason || "Speech-to-text is not configured"
       : active()
         ? "Stop voice input and place the transcript in the draft"
-        : `Use speech-to-text to fill the editable draft. Studio never submits automatically. ${props.unavailableReason || ""}`;
+        : "Use speech-to-text to fill the editable draft. Studio never submits automatically.";
   const status = () => processing() ? "Transcribing voice input" : active() ? "Listening · click again to transcribe" : "";
 
   return (
@@ -91,7 +121,7 @@ export function VoiceInputButton(props: Props) {
         type="button"
         class="voice-input-trigger"
         classList={{ active: active(), processing: processing() }}
-        disabled={props.disabled || processing() || !usable()}
+        disabled={props.disabled || processing()}
         aria-pressed={active()}
         aria-label={active() ? "Stop voice input and transcribe" : "Start voice input"}
         title={tooltip()}
