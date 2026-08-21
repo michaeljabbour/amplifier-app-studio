@@ -8,7 +8,7 @@ use crate::{
 use axum::{
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-        Path as AxumPath, Query, Request, State,
+        OriginalUri, Path as AxumPath, Query, Request, State,
     },
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
@@ -314,6 +314,27 @@ fn build_app(state: ServerState, frontend_dir: &Path) -> Result<Router, String> 
             state.clone(),
             require_bearer,
         ))
+        // An unknown API path must be answered by the API router, not fall through to the SPA.
+        //
+        // axum only nests an inner router's fallback when the inner router has one, so without
+        // this an unimplemented /v1/api/* path reached the root `.fallback_service(assets)` and
+        // returned index.html: HTTP 200, text/html, and -- because that fallback lives outside
+        // this CorsLayer -- no access-control-allow-origin. curl sees a healthy 200; a browser
+        // sees a CORS failure and `fetch` REJECTS with an opaque TypeError, indistinguishable
+        // from a dead tunnel. That is what made a stored session on an older host report itself
+        // as unreachable while the host was answering normally. Attached before `.layer(cors)`
+        // so the 404 carries CORS headers too.
+        .fallback(|OriginalUri(uri): OriginalUri| async move {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": format!(
+                        "This Amplifier Host does not implement {}. The host is older than this Studio build; update the host.",
+                        uri.path()
+                    )
+                })),
+            )
+        })
         // This outer layer answers browser preflight before bearer middleware;
         // actual API requests still require the token.
         .layer(cors);
@@ -442,16 +463,18 @@ async fn health() -> Json<Value> {
 }
 
 async fn config(State(state): State<ServerState>) -> Json<Value> {
-    let capabilities = if repo_clone::configured_dev_workspace(
+    // `sessionTransfer` is unconditional: it advertises that this host implements
+    // stored-session export/import at all. A client talking to a host that predates those
+    // endpoints can then say so, instead of discovering it as an unattributable fetch failure.
+    let mut capabilities = vec!["sessionTransfer"];
+    if repo_clone::configured_dev_workspace(
         &state.default_project_dir,
         &state.security.allowed_project_roots,
     )
     .is_ok()
     {
-        vec!["githubRepositoryClone"]
-    } else {
-        Vec::new()
-    };
+        capabilities.push("githubRepositoryClone");
+    }
     Json(json!({
         "version": API_VERSION,
         "defaultProjectDir": state.default_project_dir,
@@ -1567,6 +1590,109 @@ mod tests {
             },
             shutdown,
         }
+    }
+
+    /// Regression: an unimplemented API path fell through to the root `fallback_service(assets)`
+    /// and returned the SPA -- HTTP 200, text/html, and no access-control-allow-origin, because
+    /// that fallback sits outside the CorsLayer. curl saw a healthy 200; the WebView saw a CORS
+    /// failure and `fetch` rejected with an opaque TypeError. A stored session on a host too old
+    /// to implement /v1/api/stored-session-export therefore reported itself as unreachable.
+    #[tokio::test]
+    async fn unknown_api_paths_answer_json_inside_cors() {
+        use tower::ServiceExt;
+
+        let frontend = tempfile::tempdir().expect("frontend dir");
+        fs::write(
+            frontend.path().join("index.html"),
+            "<!doctype html><html></html>",
+        )
+        .expect("index.html");
+        let app = build_app(browser_test_state(), frontend.path()).expect("router");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    // A path this host does not register at all -- which is what an endpoint
+                    // added after the host was built looks like from the host's side.
+                    .uri("/v1/api/some-endpoint-added-after-this-host-shipped")
+                    // browser_test_state allows this origin; the native Studio origins are added
+                    // in ServerOptions construction, which the helper bypasses.
+                    .header(header::ORIGIN, "http://127.0.0.1:4317")
+                    .header(
+                        header::AUTHORIZATION,
+                        "Bearer 0123456789abcdef0123456789abcdef",
+                    )
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .map(|v| v.to_str().unwrap()),
+            Some("http://127.0.0.1:4317"),
+            "the 404 must carry CORS headers or the browser reports it as a network failure",
+        );
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let json: Value = serde_json::from_slice(&body).expect("json body, not the SPA");
+        let error = json["error"].as_str().expect("error string");
+        // OriginalUri, not Uri: inside a nested router Uri is only the remainder.
+        assert!(
+            error.contains("/v1/api/some-endpoint-added-after-this-host-shipped"),
+            "{error}"
+        );
+        assert!(error.contains("older than this Studio build"), "{error}");
+    }
+
+    /// The host advertises stored-session transfer so a client can tell an old host from a new
+    /// one before it tries, rather than inferring it from a rejected fetch.
+    #[tokio::test]
+    async fn config_advertises_session_transfer() {
+        use tower::ServiceExt;
+
+        let frontend = tempfile::tempdir().expect("frontend dir");
+        fs::write(
+            frontend.path().join("index.html"),
+            "<!doctype html><html></html>",
+        )
+        .expect("index.html");
+        let app = build_app(browser_test_state(), frontend.path()).expect("router");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/api/config")
+                    .header(
+                        header::AUTHORIZATION,
+                        "Bearer 0123456789abcdef0123456789abcdef",
+                    )
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let json: Value = serde_json::from_slice(&body).expect("json");
+        let capabilities: Vec<&str> = json["capabilities"]
+            .as_array()
+            .expect("capabilities")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(
+            capabilities.contains(&"sessionTransfer"),
+            "{capabilities:?}"
+        );
     }
 
     /// Regression: the browser host shipped no CSP at all, so the "network off" promise on
