@@ -94,7 +94,7 @@ jobs:
           fi
           sha256sum "$AAB_PATH"
           echo "AAB_PATH=$AAB_PATH" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: amplifier-studio-android-aab
           path: ${{ env.AAB_PATH }}

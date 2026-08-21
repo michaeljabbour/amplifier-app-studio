@@ -73,7 +73,7 @@ jobs:
           if (-not (Test-Path (Join-Path $unpacked "amplifier-studio.exe"))) { throw "MSIX is missing amplifier-studio.exe" }
           Get-FileHash $msix.FullName -Algorithm SHA256
           "msix_path=$($msix.FullName)" >> $env:GITHUB_OUTPUT
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: amplifier-studio-windows-store-msix
           path: ${{ steps.verify.outputs.msix_path }}

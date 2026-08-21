@@ -178,7 +178,7 @@ jobs:
           xcrun altool --validate-app --file "$IPA_PATH" --type ios \
             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: amplifier-studio-ios-ipa
           path: ${{ env.IPA_PATH }}
