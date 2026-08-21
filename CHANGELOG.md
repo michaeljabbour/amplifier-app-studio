@@ -4,6 +4,23 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.63 — 2026-08-21
+
+Small cleanups from the dead-code sweep. Zero behaviour change.
+
+- Removed the Vite dev proxy on `/api`. The client builds absolute URLs under
+  `/v1/api`, which that prefix never matches, so the rule has never proxied a
+  request.
+- Removed a `display: none` rule for `.settings-scroll-controls`, a class that
+  exists nowhere, and the `--panel-3` custom property, which no rule reads in
+  either theme.
+- Narrowed two exports to module scope.
+
+Deliberately deferred: the sweep also proposed consolidating the release gate,
+the version bumper and the CI verification recipe into shared modules. Those are
+correct, but refactoring release tooling immediately before a release is the
+wrong order — they land after the next publish, not before it.
+
 ## 0.1.62 — 2026-08-21
 
 - The Dependabot configuration added in 0.1.52 could never merge anything. Every

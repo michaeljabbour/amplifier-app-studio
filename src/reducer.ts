@@ -1713,7 +1713,7 @@ function outputArtifacts(event: UIEvent): Array<{
 /** Path-shaped fields a write-like tool call uses to name its target. */
 const TOOL_INPUT_PATH_KEYS = ["file_path", "filePath", "path", "filename", "target_file", "TargetFile"];
 
-export function toolInputPaths(input: unknown): string[] {
+function toolInputPaths(input: unknown): string[] {
   if (!isRecord(input)) return [];
   const paths = TOOL_INPUT_PATH_KEYS
     .map((key) => stringValue(input[key]).trim())
