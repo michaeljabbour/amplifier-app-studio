@@ -404,15 +404,25 @@ export function durableRuntimeHostForSession(
 ): RuntimeHost | undefined {
   const url = input.hostUrl ? normalizedBridgeUrl(input.hostUrl) : undefined;
   if (!url || input.hostId === "local") return undefined;
-  const existing = hosts.find((host) => host.tokenRef !== "local"
-    && host.tokenRef !== "session"
-    && normalizedBridgeUrl(host.url) === url);
-  if (existing) {
-    return { ...existing, url, defaultProjectRoot: configuredProjectRoot || existing.defaultProjectRoot };
-  }
+  const durable = (host: RuntimeHost) => host.tokenRef !== "local" && host.tokenRef !== "session";
   const parsed = new URL(url);
   const suppliedName = input.hostName?.trim();
   const genericName = !suppliedName || /^(configured|connected) host$/i.test(suppliedName);
+
+  const existing = hosts.find((host) => durable(host) && normalizedBridgeUrl(host.url) === url)
+    // Re-point rather than duplicate. A host's id is derived from its URL, and these URLs are
+    // loopback ports handed out by an SSH or Tailscale forward -- inherently ephemeral. When a
+    // forward came back on a different port the URL stopped matching, a brand new host record
+    // and keychain entry were minted, and every stored session pinned to the old id was
+    // orphaned with no way to reach it. A user-assigned name ("Spark 288f") is the stable
+    // identity here, so reuse that record and move it to the new URL. Generic auto-names are
+    // excluded: collapsing two "Configured host" entries would merge unrelated computes.
+    || (genericName
+      ? undefined
+      : hosts.find((host) => durable(host) && host.name.trim().toLowerCase() === suppliedName!.toLowerCase()));
+  if (existing) {
+    return { ...existing, url, defaultProjectRoot: configuredProjectRoot || existing.defaultProjectRoot };
+  }
   const id = runtimeHostId(url);
   return {
     id,

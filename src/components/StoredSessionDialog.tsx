@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { Copy, MonitorUp, X } from "lucide-solid";
+import { keepModalFocus } from "../focusTrap";
 import type { StoredSession } from "../protocol";
 import { storedSessionCanDuplicate, storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
 
@@ -42,7 +43,14 @@ export function StoredSessionDialog(props: Props) {
   };
 
   return (
-    <div class="modal-backdrop stored-session-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy() && props.onClose()}>
+    <div
+      class="modal-backdrop stored-session-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && !busy() && props.onClose()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy()) props.onClose();
+        else keepModalFocus(event);
+      }}
+    >
       <section class="stored-session-dialog" role="dialog" aria-modal="true" aria-labelledby="stored-session-title">
         <header>
           <div><span class="eyebrow">DURABLE SESSION</span><h2 id="stored-session-title">{props.session.name}</h2></div>

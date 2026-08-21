@@ -3,6 +3,7 @@ import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, Rad
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery } from "../storedSessions";
+import { keepModalFocus } from "../focusTrap";
 
 interface Props {
   sessions: StoredSession[];
@@ -54,6 +55,7 @@ export function SessionDrawer(props: Props) {
       onMouseDown={(event) => event.target === event.currentTarget && props.onClose()}
       onKeyDown={(event) => {
         if (event.key === "Escape") props.onClose();
+        else keepModalFocus(event);
       }}
     >
       <aside class="session-drawer" role="dialog" aria-modal="true" aria-label="Stored sessions">

@@ -1,6 +1,7 @@
 import { onMount, Show } from "solid-js";
 import type { SessionViewState } from "../protocol";
 import { stopRuntimeActivity } from "../sessionLifecycle";
+import { keepModalFocus } from "../focusTrap";
 
 interface Props {
   session: SessionViewState;
@@ -26,19 +27,9 @@ export function SessionLifecycleDialog(props: Props) {
       cancel();
       return;
     }
-    if (event.key !== "Tab") return;
-    const dialog = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('[role="alertdialog"]');
-    const controls = dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
-    if (!controls?.length) return;
-    const first = controls.item(0);
-    const last = controls.item(controls.length - 1);
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    // Shared with every other modal: this used to be the only dialog with a trap, and its
+    // querySelectorAll ordering was not guaranteed to be document order.
+    keepModalFocus(event, '[role="alertdialog"]');
   };
 
   return (

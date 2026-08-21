@@ -38,3 +38,15 @@ jobs:
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
       - run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+
+      # Reproducible != unvulnerable. These fail the build on a known advisory rather than
+      # leaving it to a human to remember to look.
+      - name: Audit npm dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: npm audit --audit-level=high
+      - name: Install cargo-audit
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: cargo install cargo-audit --locked || true
+      - name: Audit Rust dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: cargo audit --file src-tauri/Cargo.lock

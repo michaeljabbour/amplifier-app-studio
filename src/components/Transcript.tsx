@@ -263,7 +263,11 @@ export function Transcript(props: Props) {
                 <div class="block-gutter"><span class="live-spark">✦</span></div>
                 <div class="block-body">
                   <div class="block-label">AMPLIFIER · LIVE</div>
-                  <div class="answer-text live-markdown"><Markdown text={liveTailText() || tail.text} /><span class="stream-caret" /></div>
+                  {/* The streaming answer is the product's primary output and was the one
+                      region with no live region announcement: screen-reader users got the boot,
+                      working and fatal cards but never the answer itself. `polite` and
+                      non-atomic so it reads incrementally instead of restarting each delta. */}
+                  <div class="answer-text live-markdown" aria-live="polite" aria-atomic="false"><Markdown text={liveTailText() || tail.text} /><span class="stream-caret" /></div>
                 </div>
               </article>
             </Show>
