@@ -44,8 +44,12 @@ pub fn status() -> TranscriptionStatus {
         available: false,
         provider: None,
         model: None,
-        message: "Add OPENAI_API_KEY to the runtime host; Studio will not create or overwrite a key for speech-to-text"
-            .to_owned(),
+        // Name where it looked. "Add it to the runtime host" is ambiguous the moment a desktop
+        // has a remote compute host configured -- the user cannot tell which machine is meant.
+        message: format!(
+            "No OPENAI_API_KEY in this host's environment or {}. Studio will not create or overwrite a key for speech-to-text.",
+            keys_env_path().display()
+        ),
     }
 }
 
@@ -120,6 +124,15 @@ fn openai_api_key() -> Option<String> {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .or_else(read_key_from_amplifier_home)
+}
+
+/// Where `read_key_from_amplifier_home` looks, so the unavailable message can name it.
+fn keys_env_path() -> PathBuf {
+    env::var_os("AMPLIFIER_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".amplifier")))
+        .unwrap_or_else(|| PathBuf::from(".amplifier"))
+        .join("keys.env")
 }
 
 fn read_key_from_amplifier_home() -> Option<String> {

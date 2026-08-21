@@ -4,6 +4,26 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.56 — 2026-08-20
+
+- Voice input asks this computer about the microphone before asking a remote
+  compute host. `getTranscriptionStatus()` queried whichever bridge was
+  persisted in localStorage and never the local process, so a desktop with a
+  Spark configured asked the Spark whether speech-to-text was available. That
+  host has no `OPENAI_API_KEY`, answered "unavailable", and the mic button went
+  permanently disabled on a Mac holding a perfectly good key in
+  `~/.amplifier/keys.env`. Capture happens in this machine's WebView, so this
+  machine's credential is consulted first; the audio then goes to whichever side
+  reported the credential. Mobile and browser clients still use the bridge.
+- The mic button is no longer a dead toggle. It stays clickable and explains the
+  problem when clicked: a disabled control with a tooltip is unreachable by
+  touch and by screen readers, and the reason is exactly what the user needs. A
+  denied microphone now names the remedy — System Settings → Privacy & Security
+  → Microphone — instead of "Microphone recording could not start".
+- The unavailable message names the file it looked in, rather than saying "add
+  it to the runtime host", which is ambiguous the moment a desktop has a remote
+  host configured.
+
 ## 0.1.55 — 2026-08-20
 
 - Amplifier Host answers an unimplemented API path with JSON 404 from inside its

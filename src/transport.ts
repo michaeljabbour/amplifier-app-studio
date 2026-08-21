@@ -81,6 +81,8 @@ export interface TranscriptionStatus {
   provider?: string;
   model?: string;
   message: string;
+  /** Which side answered, so the audio is later sent to the side that has the credential. */
+  origin?: "local" | "bridge";
 }
 
 export interface OutputPreview {
@@ -882,22 +884,52 @@ export async function configureProvider(input: {
   });
 }
 
+/**
+ * Where speech-to-text runs, resolved local-first on desktop.
+ *
+ * This used to ask whichever bridge was persisted in localStorage, never the local process. On a
+ * desktop with a remote compute host configured, Studio therefore asked THAT host whether the
+ * microphone could be used -- and a Spark with no OPENAI_API_KEY answered "unavailable", which
+ * disabled the mic button on a Mac that had a perfectly good key in ~/.amplifier/keys.env. The
+ * capture happens in this machine's WebView, so this machine's credential should be consulted
+ * first; the bridge remains the fallback for mobile and browser clients, which have no local
+ * runtime at all.
+ */
 export async function getTranscriptionStatus(): Promise<TranscriptionStatus> {
-  const bridge = bridgeBaseUrl();
-  if (bridge) return fetchJson<TranscriptionStatus>(hostApiUrl(bridge, "/transcription"));
-  requireTauri();
-  return invoke<TranscriptionStatus>("transcription_status");
-}
-
-export async function transcribeAudio(recording: AudioRecording): Promise<string> {
+  // isDesktopRuntime, not isTauriRuntime: the transcription commands are registered without a
+  // cfg gate, so a phone would happily invoke a local command that can never hold a key.
+  if (isDesktopRuntime()) {
+    const local = await invoke<TranscriptionStatus>("transcription_status").catch(() => undefined);
+    if (local?.available) return { ...local, origin: "local" };
+    const bridge = bridgeBaseUrl();
+    if (!bridge) return { ...(local ?? { available: false, message: "Speech-to-text is unavailable." }), origin: "local" };
+    const remote = await fetchJson<TranscriptionStatus>(hostApiUrl(bridge, "/transcription"), undefined, bridge)
+      .catch(() => undefined);
+    return remote?.available ? { ...remote, origin: "bridge" } : { ...(local ?? remote ?? { available: false, message: "Speech-to-text is unavailable." }), origin: "local" };
+  }
   const bridge = bridgeBaseUrl();
   if (bridge) {
-    const result = await fetchJson<{ text: string }>(hostApiUrl(bridge, "/transcription"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(recording),
-    });
-    return result.text;
+    const remote = await fetchJson<TranscriptionStatus>(hostApiUrl(bridge, "/transcription"), undefined, bridge);
+    return { ...remote, origin: "bridge" };
+  }
+  requireTauri();
+  return { ...(await invoke<TranscriptionStatus>("transcription_status")), origin: "local" };
+}
+
+export async function transcribeAudio(recording: AudioRecording, origin?: "local" | "bridge"): Promise<string> {
+  // Send the audio to whichever side reported the credential, rather than re-deriving it here
+  // and risking a different answer than the one the button was enabled on.
+  const useLocal = origin ? origin === "local" : isDesktopRuntime();
+  if (!useLocal) {
+    const bridge = bridgeBaseUrl();
+    if (bridge) {
+      const result = await fetchJson<{ text: string }>(hostApiUrl(bridge, "/transcription"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(recording),
+      }, bridge);
+      return result.text;
+    }
   }
   requireTauri();
   return invoke<string>("transcribe_audio", { request: recording });

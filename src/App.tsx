@@ -955,7 +955,7 @@ export default function App() {
             onAttachments={setHomeAttachments}
             onPickAttachments={pickAttachments}
             transcription={transcription()}
-            onTranscribe={transcribeAudio}
+            onTranscribe={(recording) => transcribeAudio(recording, transcription()?.origin)}
           />
           }
         >
@@ -1034,7 +1034,7 @@ export default function App() {
                     autopilotAvailable={canEngageAutopilot(active())}
                     transcriptionAvailable={transcription()?.available === true}
                     transcriptionMessage={transcription()?.message}
-                    onTranscribe={transcribeAudio}
+                    onTranscribe={(recording) => transcribeAudio(recording, transcription()?.origin)}
                   />}
                 >
                   <AttentionBar state={session()} onChoose={chooseAttention} />

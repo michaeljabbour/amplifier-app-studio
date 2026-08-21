@@ -322,9 +322,13 @@ Capabilities are compositions with independently verifiable prerequisites:
   `imagen-mcp`, and separately configured OpenAI or Gemini image credentials.
 - Attractor requires typed pipeline events. Studio renders only recorded DOT
   and node/edge state, never a transcript-derived imitation.
-- microphone input records a bounded clip, sends it to the runtime host's
-  transcription adapter, produces an editable local draft, and never submits
-  by itself. The first adapter uses an existing `OPENAI_API_KEY` with
+- microphone input records a bounded clip, sends it to a transcription adapter,
+  produces an editable local draft, and never submits by itself. On desktop the
+  LOCAL adapter is consulted first and the bridge is only a fallback: capture
+  happens in this machine's WebView, so asking a remote compute host whether the
+  microphone may be used meant a Spark with no `OPENAI_API_KEY` disabled the mic
+  button on a Mac that had one. Mobile and browser clients have no local runtime
+  and still use the bridge. The first adapter uses an existing `OPENAI_API_KEY` with
   `gpt-transcribe`; it skips the capability when no key exists and never
   creates or overwrites one. Another provider can replace that adapter without
   changing the composer contract.
