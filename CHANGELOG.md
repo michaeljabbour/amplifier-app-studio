@@ -20,6 +20,18 @@ was verified individually rather than on the aggregate suite.
   headers both still hold.
 - `base64` 0.22.1 → 0.23.1 — token and attachment encoding.
 
+Two release-path fixes rode along:
+
+- The publish workflow verified that the public updater feed carried a url and a
+  signature per platform, but never that the url resolved. It now downloads one
+  byte of each advertised artifact, so a dead link fails the release instead of
+  the user. An empty artifact list is an explicit failure rather than a silent
+  pass.
+- A release-gate test used `HEAD` as its base ref, so bumping the version and
+  then running the suite -- the order anyone actually uses -- produced a phantom
+  failure that vanished after committing. It now derives the base from the
+  working tree.
+
 110 Rust tests, 279 frontend tests, 19 release checks.
 
 ## 0.1.64 — 2026-08-21
