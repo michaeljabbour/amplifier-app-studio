@@ -28,7 +28,7 @@ That makes their blast radius worth bounding on its own.
 | `load_attachment_paths` | **any absolute path** | **none beyond existence** | count 8, 20 MB each, 64 MB docx inflation |
 | `write_diagnostics` | **any absolute path** | absolute + parent is a directory | 64 MB |
 | `resolve_runtime_host_token` | host `id` | registry lookup | returns a **plaintext bearer token** to JS |
-| `store_runtime_host_token` | host `id`, token | length 32–4096, Security framework write | yes |
+| `store_runtime_host_token` | host `id`, token | length 32–4096; macOS Security framework, Windows Credential Manager, Linux 0600 file under `$AMPLIFIER_HOME/credentials` | yes |
 | `terminal_tmux_*` (7) | session name | validated argv bridge, charset-checked | yes |
 
 Everything else (`fetch_update`, `install_update`, `start_session`, `send_op`, `stop_session`,

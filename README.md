@@ -188,8 +188,12 @@ host allowlist.
 refuses non-loopback binds; put Tailscale Serve, an SSH tunnel, or an
 authenticated TLS reverse proxy in front of it. Provider credentials stay on
 the host. Client-side known endpoints live in `~/.amplifier/hosts.yaml`, while
-tokens use environment or macOS Keychain references and are never written
-into that registry.
+tokens are referenced, never stored, in that registry. A `keychain:` reference
+resolves to the macOS Keychain, the Windows Credential Manager, or -- on Linux,
+where a headless compute host usually has no D-Bus session for a Secret Service
+to answer on -- a `0600` file under `$AMPLIFIER_HOME/credentials`. Studio
+creates that directory `0700`; note it does not narrow an `~/.amplifier` that an
+earlier build already created world-readable.
 
 Studio promotes a remote endpoint into the compute pool only after it has
 successfully started a session. In **Settings → Connection**, choose any saved

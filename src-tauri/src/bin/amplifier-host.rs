@@ -1,3 +1,4 @@
+use amplifier_studio_lib::amplifier_home::write_secret;
 use serde::{Deserialize, Serialize};
 use std::{env, fs, io::Read, path::PathBuf};
 
@@ -189,61 +190,11 @@ fn write_config(config: &HostConfig) -> Result<(), String> {
         .map_err(|error| format!("Could not replace {}: {error}", path.display()))
 }
 
-/// Writes a secret so it is never readable by other users, not even briefly.
-///
-/// This used to be `fs::write` followed by `set_permissions(0o600)`, which creates the file at
-/// the process umask first -- typically 0644 -- and only narrows it afterwards. The bearer token
-/// was therefore world-readable for the window between those two calls, under a directory that
-/// was itself created 0755. The mode is now applied at creation time, and the parent directory
-/// is created 0700, so the token is never exposed even transiently.
-fn write_secret(path: &PathBuf, value: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        create_private_dir(parent)?;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
-        file.write_all(format!("{value}\n").as_bytes())
-            .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
-        // `.mode()` only applies when the file is created, so an existing token written by an
-        // older build still has to be narrowed explicitly.
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("Could not protect {}: {error}", path.display()))?;
-    }
-    #[cfg(not(unix))]
-    fs::write(path, format!("{value}\n"))
-        .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
-
-    Ok(())
-}
-
-/// Creates a directory that only its owner can enter, on Unix.
-fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true).mode(0o700);
-        builder
-            .create(path)
-            .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
-        return Ok(());
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-            .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
-        Ok(())
-    }
+fn amplifier_home() -> PathBuf {
+    env::var_os("AMPLIFIER_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".amplifier")))
+        .unwrap_or_else(|| PathBuf::from(".amplifier"))
 }
 
 fn new_token() -> Result<String, String> {
@@ -252,13 +203,6 @@ fn new_token() -> Result<String, String> {
         .and_then(|mut source| source.read_exact(&mut bytes))
         .map_err(|error| format!("Could not obtain operating-system randomness: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-fn amplifier_home() -> PathBuf {
-    env::var_os("AMPLIFIER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".amplifier")))
-        .unwrap_or_else(|| PathBuf::from(".amplifier"))
 }
 
 fn config_path() -> PathBuf {
