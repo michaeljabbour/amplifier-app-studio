@@ -4,6 +4,35 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.60 — 2026-08-21
+
+Corrections found by sweeping for statements the code no longer supports.
+
+- The visualization protocol doc still described `amplifier-html` as
+  "interactive HTML, CSS, SVG, and local JavaScript" and told authors to reach
+  for HTML "when interaction or animation materially improves understanding" —
+  two lines above the paragraph added in 0.1.54 saying author JavaScript does
+  not execute. It also claimed the artifact CSP is "stricter than Studio
+  itself", which is only true of the directives that matter: its
+  `script-src 'unsafe-inline'` is looser, and that is exactly why the frame
+  inheriting Studio's policy is what blocks author scripts.
+- The README still said speech-to-text uses the runtime host's key. Since 0.1.56
+  desktop resolves the local key first.
+- `RELEASE-READINESS.md` still answered "not through Studio yet" for session
+  export. Export and import have been live end to end — over IPC and over the
+  HTTP bridge — for some time; deletion, retention and legal hold genuinely are
+  not offered, and the answer now distinguishes them.
+- Dropped `asset:` and `http://asset.localhost` from both CSPs' `img-src`. The
+  asset protocol is disabled and nothing calls `convertFileSrc`, so those tokens
+  widened the policy for a capability the app does not use.
+- Removed a comment describing the artifact CSP hash machinery deleted in
+  0.1.54.
+
+Known and deliberately not changed: Studio still advertises an `auto-height`
+presentation capability to the runtime, which it no longer implements. That
+string is part of amplifier-runtime's submit-op contract, so retiring it is a
+cross-repo change — runtime first, then the pin, then Studio.
+
 ## 0.1.59 — 2026-08-21
 
 - Advanced the pinned amplifier-runtime revision from `b9568a2` to `6d46915`,

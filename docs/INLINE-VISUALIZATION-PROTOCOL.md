@@ -5,7 +5,7 @@ Amplifier Studio renders explicit visual-artifact fences inside coordinator Mark
 ```text
 amplifier-dot   Graphviz source for flows, graphs, and execution topology
 amplifier-svg   static vector figures that need precise custom drawing
-amplifier-html  self-contained interactive HTML, CSS, SVG, and local JavaScript
+amplifier-html  self-contained HTML, CSS, SVG and Canvas markup (no author JavaScript)
 ```
 
 Use a fenced block named `amplifier-dot`, `amplifier-svg`, or `amplifier-html`. Ordinary `html`, `svg`, and `dot` code blocks remain source code; they are never promoted into a visual surface implicitly.
@@ -25,8 +25,12 @@ Use a fenced block named `amplifier-dot`, `amplifier-svg`, or `amplifier-html`. 
   internally, with an Expand control that grows it to `min(80vh, 1000px)`. Studio injects no
   script of its own into the frame; sizing is pure CSS.
 
-The outer Studio CSP permits only the sandboxed local frame. The artifact CSP is stricter than Studio itself and is part of the rendered document, so a model-authored artifact cannot inherit Studio network access.
+The outer Studio CSP permits only the sandboxed local frame. The artifact's own CSP is part of the
+rendered document and is stricter than Studio's on the directives that matter here -- `default-src`,
+`connect-src` and `frame-src` are all `'none'` -- so a model-authored artifact cannot reach the
+network. It is not stricter on every directive: its `script-src 'unsafe-inline'` is looser than
+Studio's, which is precisely why the frame inheriting Studio's policy is what blocks author scripts.
 
 ## Bundle guidance
 
-Visualization-oriented agents should emit one complete fence followed by a short prose interpretation. Prefer DOT for topology, SVG for publication-style static figures, and HTML only when interaction or animation materially improves understanding. The composer starter teaches this contract without coupling the runtime to any presentation format: `amplifier-runtime` carries text and events; Studio owns safe rendering.
+Visualization-oriented agents should emit one complete fence followed by a short prose interpretation. Prefer DOT for topology, SVG for publication-style static figures, and HTML when layout, tables or CSS styling carry the meaning. Do not reach for HTML expecting interactivity: author scripts do not run, so a chart that needs a click handler should be a DOT or SVG figure instead. The composer starter teaches this contract without coupling the runtime to any presentation format: `amplifier-runtime` carries text and events; Studio owns safe rendering.
