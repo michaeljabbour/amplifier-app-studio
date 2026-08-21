@@ -108,6 +108,24 @@ pub fn resolve_token(id: &str) -> Result<String, String> {
             format!("Could not read the secure credential for host '{id}': {error}")
         });
     }
+    #[cfg(target_os = "linux")]
+    if let Some(account) = host.token_ref.strip_prefix("keychain:") {
+        // A 0600 file under AMPLIFIER_HOME rather than Secret Service. Studio's Linux role is
+        // usually a headless compute host, where there is no D-Bus session for gnome-keyring or
+        // KWallet to answer on, so a Secret Service dependency would fail exactly where Linux is
+        // actually used -- and it would pull a large dependency tree in to do it.
+        let path = credential_path(account);
+        let token = fs::read_to_string(&path)
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_default();
+        if (32..=4096).contains(&token.len()) {
+            return Ok(token);
+        }
+        return Err(format!(
+            "No stored credential for host '{id}' at {}",
+            path.display()
+        ));
+    }
     Err(format!(
         "Token reference '{}' is not supported on this platform",
         host.token_ref
@@ -140,6 +158,11 @@ pub fn store_token(id: &str, token: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     if let Some(account) = host.token_ref.strip_prefix("keychain:") {
         return windows_store_token(account, token)
+            .map_err(|error| format!("Could not protect the credential for host '{id}': {error}"));
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(account) = host.token_ref.strip_prefix("keychain:") {
+        return crate::amplifier_home::write_secret(&credential_path(account), token)
             .map_err(|error| format!("Could not protect the credential for host '{id}': {error}"));
     }
     Err(format!(
@@ -259,14 +282,19 @@ fn write(hosts: &[RuntimeHost]) -> Result<(), String> {
 }
 
 fn validate(host: &RuntimeHost) -> Result<(), String> {
+    // A host id becomes a filename under AMPLIFIER_HOME/credentials on Linux. The charset alone
+    // admitted "." and ".." -- both non-empty, short, and made only of permitted characters --
+    // so a hand-edited hosts.yaml could point a credential at a directory. Reject leading dots
+    // outright rather than sanitising the path at every use.
     if host.id.is_empty()
         || host.id.len() > 63
+        || host.id.starts_with('.')
         || !host.id.chars().all(|value| {
             value.is_ascii_lowercase() || value.is_ascii_digit() || ".-_".contains(value)
         })
     {
         return Err(
-            "Host ids use lowercase letters, numbers, dots, dashes, and underscores".into(),
+            "Host ids use lowercase letters, numbers, dots, dashes, and underscores, and cannot start with a dot".into(),
         );
     }
     if host.name.trim().is_empty() || host.name.len() > 80 {
@@ -287,16 +315,43 @@ fn validate(host: &RuntimeHost) -> Result<(), String> {
 }
 
 fn registry_path() -> PathBuf {
-    env::var_os("AMPLIFIER_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".amplifier")))
-        .unwrap_or_else(|| PathBuf::from(".amplifier"))
-        .join("hosts.yaml")
+    crate::amplifier_home::amplifier_home().join("hosts.yaml")
+}
+
+/// Where a Linux credential lives. `account` is a validated host id, so it cannot traverse.
+#[cfg(target_os = "linux")]
+fn credential_path(account: &str) -> PathBuf {
+    crate::amplifier_home::amplifier_home()
+        .join("credentials")
+        .join(account)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host id becomes a filename under AMPLIFIER_HOME/credentials on Linux. The old charset
+    /// check admitted "." and ".." -- non-empty, short, all permitted characters -- so a
+    /// hand-edited hosts.yaml could aim a credential write at a directory instead of a file.
+    #[test]
+    fn host_ids_cannot_be_path_components() {
+        let host = |id: &str| RuntimeHost {
+            id: id.to_owned(),
+            name: "Spark".to_owned(),
+            url: "https://spark.example".to_owned(),
+            token_ref: "keychain:spark".to_owned(),
+            default_project_root: None,
+        };
+
+        for rejected in [".", "..", ".hidden", ""] {
+            assert!(
+                validate(&host(rejected)).is_err(),
+                "host id {rejected:?} must be rejected",
+            );
+        }
+        assert!(validate(&host("spark-8be0")).is_ok());
+        assert!(validate(&host("host-127.0.0.1-4318-dmtm1b")).is_ok());
+    }
 
     #[test]
     fn remote_http_is_rejected() {

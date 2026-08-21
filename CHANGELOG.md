@@ -4,6 +4,25 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.57 — 2026-08-20
+
+- Remote host credentials work on Linux. `resolve_token`/`store_token` had macOS
+  and Windows arms only, so a `keychain:` reference — the only kind the UI mints
+  — failed outright, leaving the entire save-a-remote-host flow dead on a
+  platform CI builds and tests on. Linux now uses a `0600` file under
+  `$AMPLIFIER_HOME/credentials`. Deliberately not Secret Service: Studio's Linux
+  role is usually a headless compute host with no D-Bus session for
+  gnome-keyring or KWallet to answer on, so that dependency would fail precisely
+  where Linux is actually used, and drag in a large tree to do it.
+- Host ids can no longer be path components. The charset check admitted `.` and
+  `..` — non-empty, short, all permitted characters — which on Linux would aim a
+  credential write at a directory. Rejecting leading dots removes the hazard
+  rather than sanitising the path at each use.
+- Deduplicated the `AMPLIFIER_HOME | ~/.amplifier` chain, which was copied
+  verbatim in four modules, and the umask-safe secret writer, which lived only
+  in the amplifier-host binary even though the host registry needed the same
+  guarantee. Both now have one definition in `amplifier_home.rs`.
+
 ## 0.1.56 — 2026-08-20
 
 - Voice input asks this computer about the microphone before asking a remote

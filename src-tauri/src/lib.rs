@@ -1,3 +1,4 @@
+pub mod amplifier_home;
 mod catalog;
 #[cfg(desktop)]
 mod image_drop;
