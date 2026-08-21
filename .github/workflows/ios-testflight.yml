@@ -43,7 +43,7 @@ jobs:
           echo "iOS SDK $IOS_SDK_VERSION"
           [[ "$XCODE_VERSION" == "Xcode 26."* ]] || { echo "Xcode 26 is required by App Store Connect" >&2; exit 1; }
           [[ "$IOS_SDK_VERSION" == "26."* ]] || { echo "iOS SDK 26 is required by App Store Connect" >&2; exit 1; }
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
