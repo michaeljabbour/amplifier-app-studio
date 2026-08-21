@@ -4,6 +4,25 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.51 — 2026-08-20
+
+- Host request failures no longer assert a cause the client cannot know. Every
+  rejected `fetch` reported "Could not reach Amplifier Host at X. Check the
+  SSH/Tailscale connection...", which sent a real investigation down the wrong
+  path: the Spark host in question was listening, CORS-correct for
+  `tauri://localhost`, and answering `curl` the whole time. A rejected fetch
+  only proves no response arrived; a dead tunnel, a CORS rejection and a
+  blocked scheme are indistinguishable from the client. The message now says
+  that, names the origin, carries the underlying error (name and message) via
+  `cause`, and lists the candidates instead of picking one.
+- The stored-session dialog no longer shows two contradictory explanations at
+  once. A caller-supplied reason describes an earlier attempt; once a fresh
+  attempt fails differently it is superseded, so the dialog stopped claiming a
+  session was "already open on its owning compute" while simultaneously
+  reporting no response from that compute — and stopped leaving Resume disabled
+  for the older of the two. Intrinsic blockers (corrupt, empty, recovered) are
+  properties of the data and still apply.
+
 ## 0.1.50 — 2026-08-20
 
 - Studio now has logging. There was none: sixteen `println!` calls, no

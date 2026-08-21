@@ -15,7 +15,14 @@ interface Props {
 export function StoredSessionDialog(props: Props) {
   const [busy, setBusy] = createSignal<"resume" | "duplicate">();
   const [error, setError] = createSignal<string>();
-  const blocker = () => props.resumeDisabledReason || storedSessionResumeBlocker(props.session, false);
+  // A caller-supplied reason describes why an EARLIER attempt failed. Once a fresh attempt fails
+  // differently, that reason is stale: the dialog was showing "already open on its owning
+  // compute" and "no response from the host" at the same time, which cannot both be true, while
+  // keeping Resume disabled for the older of the two. The session's own intrinsic blockers
+  // (corrupt, empty, recovered) still apply -- those are properties of the data, not of an attempt.
+  const [supersededByFreshError, setSupersededByFreshError] = createSignal(false);
+  const blocker = () => (supersededByFreshError() ? undefined : props.resumeDisabledReason)
+    || storedSessionResumeBlocker(props.session, false);
   const warning = () => storedSessionWarning(props.session);
   const canDuplicate = () => storedSessionCanDuplicate(props.session) && Boolean(props.session.projectDir);
   const origin = () => props.session.hostName || "This computer";
@@ -27,7 +34,9 @@ export function StoredSessionDialog(props: Props) {
     try {
       await task();
     } catch (caught) {
-      setError(String(caught).replace(/^Error:\s*/, ""));
+      const message = String(caught).replace(/^Error:\s*/, "");
+      setError(message);
+      if (message !== props.resumeDisabledReason) setSupersededByFreshError(true);
       setBusy(undefined);
     }
   };
