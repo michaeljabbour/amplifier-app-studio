@@ -230,10 +230,9 @@ impl ServerOptions {
 /// `connect-src` deliberately stays as broad as the desktop policy: a browser client may be
 /// pointed at a bridge on another origin, and narrowing it to 'self' would break that.
 ///
-/// The `'sha256-...'` entry is the artifact frame's inline resize script and must stay identical
-/// to tauri.conf.json. `node scripts/artifact-csp-hash.mjs --write` updates both, and
-/// `browser_csp_pins_the_same_artifact_script_as_the_desktop_app` fails the build if they drift.
-const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-uQ6KvrnTSPQivdKZP+b9yjEs3Xj48Ot9wBzToVLzyts='; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+/// Studio injects no script into artifact frames, so `script-src` needs no hash: an artifact's
+/// own inline scripts are blocked by this inherited policy, which is the intended behaviour.
+const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'self' data: blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
 /// Attaches the browser client's security headers to every response.
 async fn browser_security_headers(request: Request, next: Next) -> Response {
@@ -1618,34 +1617,6 @@ mod tests {
                 .map(|v| v.to_str().unwrap()),
             Some("nosniff")
         );
-    }
-
-    /// The artifact frame's inline script is allowed by hash, and desktop and browser must pin
-    /// the same one or artifacts break in whichever client was not updated.
-    #[test]
-    fn browser_csp_pins_the_same_artifact_script_as_the_desktop_app() {
-        const TAURI_CONF: &str = include_str!("../tauri.conf.json");
-        let conf: Value = serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
-        let desktop = conf["app"]["security"]["csp"]
-            .as_str()
-            .expect("desktop csp");
-        let hash = desktop
-            .split_whitespace()
-            .find(|token| token.starts_with("'sha256-"))
-            .expect("desktop csp pins the artifact script hash");
-
-        assert!(
-            BROWSER_CSP.contains(hash),
-            "browser CSP must allow the same artifact script as the desktop app ({hash}); \
-             run `node scripts/artifact-csp-hash.mjs --write`"
-        );
-
-        let script_src = BROWSER_CSP
-            .split(';')
-            .map(str::trim)
-            .find(|directive| directive.starts_with("script-src "))
-            .expect("browser csp declares script-src");
-        assert!(!script_src.contains("'unsafe-inline'"), "{script_src}");
     }
 
     fn token_file(directory: &Path) -> PathBuf {

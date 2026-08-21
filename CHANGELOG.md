@@ -4,6 +4,27 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.54 — 2026-08-20
+
+- Artifact previews are sized by CSS instead of a script handshake. Studio used
+  to inject its own script into every `amplifier-html` frame and listen for a
+  postMessage height report; because a `srcdoc` frame inherits the embedder's
+  policy container, that script had to be hash-allowlisted in two separate CSPs,
+  which required a generator script, a hash-sync test and a cross-policy Rust
+  test to keep them aligned. The frame is now a fixed 420 px panel that scrolls
+  internally and expands to `min(80vh, 1000px)`. Deleted: the injected script,
+  `scripts/artifact-csp-hash.mjs`, the `'sha256-...'` entry in both policies, and
+  both pinning tests.
+- **Correction to the 0.1.46 entry.** That release claimed to have "restored
+  interactive `amplifier-html` artifacts in packaged builds". It did not, and the
+  claim should not have been made. Allowlisting the hash restored *Studio's own
+  sizing script* and nothing else: under the inherited policy the artifact's own
+  inline scripts stay blocked. Verified in WKWebView and Chrome — with the hash
+  present, only the hashed script ran. Author JavaScript has never executed in a
+  packaged or browser-host build, only under `npm run dev`, which sends no CSP.
+  The docs, the README and the in-app badge (now "RENDERED HTML · no scripts")
+  have been corrected to stop promising behaviour the build does not deliver.
+
 ## 0.1.53 — 2026-08-20
 
 - The dependency audit gates added in 0.1.52 never ran. Their condition was
