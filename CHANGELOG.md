@@ -4,6 +4,17 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.62 — 2026-08-21
+
+- The Dependabot configuration added in 0.1.52 could never merge anything. Every
+  pull request must advance the app version past `origin/main`, and Dependabot
+  cannot bump a version — so all twelve of its pull requests failed with
+  `Studio app version must advance from 0.1.52`, including bumps of GitHub
+  Actions that touch no application code at all. Dependency branches are now
+  exempt from the version-advance check. The consistency half still runs, so a
+  dependency update may not leave the six version-bearing files disagreeing, and
+  a human branch that forgets to bump is still rejected.
+
 ## 0.1.61 — 2026-08-21
 
 From a sweep for duplicated logic — specifically for copies that are supposed

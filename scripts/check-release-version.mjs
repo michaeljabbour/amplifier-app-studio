@@ -67,9 +67,26 @@ const compareVersions = (left, right) => {
   return 0;
 };
 
-const baseRef = process.env.RELEASE_BASE_REF
-  || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : undefined);
-if (baseRef) {
+/**
+ * Whether this branch is expected to carry a release bump.
+ *
+ * The advance check exists so a human change cannot ship without moving the version. A dependency
+ * update is not a release and the bot cannot bump anything, so requiring it made every Dependabot
+ * pull request permanently unmergeable -- twelve of them piled up failing this line, including
+ * trivial GitHub Action bumps, which is how it was noticed. The CONSISTENCY checks above still run
+ * on these branches: a dependency PR must still leave all six version-bearing files in agreement.
+ */
+function expectsReleaseBump() {
+  const head = process.env.RELEASE_HEAD_REF || process.env.GITHUB_HEAD_REF || "";
+  const actor = process.env.GITHUB_ACTOR || "";
+  return !(head.startsWith("dependabot/") || actor === "dependabot[bot]");
+}
+
+const baseRef = (process.env.RELEASE_BASE_REF
+  || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : undefined));
+if (baseRef && !expectsReleaseBump()) {
+  console.log("Dependency update branch: skipping the version-advance check, consistency still enforced.");
+} else if (baseRef) {
   const basePackage = JSON.parse(execFileSync("git", ["show", `${baseRef}:package.json`], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
