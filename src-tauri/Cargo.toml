@@ -1,6 +1,6 @@
 [package]
 name = "amplifier-studio"
-version = "0.1.57"
+version = "0.1.58"
 edition = "2021"
 rust-version = "1.77.2"
 default-run = "amplifier-studio"

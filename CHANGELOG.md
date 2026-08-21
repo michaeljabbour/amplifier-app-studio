@@ -4,6 +4,25 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.58 — 2026-08-20
+
+Found by comparing against kepler, an earlier app of the same author that had
+these views wired up.
+
+- Written files are attributed from the tool call, not only its reply. Studio
+  read output paths from the tool RESULT, but a Claude-Code-shaped `Write`
+  replies `{content: "File created successfully at: ..."}` and states the path
+  only in its INPUT — so the file never reached the Outputs tab or the "N
+  outputs" counter. An `Edit` that happened to echo `file_path` was captured,
+  which made the whole inventory depend on the runtime's reply shape.
+- A tool row keeps the file it touched after it settles. The summary was
+  overwritten with `<tool> <status>` on completion, so "write_file ·
+  src/main.rs" became "write_file completed" — losing the one useful fact on the
+  row exactly when the row became final.
+- Both now recognise the path keys real tools use (`file_path`, `filePath`,
+  `path`, `filename`, `target_file`, `TargetFile`) rather than `path` alone, and
+  ignore placeholders like `/dev/null`.
+
 ## 0.1.57 — 2026-08-20
 
 - Remote host credentials work on Linux. `resolve_token`/`store_token` had macOS
