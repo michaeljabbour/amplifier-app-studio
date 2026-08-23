@@ -12,33 +12,25 @@
 //   node scripts/bump-version.mjs --check    # report the current values and exit
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { currentRelease, releaseFilePath, releaseVersionParts } from "./release-metadata.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGE = join(root, "package.json");
-const CARGO = join(root, "src-tauri/Cargo.toml");
-const CARGO_LOCK = join(root, "src-tauri/Cargo.lock");
-const TAURI = join(root, "src-tauri/tauri.conf.json");
-const IOS_PLIST = join(root, "src-tauri/gen/apple/amplifier-studio_iOS/Info.plist");
-const IOS_PROJECT = join(root, "src-tauri/gen/apple/project.yml");
+const PACKAGE = releaseFilePath("packageJson");
+const CARGO = releaseFilePath("cargoManifest");
+const CARGO_LOCK = releaseFilePath("cargoLock");
+const TAURI = releaseFilePath("tauriConfig");
+const IOS_PLIST = releaseFilePath("iosInfoPlist");
+const IOS_PROJECT = releaseFilePath("iosProject");
 
 const read = (path) => readFileSync(path, "utf8");
 const readJson = (path) => JSON.parse(read(path));
 
 export function nextPatch(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) throw new Error(`Version must be MAJOR.MINOR.PATCH; found ${version}`);
-  return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+  const [major, minor, patch] = releaseVersionParts(version, "Version");
+  return `${major}.${minor}.${Number(patch) + 1}`;
 }
 
-export function current() {
-  const tauri = readJson(TAURI);
-  return {
-    version: readJson(PACKAGE).version,
-    build: String(tauri.bundle?.iOS?.bundleVersion ?? ""),
-  };
-}
+export const current = currentRelease;
 
 function replaceOnce(path, from, to) {
   const text = read(path);

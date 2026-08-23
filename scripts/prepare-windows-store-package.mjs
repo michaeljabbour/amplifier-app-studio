@@ -1,19 +1,19 @@
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertMobileBuildNumber,
+  currentRelease,
+  releaseVersionTuple,
+  repositoryRoot,
+} from "./release-metadata.mjs";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const templatePath = join(repositoryRoot, "src-tauri", "windows-store", "Package.appxmanifest.template.xml");
 const requiredAssets = ["Square150x150Logo.png", "Square44x44Logo.png", "StoreLogo.png"];
 
 export function windowsStorePackageVersion(marketingVersion, buildNumber) {
-  if (!/^\d+\.\d+\.\d+$/.test(marketingVersion)) {
-    throw new Error(`Windows Store marketing version must be MAJOR.MINOR.PATCH; found ${marketingVersion}`);
-  }
-  if (!/^\d+$/.test(String(buildNumber)) || Number(buildNumber) < 1 || Number(buildNumber) > 65_535) {
-    throw new Error(`Windows Store build number must be 1-65535; found ${buildNumber}`);
-  }
-  const segments = marketingVersion.split(".").map(Number);
+  const segments = releaseVersionTuple(marketingVersion, "Windows Store marketing version");
+  assertMobileBuildNumber(buildNumber, { label: "Windows Store build number", max: 65_535 });
   if (segments.some((segment) => segment > 65_535)) {
     throw new Error(`Windows Store version segments must not exceed 65535; found ${marketingVersion}`);
   }
@@ -56,9 +56,8 @@ export function renderWindowsStoreManifest({ identityName, publisherId, publishe
 }
 
 export function prepareWindowsStorePackage({ executablePath, stagePath, env = process.env }) {
-  const packageJson = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8"));
-  const tauri = JSON.parse(readFileSync(join(repositoryRoot, "src-tauri", "tauri.conf.json"), "utf8"));
-  const packageVersion = windowsStorePackageVersion(packageJson.version, tauri.bundle.iOS.bundleVersion);
+  const release = currentRelease();
+  const packageVersion = windowsStorePackageVersion(release.version, release.build);
   const stage = resolve(stagePath);
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(join(stage, "Assets"), { recursive: true });

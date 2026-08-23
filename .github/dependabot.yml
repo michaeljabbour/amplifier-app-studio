@@ -17,6 +17,8 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/verify-studio"
     schedule:
       interval: weekly

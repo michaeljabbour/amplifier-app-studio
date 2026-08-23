@@ -1,4 +1,4 @@
-use amplifier_studio_lib::amplifier_home::write_secret;
+use amplifier_studio_lib::{amplifier_home::write_secret, web_server::DEFAULT_BIND};
 use serde::{Deserialize, Serialize};
 use std::{env, fs, io::Read, path::PathBuf};
 
@@ -43,7 +43,7 @@ async fn run() -> Result<(), String> {
 }
 
 async fn enable(args: &[String]) -> Result<(), String> {
-    let mut bind = "127.0.0.1:4317".to_owned();
+    let mut bind = DEFAULT_BIND.to_owned();
     let mut frontend = default_frontend();
     let mut origins = Vec::new();
     let mut roots = Vec::new();
@@ -261,12 +261,13 @@ fn next<'a>(values: &mut std::slice::Iter<'a, String>, message: &str) -> Result<
 }
 
 fn usage() -> String {
-    "Amplifier Host\n\n\
-     amplifier-host enable [--allow-project-root PATH] [--default-project-root PATH] [--origin ORIGIN] [--bind 127.0.0.1:4317]\n\
+    format!(
+        "Amplifier Host\n\n\
+     amplifier-host enable [--allow-project-root PATH] [--default-project-root PATH] [--origin ORIGIN] [--bind {DEFAULT_BIND}]\n\
      amplifier-host status\n\
      amplifier-host token rotate\n\
      amplifier-host [serve options]\n\n\
      Without a project-root option, enable creates and exposes ~/dev as the project home.\n\
      The listener stays loopback-only. Put Tailscale Serve, an SSH tunnel, or an authenticated TLS reverse proxy in front of it."
-        .to_owned()
+    )
 }

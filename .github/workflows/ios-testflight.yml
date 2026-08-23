@@ -28,7 +28,6 @@ jobs:
       APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
       IOS_TESTFLIGHT_GROUPS: ${{ vars.IOS_TESTFLIGHT_GROUPS || vars.IOS_TESTFLIGHT_GROUP }}
-      IOS_BUNDLE_ID: com.amplifier.studio
     steps:
       - uses: actions/checkout@v7
       - name: Require App Store Xcode toolchain
@@ -67,6 +66,12 @@ jobs:
       - run: npm ci
       - run: npm run release:check
       - run: npm test
+      - name: Resolve iOS bundle identifier from release metadata
+        shell: bash
+        run: |
+          IOS_BUNDLE_ID="$(node scripts/release-metadata.mjs identifier)"
+          test -n "$IOS_BUNDLE_ID"
+          echo "IOS_BUNDLE_ID=$IOS_BUNDLE_ID" >> "$GITHUB_ENV"
       - name: Import Apple signing identities and App Store profile
         run: |
           CERTIFICATE_PATH="$RUNNER_TEMP/amplifier-studio-distribution.p12"

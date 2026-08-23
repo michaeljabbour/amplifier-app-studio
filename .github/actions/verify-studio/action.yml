@@ -1,0 +1,42 @@
+name: Verify Amplifier Studio
+description: Run the one pre-release verification recipe used by pull requests, main, and tags.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: npm
+    # Node 22's bundled npm 10 cannot resolve Vitest 4's peer graph consistently.
+    - name: Use npm 11
+      shell: bash
+      run: npm install -g npm@11
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+    - name: Install frontend dependencies
+      shell: bash
+      run: npm ci
+    - name: Verify release metadata
+      shell: bash
+      run: npm run release:check
+    - name: Test frontend and release tooling
+      shell: bash
+      run: npm test
+    - name: Build frontend
+      shell: bash
+      run: npm run build
+    - name: Test every Rust target
+      shell: bash
+      run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+    - name: Check every Rust target
+      shell: bash
+      run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
