@@ -4,6 +4,21 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.68 — 2026-08-23
+
+Release metadata completion and dependency maintenance.
+
+- Added `package-lock.json` to the shared release-file registry. The release gate
+  now verifies both its top-level version and `packages[""]` version, while the
+  version bumper updates both fields alongside the other six release files. A
+  temporary-repository regression test proves one bump keeps all seven files and
+  all three mobile-build fields aligned.
+- Updated DOMPurify 3.4.13 → 3.4.14. The sanitizer patch passed the 24 focused
+  Markdown, visual-artifact, and execution-map tests as well as the production
+  build, preserving the diagram-rendering repair shipped in 0.1.66.
+- Updated `lucide-solid` 1.32.0 → 1.33.0 after exact-package installation,
+  283 frontend tests, 22 release checks, and a production build.
+
 ## 0.1.67 — 2026-08-23
 
 Release hardening and mobile legibility.

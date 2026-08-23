@@ -11,6 +11,7 @@ export const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), ".."
 /** Repo-relative paths of every file that carries the release version. Order is report order. */
 export const releaseFiles = Object.freeze({
   packageJson: "package.json",
+  packageLock: "package-lock.json",
   cargoManifest: "src-tauri/Cargo.toml",
   cargoLock: "src-tauri/Cargo.lock",
   tauriConfig: "src-tauri/tauri.conf.json",
@@ -59,6 +60,7 @@ export function assertMobileBuildNumber(value, { label = "Mobile build number", 
 export function readReleaseMetadata(root = repositoryRoot) {
   const read = (key) => readFileSync(releaseFilePath(key, root), "utf8");
   const packageJson = JSON.parse(read("packageJson"));
+  const packageLock = JSON.parse(read("packageLock"));
   const cargoManifest = read("cargoManifest");
   const cargoLock = read("cargoLock");
   const tauriConfig = JSON.parse(read("tauriConfig"));
@@ -67,6 +69,8 @@ export function readReleaseMetadata(root = repositoryRoot) {
 
   const versions = new Map([
     [releaseFiles.packageJson, packageJson.version],
+    [`${releaseFiles.packageLock} version`, packageLock.version],
+    [`${releaseFiles.packageLock} packages[\"\"].version`, packageLock.packages?.[""]?.version],
     [releaseFiles.cargoManifest, cargoManifest.match(/^version\s*=\s*"([^"]+)"/m)?.[1]],
     [
       releaseFiles.cargoLock,

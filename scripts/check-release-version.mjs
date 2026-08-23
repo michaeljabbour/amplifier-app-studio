@@ -41,7 +41,7 @@ for (const [file, buildNumber] of buildNumbers) {
  * update is not a release and the bot cannot bump anything, so requiring it made every Dependabot
  * pull request permanently unmergeable -- twelve of them piled up failing this line, including
  * trivial GitHub Action bumps, which is how it was noticed. The CONSISTENCY checks above still run
- * on these branches: a dependency PR must still leave all six version-bearing files in agreement.
+ * on these branches: a dependency PR must still leave all seven version-bearing files in agreement.
  */
 function expectsReleaseBump() {
   const head = process.env.RELEASE_HEAD_REF || process.env.GITHUB_HEAD_REF || "";

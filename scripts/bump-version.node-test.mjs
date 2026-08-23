@@ -10,7 +10,7 @@ test("patch bumps advance only the patch component", () => {
   assert.throws(() => nextPatch("0.1.2-rc1"), /MAJOR.MINOR.PATCH/);
 });
 
-// The point of the script: the release gate compares six files, and a hand-edit that misses one
+// The point of the script: the release gate compares seven files, and a hand-edit that misses one
 // reds all three CI runners. This proves the two the script reports are the two the gate reads.
 test("current() reports the version and mobile build the release gate compares", () => {
   const { version, build } = current();
