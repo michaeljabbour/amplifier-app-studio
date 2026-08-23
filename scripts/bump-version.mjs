@@ -3,7 +3,7 @@
 // check-release-version.mjs compares.
 //
 // The repo gates every pull request on BOTH numbers strictly advancing past origin/main, and the
-// numbers live in six files. Doing that by hand reliably misses one -- most often
+// numbers live in seven files. Doing that by hand reliably misses one -- most often
 // gen/apple/project.yml -- which reds all three CI runners on a diff that has nothing to do with
 // versioning.
 //
@@ -13,14 +13,12 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { currentRelease, releaseFilePath, releaseVersionParts } from "./release-metadata.mjs";
-
-const PACKAGE = releaseFilePath("packageJson");
-const CARGO = releaseFilePath("cargoManifest");
-const CARGO_LOCK = releaseFilePath("cargoLock");
-const TAURI = releaseFilePath("tauriConfig");
-const IOS_PLIST = releaseFilePath("iosInfoPlist");
-const IOS_PROJECT = releaseFilePath("iosProject");
+import {
+  currentRelease,
+  releaseFilePath,
+  releaseVersionParts,
+  repositoryRoot,
+} from "./release-metadata.mjs";
 
 const read = (path) => readFileSync(path, "utf8");
 const readJson = (path) => JSON.parse(read(path));
@@ -38,12 +36,27 @@ function replaceOnce(path, from, to) {
   writeFileSync(path, text.replace(from, to));
 }
 
-function bump(version, build) {
-  const previous = current();
+export function bumpRelease(version, build, root = repositoryRoot) {
+  const previous = currentRelease(root);
+  const PACKAGE = releaseFilePath("packageJson", root);
+  const PACKAGE_LOCK = releaseFilePath("packageLock", root);
+  const CARGO = releaseFilePath("cargoManifest", root);
+  const CARGO_LOCK = releaseFilePath("cargoLock", root);
+  const TAURI = releaseFilePath("tauriConfig", root);
+  const IOS_PLIST = releaseFilePath("iosInfoPlist", root);
+  const IOS_PROJECT = releaseFilePath("iosProject", root);
 
   const pkg = readJson(PACKAGE);
   pkg.version = version;
   writeFileSync(PACKAGE, `${JSON.stringify(pkg, null, 2)}\n`);
+
+  const packageLock = readJson(PACKAGE_LOCK);
+  packageLock.version = version;
+  if (!packageLock.packages?.[""]) {
+    throw new Error(`${PACKAGE_LOCK} does not contain packages[\"\"]`);
+  }
+  packageLock.packages[""].version = version;
+  writeFileSync(PACKAGE_LOCK, `${JSON.stringify(packageLock, null, 2)}\n`);
 
   replaceOnce(CARGO, `version = "${previous.version}"`, `version = "${version}"`);
   // The lockfile's amplifier-studio entry is asserted by the release checks; cargo would fix it
@@ -80,7 +93,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const previous = current();
     const version = args.find((arg) => !arg.startsWith("--")) || nextPatch(previous.version);
     const build = String(Number(previous.build) + 1);
-    const result = bump(version, build);
+    const result = bumpRelease(version, build);
     console.log(`Bumped ${result.from.version}/${result.from.build} -> ${result.to.version}/${result.to.build}`);
   }
 }
