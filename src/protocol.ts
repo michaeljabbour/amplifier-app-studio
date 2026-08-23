@@ -360,6 +360,34 @@ export interface InlineVisualArtifact {
   svg: string;
 }
 
+export interface ArchivedTurnOutcome {
+  turnId?: string;
+  checkpointId?: string;
+  costUsd?: string;
+  elapsedSeconds?: number;
+  tokens?: number;
+  cachedPercent?: number;
+  interrupted?: boolean;
+  yields: Array<{ kind: string; label: string }>;
+}
+
+export interface ArchivedSessionMetadata {
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  turnCount?: number;
+  totalCostUsd?: string;
+  permissionPosture?: string;
+  permissionProfile?: {
+    name?: string;
+    auto: string[];
+    ask: string[];
+    block: string[];
+    classifierGated?: boolean;
+  };
+  outcomes: ArchivedTurnOutcome[];
+}
+
 export interface SessionViewState {
   guiId: string;
   hostId?: string;
