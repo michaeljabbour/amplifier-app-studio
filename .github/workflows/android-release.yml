@@ -65,6 +65,15 @@ jobs:
       - run: npm ci
       - run: npm run release:check
       - run: npm test
+      - name: Verify immutable Google Play package identity
+        shell: bash
+        run: |
+          APP_IDENTIFIER="$(node scripts/release-metadata.mjs identifier)"
+          test -n "$APP_IDENTIFIER"
+          test "$APP_IDENTIFIER" = "$GOOGLE_PLAY_PACKAGE_NAME" || {
+            echo "tauri.conf.json identifier $APP_IDENTIFIER does not match Google Play package $GOOGLE_PLAY_PACKAGE_NAME" >&2
+            exit 1
+          }
       - name: Require and install the protected Android upload key
         run: |
           for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do

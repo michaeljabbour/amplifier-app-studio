@@ -7,6 +7,7 @@ import {
   requestJson,
   waitForValue,
 } from "./store-publishing-lib.mjs";
+import { appIdentifier } from "./release-metadata.mjs";
 
 const API_ROOT = "https://api.appstoreconnect.apple.com/v1";
 
@@ -77,7 +78,7 @@ async function main() {
     throw new Error("Usage: app-store-connect-testflight.mjs PRIVATE_KEY_PATH");
   }
   const configuration = {
-    bundleId: process.env.IOS_BUNDLE_ID || "com.amplifier.studio",
+    bundleId: process.env.IOS_BUNDLE_ID || appIdentifier(),
     buildNumber: process.env.IOS_BUILD_NUMBER,
     groupNames: (process.env.IOS_TESTFLIGHT_GROUPS || process.env.IOS_TESTFLIGHT_GROUP || "")
       .split(",")

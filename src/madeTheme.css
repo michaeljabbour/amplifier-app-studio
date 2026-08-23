@@ -76,7 +76,6 @@
 :root[data-theme="made"] .eyebrow,
 :root[data-theme="made"] .block-label { color: #7d5411; font-family: var(--font-body); font-weight: 600; letter-spacing: .18em; }
 :root[data-theme="made"] .home-history-heading strong,
-:root[data-theme="made"] .workspace-heading strong,
 :root[data-theme="made"] .inspector-heading h2 { color: #201f1d; font-family: var(--font-display); font-size: 17px; font-weight: 600; }
 :root[data-theme="made"] .home-history-heading button,
 :root[data-theme="made"] .home-all-history,
@@ -214,8 +213,7 @@
 :root[data-theme="made"] .thinking-text.markdown,
 :root[data-theme="made"] .thinking-text-live.markdown { color: #716d6a; }
 :root[data-theme="made"] .notice-text { border-color: var(--line); border-radius: 0; background: #f8f4f4; color: #454242; }
-:root[data-theme="made"] .working-card,
-:root[data-theme="made"] .live-tail { background: transparent; color: #605d5d; }
+:root[data-theme="made"] .working-card { background: transparent; color: #605d5d; }
 :root[data-theme="made"] .boot-card,
 :root[data-theme="made"] .restore-card,
 :root[data-theme="made"] .fatal-card { border-radius: 0; background: #f8f4f4; box-shadow: none; }

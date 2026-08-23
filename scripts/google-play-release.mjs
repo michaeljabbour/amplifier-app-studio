@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { googlePlayTrackPayload, requestJson } from "./store-publishing-lib.mjs";
+import { appIdentifier } from "./release-metadata.mjs";
 
 const API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3";
 const UPLOAD_ROOT = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3";
@@ -58,7 +59,7 @@ async function main() {
   const configuration = {
     accessToken: process.env.GOOGLE_PLAY_ACCESS_TOKEN,
     aabPath,
-    packageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || "com.amplifier.studio",
+    packageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || appIdentifier(),
     track: process.env.GOOGLE_PLAY_TRACK || "internal",
     status: process.env.GOOGLE_PLAY_RELEASE_STATUS || "completed",
     releaseName: process.env.GOOGLE_PLAY_RELEASE_NAME || `Amplifier Studio ${process.env.GITHUB_REF_NAME || "release"}`,

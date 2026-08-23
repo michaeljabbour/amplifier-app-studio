@@ -43,7 +43,8 @@ use tower_http::{
     services::{ServeDir, ServeFile},
 };
 
-const DEFAULT_BIND: &str = "127.0.0.1:4317";
+/// Loopback-only default used by both bridge entry points and their help text.
+pub const DEFAULT_BIND: &str = "127.0.0.1:4317";
 const API_VERSION: u16 = 1;
 const TOKEN_ENV: &str = "AMPLIFIER_HOST_TOKEN";
 const ORIGINS_ENV: &str = "AMPLIFIER_HOST_ALLOWED_ORIGINS";
@@ -1568,7 +1569,7 @@ impl IntoResponse for ServerError {
 
 fn usage() -> String {
     format!(
-        "Usage: amplifier-host [--bind 127.0.0.1:4317] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]... [--default-project-root PATH]\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
+        "Usage: amplifier-host [--bind {DEFAULT_BIND}] [--frontend ../dist] [--token-file PATH] [--origin ORIGIN]... [--allow-project-root PATH]... [--default-project-root PATH]\n\nSet {TOKEN_ENV} instead of --token-file. Optional lists may also use {ORIGINS_ENV} (comma-separated) and {ROOTS_ENV} (platform path-separated)."
     )
 }
 

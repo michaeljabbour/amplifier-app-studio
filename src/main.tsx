@@ -16,4 +16,12 @@ if (!root) throw new Error("Missing #root mount point");
 
 applyStudioTheme(loadStudioTheme());
 captureMobileSafeAreaInsets();
-render(() => <App />, root);
+
+if (import.meta.env.VITE_STUDIO_REAL_WINDOW_SMOKE === "1") {
+  document.title = "Amplifier Studio Real Window Smoke";
+  void import("./RealWindowSmoke").then(({ default: RealWindowSmoke }) => {
+    render(() => <RealWindowSmoke />, root);
+  });
+} else {
+  render(() => <App />, root);
+}

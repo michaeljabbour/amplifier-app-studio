@@ -4,6 +4,36 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.67 — 2026-08-23
+
+Release hardening and mobile legibility.
+
+- Consolidated the six version-bearing files, version comparison, application
+  identifier, and mobile build number behind one release-metadata module. The
+  release gate now verifies `Cargo.lock` as well as the five files it checked
+  before, and the Windows, App Store Connect, and Google Play publishers consume
+  the same metadata instead of carrying separate constants.
+- Replaced three copies of the cross-platform verification job with one local
+  composite action. CI and release publishing now run the same Node, npm, Rust,
+  build, frontend-test, and Rust-test recipe on macOS, Linux, and Windows.
+- Restored the intended mobile type scale. Twenty-three selector identifiers had
+  been split across source lines, making those selectors invalid CSS and leaving
+  important labels at 6–10 px. A regression test now rejects hard-wrapped selector
+  identifiers before they reach a build.
+- Removed 23 unused selector classes by parsing CSS and deleting exact AST ranges,
+  including one orphaned selector found during verification.
+- Added an opt-in packaged-window smoke surface for DOT, SVG, sandboxed HTML, and
+  voice controls. It is dynamically imported only in the explicit peer-QA build,
+  so the harness is absent from production bundles.
+- Shared the Amplifier Host default bind address with its CLI and service setup so
+  those paths cannot drift.
+- Updated `zip` 4.6.1 → 8.6.0, `lucide-solid` 1.31.0 → 1.32.0, `marked`
+  18.0.9 → 18.0.10, and `solid-js` 1.9.14 → 1.9.15. The four-major `zip`
+  change passed the dedicated `.docx` inflation-cap test in addition to the full
+  suite; the Markdown patch passed the renderer and sanitizer suites.
+
+283 frontend tests, 21 release checks, and 110 Rust tests.
+
 ## 0.1.66 — 2026-08-21
 
 Diagrams render again. The DOT viewer and the execution graph both discarded

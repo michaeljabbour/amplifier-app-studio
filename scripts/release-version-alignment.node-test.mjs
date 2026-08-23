@@ -1,28 +1,40 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import test from "node:test";
+import {
+  RELEASE_VERSION_PATTERN,
+  readReleaseMetadata,
+  releaseFilePath,
+  releaseFiles,
+} from "./release-metadata.mjs";
 
-const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-const cargoManifest = readFileSync(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
-const cargoLock = readFileSync(new URL("../src-tauri/Cargo.lock", import.meta.url), "utf8");
-const tauriVersion = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")).version;
+test("release metadata agrees across every version-bearing file", () => {
+  const { version, versions, build, buildNumbers } = readReleaseMetadata();
+  assert.match(version, RELEASE_VERSION_PATTERN);
+  assert.match(build, /^\d+$/);
+  for (const [file, observed] of versions) {
+    assert.equal(observed, version, `${file} must carry ${version}`);
+  }
+  for (const [file, observed] of buildNumbers) {
+    assert.equal(String(observed), build, `${file} must carry build ${build}`);
+  }
+});
 
-const cargoVersion = cargoManifest.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
-const lockedRustPackageVersion = cargoLock.match(
-  /\[\[package\]\]\r?\nname = "amplifier-studio"\r?\nversion = "([^"]+)"/,
-)?.[1];
+test("the shared release file table is complete and every path is tracked in the tree", () => {
+  assert.deepEqual(Object.values(releaseFiles), [
+    "package.json",
+    "src-tauri/Cargo.toml",
+    "src-tauri/Cargo.lock",
+    "src-tauri/tauri.conf.json",
+    "src-tauri/gen/apple/amplifier-studio_iOS/Info.plist",
+    "src-tauri/gen/apple/project.yml",
+  ]);
+  for (const key of Object.keys(releaseFiles)) {
+    assert.ok(existsSync(releaseFilePath(key)), `${releaseFiles[key]} must exist`);
+  }
+});
 
-test("release metadata agrees with the locked Rust package used to build Studio", () => {
-  assert.match(packageVersion, /^\d+\.\d+\.\d+$/);
-  assert.deepEqual({
-    packageJson: packageVersion,
-    cargoManifest: cargoVersion,
-    cargoLock: lockedRustPackageVersion,
-    tauriConfig: tauriVersion,
-  }, {
-    packageJson: packageVersion,
-    cargoManifest: packageVersion,
-    cargoLock: packageVersion,
-    tauriConfig: packageVersion,
-  });
+test("release parsing is shared without changing patch-bump formatting", async () => {
+  const { nextPatch } = await import("./bump-version.mjs");
+  assert.equal(nextPatch("01.02.03"), "01.02.4");
 });
