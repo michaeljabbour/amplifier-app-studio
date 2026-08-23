@@ -412,6 +412,61 @@ async fn write_diagnostics(path: String, contents: String) -> Result<(), String>
     .map_err(|error| format!("Diagnostics export task failed: {error}"))?
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn write_visual_png(path: String, data_base64: String) -> Result<(), String> {
+    tracing::info!(path = %path, encoded_bytes = data_base64.len(), "write_visual_png invoked");
+    let (path, bytes) = validate_visual_png(&path, &data_base64)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, bytes).map_err(|error| {
+            format!(
+                "Could not write visual PNG to '{}': {error}",
+                path.display()
+            )
+        })
+    })
+    .await
+    .map_err(|error| format!("Visual PNG export task failed: {error}"))?
+}
+
+#[cfg(desktop)]
+fn validate_visual_png(
+    path: &str,
+    data_base64: &str,
+) -> Result<(std::path::PathBuf, Vec<u8>), String> {
+    const MAX_PNG_BYTES: usize = 64 * 1024 * 1024;
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if data_base64.len() > (MAX_PNG_BYTES * 4 / 3) + 4 {
+        return Err("Visual PNG exceeds Studio's 64 MB export limit".to_owned());
+    }
+    let bytes = STANDARD
+        .decode(data_base64)
+        .map_err(|_| "The visual PNG payload is not valid base64".to_owned())?;
+    if bytes.len() > MAX_PNG_BYTES {
+        return Err("Visual PNG exceeds Studio's 64 MB export limit".to_owned());
+    }
+    if !bytes.starts_with(PNG_SIGNATURE) {
+        return Err("The visual export is not a PNG image".to_owned());
+    }
+    let path = std::path::PathBuf::from(path.trim());
+    if !path.is_absolute() {
+        return Err("Choose an absolute PNG destination".to_owned());
+    }
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+    {
+        return Err("Choose a destination ending in .png".to_owned());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Choose a PNG destination with a parent directory".to_owned())?;
+    if !parent.is_dir() {
+        return Err("The PNG destination directory is unavailable".to_owned());
+    }
+    Ok((path, bytes))
+}
+
 #[tauri::command]
 fn default_project_dir() -> Result<String, String> {
     dirs::home_dir()
@@ -530,6 +585,8 @@ pub fn run() {
             load_attachment_paths,
             #[cfg(desktop)]
             write_diagnostics,
+            #[cfg(desktop)]
+            write_visual_png,
             #[cfg(desktop)]
             read_runtime_settings,
             #[cfg(desktop)]
@@ -652,7 +709,8 @@ pub fn run() {
 
 #[cfg(all(test, desktop))]
 mod output_tests {
-    use super::{output_media_type, resolve_output_path};
+    use super::{output_media_type, resolve_output_path, validate_visual_png};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     #[test]
     fn opens_only_existing_files_inside_the_project() {
@@ -684,5 +742,27 @@ mod output_tests {
             Some("image/svg+xml")
         );
         assert_eq!(output_media_type(std::path::Path::new("notes.md")), None);
+    }
+
+    #[test]
+    fn visual_png_export_requires_a_real_png_and_absolute_png_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("diagram.png");
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(b"bounded-test-payload");
+        let encoded = STANDARD.encode(&png);
+        let (validated_path, validated_bytes) =
+            validate_visual_png(path.to_str().unwrap(), &encoded).unwrap();
+        assert_eq!(validated_path, path);
+        assert_eq!(validated_bytes, png);
+
+        assert!(
+            validate_visual_png(path.to_str().unwrap(), &STANDARD.encode(b"not png"))
+                .unwrap_err()
+                .contains("not a PNG")
+        );
+        assert!(validate_visual_png("relative.png", &encoded)
+            .unwrap_err()
+            .contains("absolute"));
     }
 }

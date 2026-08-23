@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NativeTmuxAdapter,
   requireExactTmuxName,
-  terminalSnapshotDelta,
+  terminalSnapshotFrame,
   type NativeTmuxInvoke,
 } from "./nativeTmuxAdapter";
 import { terminalId, type TerminalAttachmentObserver, type TerminalHostIdentity } from "./types";
@@ -105,7 +105,7 @@ describe("native tmux adapter", () => {
     expect(fake.calls.some((call) => /server/i.test(call.command))).toBe(false);
   });
 
-  it("polls an attachment, reports deltas, and classifies an exact session disappearing", async () => {
+  it("polls an attachment, replaces complete frames, and classifies a disappearing session", async () => {
     vi.useFakeTimers();
     const fake = new FakeNativeTmux();
     fake.captures = [
@@ -117,14 +117,22 @@ describe("native tmux adapter", () => {
     const [alpha] = await backend.list();
     const opened = vi.fn();
     const data = vi.fn();
+    const snapshot = vi.fn();
     const closed = vi.fn();
-    const observer: TerminalAttachmentObserver = { onOpen: opened, onData: data, onClose: closed, onError: vi.fn() };
+    const observer: TerminalAttachmentObserver = {
+      onOpen: opened,
+      onData: data,
+      onSnapshot: snapshot,
+      onClose: closed,
+      onError: vi.fn(),
+    };
 
     await backend.attach(alpha, observer);
     expect(opened).toHaveBeenCalledOnce();
-    expect(data).toHaveBeenCalledWith("$");
+    expect(data).not.toHaveBeenCalled();
+    expect(snapshot).toHaveBeenCalledWith("\x1bc\x1b[?25l$\x1b[1;1H\x1b[?25h");
     await vi.advanceTimersByTimeAsync(100);
-    expect(data).toHaveBeenLastCalledWith(" pwd");
+    expect(snapshot).toHaveBeenLastCalledWith("\x1bc\x1b[?25l$ pwd\x1b[1;1H\x1b[?25h");
     await vi.advanceTimersByTimeAsync(100);
     expect(closed).toHaveBeenCalledWith({
       code: 4404,
@@ -205,10 +213,12 @@ describe("native tmux adapter", () => {
     expect(fake.calls.map((call) => call.command)).toEqual(["terminal_tmux_list"]);
   });
 
-  it("derives bounded polling deltas without replaying an unchanged screen", () => {
-    expect(terminalSnapshotDelta("$", "$ pwd")).toBe(" pwd");
-    expect(terminalSnapshotDelta("one\ntwo", "two\nthree")).toBe("\nthree");
-    expect(terminalSnapshotDelta("same", "same")).toBe("");
-    expect(terminalSnapshotDelta("", "fresh")).toBe("fresh");
+  it("builds a bounded full-screen frame with the tmux cursor restored", () => {
+    expect(terminalSnapshotFrame({
+      snapshot: "old\none\ntwo\nthree",
+      paneHeight: 3,
+      cursor: { column: 4, row: 1 },
+      scrollback: { start: 0, rowCount: 4, total: 4, hasMore: false, saturated: false, pageSize: 4 },
+    })).toBe("\x1bc\x1b[?25lone\ntwo\nthree\x1b[2;5H\x1b[?25h");
   });
 });

@@ -31,6 +31,8 @@ export interface TerminalCapabilities {
   scrollbackPaging: boolean;
   maxCaptureLines?: number;
   supportedKeys: readonly string[];
+  /** Live attachments emit an ANSI stream or complete replacement frames. */
+  outputMode?: "stream" | "snapshot";
 }
 
 export interface TerminalAttentionState {
@@ -99,6 +101,8 @@ export interface CaptureTerminalRequest {
 export interface TerminalCapture {
   snapshot: string;
   scrollback: TerminalScrollbackState;
+  cursor?: { column: number; row: number };
+  paneHeight?: number;
 }
 
 export interface TerminalInputRequest {
@@ -125,6 +129,8 @@ export interface TerminalSize {
 export interface TerminalAttachmentObserver {
   onOpen: () => void;
   onData: (data: string) => void;
+  /** Replace the terminal screen instead of appending a stream delta. */
+  onSnapshot?: (snapshot: string) => void;
   onClose: (event: { code?: number; reason?: string; expected?: boolean }) => void;
   onError: (error: Error) => void;
 }

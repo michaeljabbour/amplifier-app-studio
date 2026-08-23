@@ -77,10 +77,51 @@ export async function saveDiagnosticsFile(defaultName: string, contents: string)
   return defaultName;
 }
 
+export async function savePngFile(defaultName: string, contents: Blob): Promise<string | undefined> {
+  if (isDesktopRuntime()) {
+    const selected = await saveDialog({
+      title: "Save Amplifier visual as PNG",
+      defaultPath: defaultName,
+      filters: [{ name: "PNG image", extensions: ["png"] }],
+    });
+    const selectedPath = typeof selected === "string" && selected.trim() ? selected : undefined;
+    if (!selectedPath) return undefined;
+    const path = /\.png$/i.test(selectedPath) ? selectedPath : `${selectedPath}.png`;
+    const dataBase64 = await blobBase64(contents);
+    await invoke("write_visual_png", { path, dataBase64 });
+    return path;
+  }
+
+  const url = URL.createObjectURL(contents);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = defaultName;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  queueMicrotask(() => URL.revokeObjectURL(url));
+  return defaultName;
+}
+
 export function normalizePickerPaths(selected: unknown): string[] {
   if (typeof selected === "string") return selected.trim() ? [selected] : [];
   if (!Array.isArray(selected)) return [];
   return selected.filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+}
+
+function blobBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("Could not prepare the PNG for saving."));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      if (comma < 0) reject(new Error("Could not encode the PNG for saving."));
+      else resolve(result.slice(comma + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function pickBrowserAttachments(): Promise<ComposerAttachment[]> {

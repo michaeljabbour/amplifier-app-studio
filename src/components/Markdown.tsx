@@ -1,12 +1,14 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { createMemo, For, Show } from "solid-js";
+import type { InlineVisualArtifact } from "../protocol";
 import { VisualArtifact, type VisualArtifactFormat } from "./VisualArtifact";
 
 interface Props {
   text: string;
   class?: string;
   compact?: boolean;
+  onVisualArtifact?: (artifact: InlineVisualArtifact) => void;
 }
 
 marked.use({
@@ -36,7 +38,7 @@ export function Markdown(props: Props) {
               keyed
               fallback={<PendingVisualArtifact format={segment.kind === "pending-artifact" ? segment.format : "html"} source={segment.source} />}
             >
-              {(artifact) => <VisualArtifact format={artifact.format} source={artifact.source} />}
+              {(artifact) => <VisualArtifact format={artifact.format} source={artifact.source} onReady={props.onVisualArtifact} />}
             </Show>
           </Show>
         )}</For>

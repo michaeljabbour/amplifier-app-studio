@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ChevronLeft, MapPin, TriangleAlert, X } from "lucide-solid";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
-import type { BundleOption, LaneState, ProviderOption, SessionViewState } from "../protocol";
+import type { BundleOption, LaneState, ProviderOption, SessionOutput, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
 import { PlanPanel } from "./Plan";
 import { ExecutionMap } from "./ExecutionMap";
@@ -29,7 +29,7 @@ interface Props {
   onCapabilities: () => void;
   onStartCapability: (capability: StudioCapability) => void;
   onRequestContext: () => void;
-  onOpenOutput?: (path: string) => Promise<void>;
+  onOpenOutput?: (output: SessionOutput) => Promise<void>;
   onClose?: () => void;
 }
 
@@ -334,7 +334,7 @@ function BundlesPanel(props: Props) {
   );
 }
 
-function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (path: string) => Promise<void> }) {
+function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (output: SessionOutput) => Promise<void> }) {
   return (
     <InspectorSection title="Turn outputs" meta={String(props.state.outputs.length)}>
       <Show when={props.state.outputs.length} fallback={
@@ -345,11 +345,15 @@ function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (path: st
             <div class={`output-item ${output.kind}`}>
               <div class="output-item-copy">
                 <div class="output-item-heading"><span>{output.kind}</span><strong>{output.title}</strong></div>
-                <code title={output.path}>{output.path}</code>
+                <code title={output.inlineVisual ? "Rendered in the Amplifier response" : output.path}>
+                  {output.inlineVisual ? "Rendered in response · exportable PNG" : output.path}
+                </code>
                 <small>{outputProvenance(output)}</small>
               </div>
               <Show when={props.onOpenOutput}>
-                <button class="secondary-button output-open-button" onClick={() => void props.onOpenOutput?.(output.path)}>Open</button>
+                <button class="secondary-button output-open-button" onClick={() => void props.onOpenOutput?.(output)}>
+                  {output.inlineVisual ? "Save PNG" : "Open"}
+                </button>
               </Show>
             </div>
           )}</For>

@@ -150,6 +150,7 @@ export class MuxplexTerminalAdapter implements TerminalBackend {
       scrollbackPaging: true,
       maxCaptureLines: options.maxCaptureLines || 5_000,
       supportedKeys: MUXPLEX_KEYS,
+      outputMode: "stream",
     };
   }
 

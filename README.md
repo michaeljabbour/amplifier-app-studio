@@ -125,7 +125,8 @@ npm run tauri dev
 
 For an isolated native macOS QA bundle that cannot replace an installed
 release, run `npm run macos:build:peer-qa`. It uses a separate bundle
-identifier and app name.
+identifier and app name, plus the same stable Developer ID identity as the
+release build so rebuilt QA apps keep macOS privacy and Keychain grants.
 
 Build the native package for the current desktop platform:
 

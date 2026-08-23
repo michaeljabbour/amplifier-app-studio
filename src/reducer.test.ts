@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { promptWithDocumentAttachments } from "./attachments";
 import type { ProtocolRecord, SessionViewState } from "./protocol";
-import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded, usableSessionTitle } from "./reducer";
+import { createSessionState, markAutopilotPending, markAutopilotSendFailed, markEffortPending, markPromptSendFailed, markPromptSubmitted, markRestoreDegraded, markSteerSendFailed, markSteerSubmitted, openRestoreAnyway, queueLocalSteer, reduceRecord, registerInlineVisual, resolveAttention, retryRestore, setComposerDraft, setThinkingExpanded, usableSessionTitle } from "./reducer";
 
 function fresh(): SessionViewState {
   return createSessionState("gui-1", { projectDir: "/tmp/project", mode: "chat" });
@@ -2044,5 +2044,25 @@ describe("session reducer", () => {
       text: "Checked the repository state",
       expanded: false,
     });
+  });
+
+  it("registers a transcript diagram as an idempotent turn output", () => {
+    const artifact = {
+      id: "inline-visual:dot:abc:12",
+      title: "Runtime map",
+      format: "dot" as const,
+      source: "digraph map { a -> b }",
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',
+    };
+    const once = registerInlineVisual(started(), artifact);
+    const twice = registerInlineVisual(once, artifact);
+    expect(once.outputs).toEqual([expect.objectContaining({
+      id: artifact.id,
+      kind: "diagram",
+      title: "Runtime map.png",
+      source: "Amplifier response",
+      inlineVisual: artifact,
+    })]);
+    expect(twice).toBe(once);
   });
 });

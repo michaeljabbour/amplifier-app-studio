@@ -1,22 +1,17 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { ArrowLeft } from "lucide-solid";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { ArrowLeft, Plus, RefreshCw } from "lucide-solid";
 import type {
   TerminalCoordinatorContract,
   TerminalCoordinatorSnapshot,
-  TerminalInputRequest,
   TerminalProjectIdentity,
   TerminalSession,
 } from "../terminal";
 import {
-  clearCommandDraft,
-  commandDraftFor,
-  commandDraftSubmission,
   renameDraftFor,
   renameDraftSubmission,
-  setCommandDraft as updateCommandDrafts,
   type TerminalRenameDraft,
 } from "../terminal/sessionDrafts";
-import { terminalPlainText } from "../terminalPlainText";
+import { TerminalEmulator } from "./TerminalEmulator";
 import "./TerminalWorkSurface.css";
 
 interface Props {
@@ -32,49 +27,25 @@ export function TerminalWorkSurface(props: Props) {
   const [createName, setCreateName] = createSignal("");
   const [creating, setCreating] = createSignal(false);
   const [renameDraft, setRenameDraft] = createSignal<TerminalRenameDraft>();
-  const [commandDrafts, setCommandDrafts] = createSignal<Record<string, string>>({});
   const [working, setWorking] = createSignal<string>();
   const [actionError, setActionError] = createSignal<string>();
-  let terminalViewport: HTMLPreElement | undefined;
-  let resizeObserver: ResizeObserver | undefined;
 
   const selected = createMemo(() => state().sessions.find((terminal) => terminal.id === state().selectedId));
-  const visibleOutput = createMemo(() => terminalPlainText(`${selected()?.snapshot || ""}${selected()?.liveOutput || ""}`));
 
   onMount(() => {
     const unsubscribe = props.coordinator.subscribe(setState);
     onCleanup(unsubscribe);
     const initial = selected();
     if (initial?.connection.status === "detached") {
-      void props.coordinator.attach(initial.id).catch((error) => setActionError(message(error)));
+      void props.coordinator.attach(initial.id).catch(showError);
     } else if (state().sessions.length === 0) {
       void props.coordinator.refresh()
         .then((sessions) => sessions[0] && props.coordinator.attach(sessions[0].id))
-        .catch((error) => setActionError(message(error)));
+        .catch(showError);
     }
   });
 
-  createEffect(() => {
-    const id = selected()?.id;
-    const element = terminalViewport;
-    resizeObserver?.disconnect();
-    resizeObserver = undefined;
-    if (!id || !element || typeof ResizeObserver === "undefined") return;
-    resizeObserver = new ResizeObserver(([entry]) => {
-      const columns = Math.max(20, Math.floor(entry.contentRect.width / 8.2));
-      const rows = Math.max(6, Math.floor(entry.contentRect.height / 18));
-      void props.coordinator.resize(id, { columns, rows });
-    });
-    resizeObserver.observe(element);
-  });
-  onCleanup(() => resizeObserver?.disconnect());
-
-  createEffect(() => {
-    visibleOutput();
-    queueMicrotask(() => {
-      if (terminalViewport) terminalViewport.scrollTop = terminalViewport.scrollHeight;
-    });
-  });
+  const showError = (error: unknown) => setActionError(message(error));
 
   const run = async (label: string, task: () => Promise<unknown>) => {
     if (working()) return;
@@ -83,7 +54,7 @@ export function TerminalWorkSurface(props: Props) {
     try {
       await task();
     } catch (error) {
-      setActionError(message(error));
+      showError(error);
     } finally {
       setWorking(undefined);
     }
@@ -107,22 +78,9 @@ export function TerminalWorkSurface(props: Props) {
     if (!submission) return;
     await run("rename", async () => {
       const renamed = await props.coordinator.rename(submission.terminalId, submission.value);
-      setRenameDraft((current) => current?.terminalId === terminalId ? undefined : current);
+      setRenameDraft(undefined);
       await props.coordinator.attach(renamed.id);
     });
-  };
-
-  const send = async (terminalId: string, request: TerminalInputRequest) => {
-    await run("send", async () => {
-      await props.coordinator.send(terminalId, request);
-      if (request.text) {
-        setCommandDrafts((current) => clearCommandDraft(current, terminalId));
-      }
-    });
-  };
-
-  const updateCommandDraft = (terminalId: string, value: string) => {
-    setCommandDrafts((current) => updateCommandDrafts(current, terminalId, value));
   };
 
   const selectTerminal = (terminal: TerminalSession) => {
@@ -132,9 +90,7 @@ export function TerminalWorkSurface(props: Props) {
     }
   };
 
-  const terminate = async () => {
-    const terminal = selected();
-    if (!terminal) return;
+  const terminate = async (terminal: TerminalSession) => {
     const confirmed = props.confirmTerminate
       ? await props.confirmTerminate(terminal)
       : window.confirm(`Terminate ${terminal.name}? Its running processes will stop.`);
@@ -143,158 +99,140 @@ export function TerminalWorkSurface(props: Props) {
 
   return (
     <section class="terminal-work-surface" aria-label="Terminal sessions">
-      <header class="terminal-work-heading">
-        <div>
-          <span class="eyebrow">COMPUTE WORKSPACE</span>
-          <h2>{props.title || "Terminal sessions"}</h2>
-          <p>Run and supervise durable PTY work without leaving Amplifier Studio.</p>
-        </div>
-        <div class="terminal-heading-actions">
-          <Show when={props.onClose}>
-            <button type="button" class="terminal-back terminal-mobile-back" onClick={() => props.onClose?.()}>
-              <ArrowLeft aria-hidden="true" />
-              <span>Agent</span>
-            </button>
-          </Show>
-          <button type="button" onClick={() => void run("refresh", () => props.coordinator.refresh())} disabled={state().refreshing || Boolean(working())}>
-            {state().refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-          <button type="button" class="primary" onClick={() => setCreating((value) => !value)}>New terminal</button>
-        </div>
-      </header>
-
-      <Show when={creating()}>
-        <form class="terminal-create" onSubmit={(event) => void createTerminal(event)}>
-          <label for="terminal-create-name">Terminal name</label>
-          <input
-            id="terminal-create-name"
-            value={createName()}
-            onInput={(event) => setCreateName(event.currentTarget.value)}
-            placeholder="studio-build"
-            autocomplete="off"
-            autofocus
-          />
-          <button type="submit" class="primary" disabled={!createName().trim() || Boolean(working())}>Create</button>
-          <button type="button" onClick={() => setCreating(false)}>Cancel</button>
-        </form>
-      </Show>
-
       <Show when={actionError() || state().error} keyed>{(error) => (
         <div class="terminal-error" role="alert">{error}</div>
       )}</Show>
 
       <div class="terminal-work-layout">
         <nav class="terminal-rail" aria-label="Available terminals">
-          <Show when={state().sessions.length} fallback={<p>No terminals found on this host.</p>}>
-            <For each={state().sessions}>{(terminal) => (
+          <div class="terminal-rail-heading">
+            <div>
+              <Show when={props.onClose}>
+                <button type="button" class="terminal-back" onClick={() => props.onClose?.()} aria-label="Return to Agent">
+                  <ArrowLeft aria-hidden="true" />
+                </button>
+              </Show>
+              <strong>{props.title || "Terminals"}</strong>
+            </div>
+            <div>
               <button
                 type="button"
-                class="terminal-rail-item"
-                classList={{ active: terminal.id === state().selectedId, attention: terminal.attention.needsAttention }}
-                aria-current={terminal.id === state().selectedId ? "page" : undefined}
-                onClick={() => selectTerminal(terminal)}
-              >
-                <span class={`terminal-state-dot ${terminal.connection.status}`} aria-hidden="true" />
-                <span>
-                  <strong>{terminal.name}</strong>
-                  <small>{terminal.project?.label || terminal.host.label}</small>
-                </span>
-                <Show when={terminal.attention.needsAttention}>
-                  <b aria-label={`${terminal.attention.unseenCount} attention alerts`}>{terminal.attention.unseenCount}</b>
-                </Show>
-              </button>
-            )}</For>
-          </Show>
-        </nav>
-
-        <Show when={selected()} fallback={(
-          <div class="terminal-empty"><strong>Select a terminal</strong><span>Its live output, controls, and history will appear here.</span></div>
-        )} keyed>{(terminal) => (
-          <article class="terminal-stage">
-            <header class="terminal-session-heading">
-              <div>
-                <span>{terminal.host.label} · {terminal.project?.label || "No project"}</span>
-                <Show when={renameDraftFor(renameDraft(), terminal.id) !== undefined} fallback={<h3>{terminal.name}</h3>}>
-                  <form onSubmit={(event) => void submitRename(event, terminal.id)}>
-                    <input
-                      value={renameDraftFor(renameDraft(), terminal.id) || ""}
-                      onInput={(event) => setRenameDraft({ terminalId: terminal.id, value: event.currentTarget.value })}
-                      aria-label="New terminal name"
-                      autofocus
-                    />
-                    <button type="submit" disabled={!renameDraftSubmission(renameDraft(), terminal.id) || Boolean(working())}>Save</button>
-                    <button type="button" onClick={() => setRenameDraft(undefined)}>Cancel</button>
-                  </form>
-                </Show>
-                <code>{terminal.cwd || terminal.project?.root || "Working directory unavailable"}</code>
-              </div>
-              <div class="terminal-session-actions">
-                <span class={`terminal-connection ${terminal.connection.status}`}>{connectionLabel(terminal)}</span>
-                <button type="button" onClick={() => {
-                  setRenameDraft({ terminalId: terminal.id, value: terminal.name });
-                }} disabled={!terminal.capabilities.rename || Boolean(working())}>Rename</button>
-                <Show
-                  when={terminal.connection.status !== "detached"}
-                  fallback={<button type="button" onClick={() => void run("attach", () => props.coordinator.attach(terminal.id))} disabled={!terminal.capabilities.attach || Boolean(working())}>Attach</button>}
-                >
-                  <button type="button" onClick={() => void run("detach", () => props.coordinator.detach(terminal.id))} disabled={!terminal.capabilities.detach || Boolean(working())}>Detach</button>
-                </Show>
-                <button type="button" class="danger" onClick={() => void terminate()} disabled={!terminal.capabilities.terminate || Boolean(working())}>Terminate</button>
-              </div>
-            </header>
-
-            <Show when={terminal.connection.status === "reconnecting" || terminal.connection.status === "error"}>
-              <div class="terminal-reconnect" role="status">
-                <span>{terminal.connection.message || "The live stream is interrupted."}</span>
-                <button type="button" onClick={() => void run("reconnect", () => props.coordinator.reconnect(terminal.id))} disabled={Boolean(working())}>Reconnect</button>
-              </div>
-            </Show>
-
-            <Show when={terminal.capabilities.send !== "input"}>
-              <div class="terminal-readonly" role="status">
-                <strong>Read-only terminal</strong>
-                <span>Live output and scrollback remain available. Input requires an operator-approved host policy.</span>
-              </div>
-            </Show>
-
-            <div class="terminal-screen-shell">
-              <div class="terminal-screen-toolbar">
-                <span>{terminal.scrollback ? `${terminal.scrollback.total} retained rows` : "Live pane"}</span>
-                <button
-                  type="button"
-                  disabled={!terminal.scrollback?.hasMore || Boolean(working())}
-                  onClick={() => void run("older", () => props.coordinator.loadOlder(terminal.id))}
-                >Load older output</button>
-              </div>
-              <pre ref={terminalViewport} class="terminal-screen" tabindex="0" aria-label={`Terminal output for ${terminal.name}`}>
-                {visibleOutput() || "Waiting for terminal output…"}
-              </pre>
+                title="Refresh terminals"
+                aria-label="Refresh terminals"
+                onClick={() => void run("refresh", () => props.coordinator.refresh())}
+                disabled={state().refreshing || Boolean(working())}
+              ><RefreshCw aria-hidden="true" /></button>
+              <button
+                type="button"
+                class="primary"
+                title="New terminal"
+                aria-label="New terminal"
+                onClick={() => setCreating((value) => !value)}
+              ><Plus aria-hidden="true" /></button>
             </div>
+          </div>
 
-            <form class="terminal-command-bar" onSubmit={(event) => {
-              event.preventDefault();
-              const submission = commandDraftSubmission(commandDrafts(), terminal.id);
-              if (submission) void send(submission.terminalId, { text: submission.value, enter: true, captureLines: 200, mode: "command" });
-            }}>
-              <label for={`terminal-command-${terminal.id}`}>Send to {terminal.name}</label>
-              <textarea
-                id={`terminal-command-${terminal.id}`}
-                rows="2"
-                value={commandDraftFor(commandDrafts(), terminal.id)}
-                onInput={(event) => updateCommandDraft(terminal.id, event.currentTarget.value)}
-                placeholder={terminal.capabilities.send === "input" ? "Type a command or response…" : "Input is disabled by host policy"}
-                disabled={terminal.capabilities.send !== "input" || Boolean(working())}
+          <Show when={creating()}>
+            <form class="terminal-create" onSubmit={(event) => void createTerminal(event)}>
+              <label for="terminal-create-name">New terminal</label>
+              <input
+                id="terminal-create-name"
+                value={createName()}
+                onInput={(event) => setCreateName(event.currentTarget.value)}
+                placeholder="session-name"
+                autocomplete="off"
+                autofocus
               />
               <div>
-                <button type="button" onClick={() => void send(terminal.id, { keys: ["C-c"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Stop</button>
-                <button type="button" onClick={() => void send(terminal.id, { keys: ["Escape"], mode: "command" })} disabled={terminal.capabilities.send !== "input" || Boolean(working())}>Escape</button>
-                <button type="submit" class="primary" disabled={terminal.capabilities.send !== "input" || !commandDraftSubmission(commandDrafts(), terminal.id) || Boolean(working())}>
-                  {working() === "send" ? "Sending…" : "Send"}
-                </button>
+                <button type="submit" class="primary" disabled={!createName().trim() || Boolean(working())}>Create</button>
+                <button type="button" onClick={() => setCreating(false)}>Cancel</button>
               </div>
             </form>
-          </article>
-        )}</Show>
+          </Show>
+
+          <div class="terminal-rail-list">
+            <Show when={state().sessions.length} fallback={<p>No terminals found on this host.</p>}>
+              <For each={state().sessions}>{(terminal) => (
+                <button
+                  type="button"
+                  class="terminal-rail-item"
+                  classList={{ active: terminal.id === state().selectedId, attention: terminal.attention.needsAttention }}
+                  aria-current={terminal.id === state().selectedId ? "page" : undefined}
+                  onClick={() => selectTerminal(terminal)}
+                >
+                  <span class={`terminal-state-dot ${terminal.connection.status}`} aria-hidden="true" />
+                  <span>
+                    <strong>{terminal.name}</strong>
+                    <small>{terminal.project?.label || terminal.host.label}</small>
+                  </span>
+                  <Show when={terminal.attention.needsAttention}>
+                    <b aria-label={`${terminal.attention.unseenCount} attention alerts`}>{terminal.attention.unseenCount}</b>
+                  </Show>
+                </button>
+              )}</For>
+            </Show>
+          </div>
+        </nav>
+
+        <Show when={selected()?.id} keyed fallback={(
+          <div class="terminal-empty"><strong>Select a terminal</strong><span>Its live session will appear here.</span></div>
+        )}>{(terminalId) => {
+          const terminal = () => state().sessions.find((candidate) => candidate.id === terminalId)!;
+          return (
+            <article class="terminal-stage">
+              <header class="terminal-session-heading">
+                <div class="terminal-session-identity">
+                  <Show when={renameDraftFor(renameDraft(), terminalId) !== undefined} fallback={(
+                    <>
+                      <strong>{terminal().name}</strong>
+                      <code>{terminal().cwd || terminal().project?.root || "Working directory unavailable"}</code>
+                    </>
+                  )}>
+                    <form onSubmit={(event) => void submitRename(event, terminalId)}>
+                      <input
+                        value={renameDraftFor(renameDraft(), terminalId) || ""}
+                        onInput={(event) => setRenameDraft({ terminalId, value: event.currentTarget.value })}
+                        aria-label="New terminal name"
+                        autofocus
+                      />
+                      <button type="submit" disabled={!renameDraftSubmission(renameDraft(), terminalId) || Boolean(working())}>Save</button>
+                      <button type="button" onClick={() => setRenameDraft(undefined)}>Cancel</button>
+                    </form>
+                  </Show>
+                </div>
+                <div class="terminal-session-actions">
+                  <span class={`terminal-connection ${terminal().connection.status}`}>{connectionLabel(terminal())}</span>
+                  <button type="button" onClick={() => setRenameDraft({ terminalId, value: terminal().name })} disabled={!terminal().capabilities.rename || Boolean(working())}>Rename</button>
+                  <Show
+                    when={terminal().connection.status !== "detached"}
+                    fallback={<button type="button" onClick={() => void run("attach", () => props.coordinator.attach(terminalId))} disabled={!terminal().capabilities.attach || Boolean(working())}>Attach</button>}
+                  >
+                    <button type="button" onClick={() => void run("detach", () => props.coordinator.detach(terminalId))} disabled={!terminal().capabilities.detach || Boolean(working())}>Detach</button>
+                  </Show>
+                  <button type="button" class="danger" onClick={() => void terminate(terminal())} disabled={!terminal().capabilities.terminate || Boolean(working())}>Terminate</button>
+                </div>
+              </header>
+
+              <Show when={terminal().connection.status === "reconnecting" || terminal().connection.status === "error"}>
+                <div class="terminal-reconnect" role="status">
+                  <span>{terminal().connection.message || "The live stream is interrupted."}</span>
+                  <button type="button" onClick={() => void run("reconnect", () => props.coordinator.reconnect(terminalId))} disabled={Boolean(working())}>Reconnect</button>
+                </div>
+              </Show>
+
+              <Show when={terminal().capabilities.send !== "input"}>
+                <div class="terminal-readonly" role="status">
+                  <strong>Read-only</strong>
+                  <span>This host permits viewing but not terminal input.</span>
+                </div>
+              </Show>
+
+              <div class="terminal-screen-shell">
+                <TerminalEmulator session={terminal()} coordinator={props.coordinator} onError={showError} />
+              </div>
+            </article>
+          );
+        }}</Show>
       </div>
     </section>
   );
@@ -306,8 +244,8 @@ function connectionLabel(terminal: TerminalSession): string {
     attaching: "Attaching",
     attached: "Live",
     reconnecting: "Reconnecting",
-    "read-only": "Live · read-only",
-    error: "Connection error",
+    "read-only": "Read-only",
+    error: "Error",
     terminated: "Ended",
   };
   return labels[terminal.connection.status];

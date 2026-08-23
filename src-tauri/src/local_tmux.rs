@@ -34,6 +34,8 @@ pub struct LocalTmuxCapture {
     snapshot: String,
     history_size: u32,
     pane_height: u32,
+    cursor_x: u32,
+    cursor_y: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +144,7 @@ pub async fn terminal_tmux_capture(
         TmuxInvocation::new(vec![
             OsString::from("capture-pane"),
             OsString::from("-p"),
-            OsString::from("-J"),
+            OsString::from("-e"),
             OsString::from("-t"),
             OsString::from(&target),
             OsString::from("-S"),
@@ -157,11 +159,11 @@ pub async fn terminal_tmux_capture(
             OsString::from("-p"),
             OsString::from("-t"),
             OsString::from(target),
-            OsString::from("#{history_size}\t#{pane_height}"),
+            OsString::from("#{history_size}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}"),
         ]),
     )
     .await?;
-    let mut fields = metrics.trim_end().splitn(2, '\t');
+    let mut fields = metrics.trim_end().splitn(4, '\t');
     let history_size = fields
         .next()
         .and_then(|value| value.parse().ok())
@@ -170,10 +172,20 @@ pub async fn terminal_tmux_capture(
         .next()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
+    let cursor_x = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let cursor_y = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
     Ok(LocalTmuxCapture {
         snapshot,
         history_size,
         pane_height,
+        cursor_x,
+        cursor_y,
     })
 }
 

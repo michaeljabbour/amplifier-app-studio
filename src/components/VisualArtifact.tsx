@@ -1,6 +1,8 @@
 import DOMPurify from "dompurify";
-import { createMemo, createResource, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { renderGraphvizSvg } from "../dotRenderer";
+import type { InlineVisualArtifact } from "../protocol";
+import { inlineVisualId, saveInlineVisualPng } from "../visualExport";
 
 export type VisualArtifactFormat = "html" | "svg" | "dot";
 
@@ -13,14 +15,17 @@ export interface DotArtifactResult {
 interface Props {
   format: VisualArtifactFormat;
   source: string;
+  onReady?: (artifact: InlineVisualArtifact) => void;
 }
 
 const MAX_ARTIFACT_SOURCE = 300_000;
 export const VISUAL_ARTIFACT_SANDBOX = "allow-scripts";
 
 export function VisualArtifact(props: Props) {
-  const [expanded, setExpanded] = createSignal(false);
+  const [fullScreen, setFullScreen] = createSignal(false);
   const [showSource, setShowSource] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
+  const [saveMessage, setSaveMessage] = createSignal("");
   const sourceError = createMemo(() => visualArtifactSourceError(props.source));
   const [dotSvg, { refetch: refetchDot }] = createResource(
     () => props.format === "dot" && !sourceError() ? props.source : undefined,
@@ -30,9 +35,56 @@ export function VisualArtifact(props: Props) {
   const dotFailure = createMemo(() => dotArtifactFailureMessage(dotSvg(), dotSvg.error));
   const staticSvg = createMemo(() => props.format === "svg" && !sourceError() ? sanitizeVisualSvg(props.source) : undefined);
   const title = createMemo(() => visualArtifactTitle(props.format, props.source));
+  const renderedSvg = createMemo(() => props.format === "svg" ? staticSvg() : props.format === "dot" ? dotSvg()?.svg : undefined);
+  const readyArtifact = createMemo<InlineVisualArtifact | undefined>(() => {
+    const svg = renderedSvg();
+    if (!svg || props.format === "html") return undefined;
+    return {
+      id: inlineVisualId(props.format, props.source),
+      title: title(),
+      format: props.format,
+      source: props.source,
+      svg,
+    };
+  });
+
+  createEffect(() => {
+    const artifact = readyArtifact();
+    if (artifact) props.onReady?.(artifact);
+  });
+
+  createEffect(() => {
+    document.documentElement.classList.toggle("visual-artifact-open", fullScreen());
+  });
+
+  onMount(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && fullScreen()) setFullScreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.documentElement.classList.remove("visual-artifact-open");
+    });
+  });
+
+  const savePng = async () => {
+    const artifact = readyArtifact();
+    if (!artifact || saving()) return;
+    setSaving(true);
+    setSaveMessage("");
+    try {
+      const path = await saveInlineVisualPng(artifact);
+      if (path) setSaveMessage(`Saved ${path}`);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <section class="visual-artifact" classList={{ expanded: expanded() }} aria-label={`${title()} visual artifact`}>
+    <section class="visual-artifact" classList={{ "full-screen": fullScreen() }} aria-label={`${title()} visual artifact`}>
       <header>
         <div>
           <span>{artifactFormatLabel(props.format)}</span>
@@ -41,9 +93,11 @@ export function VisualArtifact(props: Props) {
         </div>
         <nav aria-label="Visual artifact controls">
           <button type="button" aria-pressed={showSource()} onClick={() => setShowSource((value) => !value)}>{showSource() ? "Preview" : "Source"}</button>
-          <button type="button" aria-pressed={expanded()} onClick={() => setExpanded((value) => !value)}>{expanded() ? "Collapse" : "Expand"}</button>
+          <Show when={readyArtifact()}><button type="button" disabled={saving()} onClick={() => void savePng()}>{saving() ? "Saving…" : "Save PNG"}</button></Show>
+          <button type="button" aria-pressed={fullScreen()} onClick={() => setFullScreen((value) => !value)}>{fullScreen() ? "Exit full screen" : "Full screen"}</button>
         </nav>
       </header>
+      <Show when={saveMessage()}><p class="visual-artifact-save-message" role="status">{saveMessage()}</p></Show>
       <Show when={!sourceError()} fallback={<p class="visual-artifact-error">{sourceError()}</p>}>
         <Show when={!showSource()} fallback={<pre class="visual-artifact-source"><code>{props.source}</code></pre>}>
           <div class="visual-artifact-stage">

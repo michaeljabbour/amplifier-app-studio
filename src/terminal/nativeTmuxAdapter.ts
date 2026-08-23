@@ -52,11 +52,13 @@ interface NativeTmuxCaptureWire {
   snapshot: string;
   historySize: number;
   paneHeight: number;
+  cursorX?: number;
+  cursorY?: number;
 }
 
 interface PollAttachment {
   closed: boolean;
-  previous: string;
+  previousFrame: string;
   observer: TerminalAttachmentObserver;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -116,6 +118,7 @@ export class NativeTmuxAdapter implements TerminalBackend {
       scrollbackPaging: false,
       maxCaptureLines: clampInteger(options.maxCaptureLines || MAX_CAPTURE_LINES, 1, MAX_CAPTURE_LINES),
       supportedKeys: LOCAL_TMUX_KEYS,
+      outputMode: "snapshot",
     };
   }
 
@@ -146,15 +149,16 @@ export class NativeTmuxAdapter implements TerminalBackend {
     this.closePoller(terminal.id);
 
     const initial = await this.capture(terminal, { lines: DEFAULT_CAPTURE_LINES });
+    const initialFrame = terminalSnapshotFrame(initial);
     const poller: PollAttachment = {
       closed: false,
-      previous: initial.snapshot,
+      previousFrame: initialFrame,
       observer,
     };
     this.attachments.set(terminal.id, poller);
     observer.onOpen();
-    if (initial.snapshot && initial.snapshot !== terminal.snapshot) {
-      observer.onData(initial.snapshot);
+    if (initialFrame && initialFrame !== terminal.snapshot) {
+      publishSnapshot(observer, initialFrame);
     }
 
     const poll = async () => {
@@ -162,9 +166,11 @@ export class NativeTmuxAdapter implements TerminalBackend {
       try {
         const next = await this.capture(terminal, { lines: DEFAULT_CAPTURE_LINES });
         if (poller.closed) return;
-        const delta = terminalSnapshotDelta(poller.previous, next.snapshot);
-        poller.previous = next.snapshot;
-        if (delta) observer.onData(delta);
+        const frame = terminalSnapshotFrame(next);
+        if (frame !== poller.previousFrame) {
+          poller.previousFrame = frame;
+          publishSnapshot(observer, frame);
+        }
         this.schedulePoll(poller, poll);
       } catch (error) {
         if (poller.closed) return;
@@ -242,6 +248,11 @@ export class NativeTmuxAdapter implements TerminalBackend {
     const total = Math.max(rowCount, integer(response.historySize) + integer(response.paneHeight));
     return {
       snapshot: response.snapshot,
+      cursor: {
+        column: integer(response.cursorX),
+        row: integer(response.cursorY),
+      },
+      paneHeight: Math.max(1, integer(response.paneHeight)),
       scrollback: {
         start: Math.max(0, total - rowCount),
         rowCount,
@@ -350,35 +361,20 @@ export function requireExactTmuxName(value: string): string {
   return value;
 }
 
-export function terminalSnapshotDelta(previous: string, current: string): string {
-  if (!current || current === previous) return "";
-  if (!previous) return current;
-  if (current.startsWith(previous)) return current.slice(previous.length);
+export function terminalSnapshotFrame(capture: TerminalCapture): string {
+  const paneHeight = Math.max(1, capture.paneHeight || capture.scrollback.rowCount || 1);
+  const lines = capture.snapshot.replace(/\n$/, "").split("\n");
+  const visible = lines.slice(-paneHeight).join("\n");
+  const row = Math.min(paneHeight, Math.max(1, (capture.cursor?.row || 0) + 1));
+  const column = Math.max(1, (capture.cursor?.column || 0) + 1);
+  // RIS clears the emulator's old frame and scrollback so a polled tmux
+  // capture replaces the screen instead of accumulating repeated TUI paints.
+  return `\x1bc\x1b[?25l${visible}\x1b[${row};${column}H\x1b[?25h`;
+}
 
-  let sharedPrefix = 0;
-  const prefixLimit = Math.min(previous.length, current.length);
-  while (sharedPrefix < prefixLimit && previous[sharedPrefix] === current[sharedPrefix]) sharedPrefix += 1;
-  if (sharedPrefix >= Math.min(previous.length, current.length) * 0.6) {
-    return current.slice(sharedPrefix);
-  }
-
-  const before = previous.split("\n");
-  const after = current.split("\n");
-  const separator = Symbol("terminal snapshot boundary");
-  const sequence: Array<string | symbol> = [...after, separator, ...before];
-  const prefix = new Array<number>(sequence.length).fill(0);
-  for (let index = 1; index < sequence.length; index += 1) {
-    let candidate = prefix[index - 1];
-    while (candidate > 0 && sequence[index] !== sequence[candidate]) candidate = prefix[candidate - 1];
-    if (sequence[index] === sequence[candidate]) candidate += 1;
-    prefix[index] = candidate;
-  }
-  const overlap = Math.min(prefix.at(-1) || 0, before.length, after.length);
-  if (overlap > 0) {
-    const suffix = after.slice(overlap).join("\n");
-    return suffix ? `\n${suffix}` : "";
-  }
-  return `\n${current}`;
+function publishSnapshot(observer: TerminalAttachmentObserver, frame: string): void {
+  if (observer.onSnapshot) observer.onSnapshot(frame);
+  else observer.onData(frame);
 }
 
 function requireSessionWire(value: unknown): NativeTmuxSessionWire {

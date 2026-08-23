@@ -45,12 +45,14 @@ import {
   markRestoreDegraded,
   openRestoreAnyway,
   reduceRecord,
+  registerInlineVisual,
   resolveAttention,
   retryRestore,
   setComposerDraft,
   setComposerAttachments,
   setThinkingExpanded,
 } from "./reducer";
+import { saveInlineVisualPng } from "./visualExport";
 import {
   createGuiId,
   addBundle,
@@ -1014,6 +1016,7 @@ export default function App() {
                 onRetryRestore={() => retrySessionRestore(session().guiId)}
                 onOpenRestoreAnyway={() => openSessionWithoutFullRestore(session().guiId)}
                 onThinkingExpanded={(blockId, expanded) => update(session().guiId, (state) => setThinkingExpanded(state, blockId, expanded))}
+                onVisualArtifact={(artifact) => update(session().guiId, (state) => registerInlineVisual(state, artifact))}
                 onRetry={session().projectDir ? () => void relaunchFailedSession(session(), true) : undefined}
                 retryLabel={session().runtimeSessionId || session().resumeId ? "Retry resume" : "Retry"}
                 onExport={() => void exportSessionDiagnostics(session())}
@@ -1066,9 +1069,10 @@ export default function App() {
               onCapabilities={() => setCapabilitiesOpen(true)}
               onStartCapability={openCapability}
               onRequestContext={() => void requestContextForActive()}
-              onOpenOutput={async (path) => {
+              onOpenOutput={async (output) => {
                 try {
-                  await openLocalOutput(session().projectDir, path, session().hostUrl, session().hostId);
+                  if (output.inlineVisual) await saveInlineVisualPng(output.inlineVisual);
+                  else await openLocalOutput(session().projectDir, output.path, session().hostUrl, session().hostId);
                 } catch (error) {
                   update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
                 }
