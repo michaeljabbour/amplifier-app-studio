@@ -287,7 +287,10 @@ Coordinator Markdown can include explicit `amplifier-dot`, `amplifier-svg`,
 and `amplifier-html` fences. Studio renders DOT locally, sanitizes static SVG,
 and gives HTML a unique-origin sandbox with no network or Tauri access. That
 sandbox inherits Studio's CSP, so artifact markup renders but author JavaScript
-does not run; see `docs/INLINE-VISUALIZATION-PROTOCOL.md`. Incomplete visual fences collapse into a small composing state while
+does not run; see `docs/INLINE-VISUALIZATION-PROTOCOL.md`. Finished DOT and SVG
+figures are also registered in the session's Outputs inventory. Their viewer
+can open edge-to-edge, exit with Escape, and export a bounded PNG through the
+operating system's native save picker. Incomplete visual fences collapse into a small composing state while
 the model streams, so raw HTML never floods the conversation. Ordinary code
 fences stay code. The complete authoring and security
 contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATION-PROTOCOL.md).

@@ -22,8 +22,21 @@ Use a fenced block named `amplifier-dot`, `amplifier-svg`, or `amplifier-html`. 
   NOT true under `npm run dev`, whose Vite server sends no CSP, so an artifact that works in dev
   can be inert in a release. Author HTML, CSS, SVG and Canvas markup — not behaviour.
 - Artifact source is capped at 300 KB. The preview is a fixed-height panel (420 px) that scrolls
-  internally, with an Expand control that grows it to `min(80vh, 1000px)`. Studio injects no
-  script of its own into the frame; sizing is pure CSS.
+  internally and can open as a true edge-to-edge surface; Escape returns to the transcript.
+  Studio injects no script of its own into the frame; sizing is pure CSS.
+
+## Output and export behavior
+
+Once a DOT or SVG fence has a sanitized SVG render, Studio registers it as a
+diagram in the owning session's Outputs view. The visual card and Outputs row
+both offer **Save PNG**. Desktop saves always use the OS-native destination
+picker; the Rust boundary accepts only an absolute `.png` destination, a valid
+PNG signature, and at most 64 MB. Rasterization is capped at 8,192 pixels per
+edge and 40 million pixels, with a white background for reliable Finder,
+Preview, and document rendering. Browser-hosted Studio uses the browser's
+download surface. HTML artifacts can open full screen but are not promoted to
+PNG because their unique-origin sandbox is intentionally not readable by the
+host canvas.
 
 The outer Studio CSP permits only the sandboxed local frame. The artifact's own CSP is part of the
 rendered document and is stricter than Studio's on the directives that matter here -- `default-src`,
