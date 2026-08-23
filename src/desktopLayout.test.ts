@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
+const coordinatorHomeSource = readFileSync(new URL("./components/CoordinatorHome.tsx", import.meta.url), "utf8");
 const tabStripSource = readFileSync(new URL("./components/TabStrip.tsx", import.meta.url), "utf8");
 const terminalSurfaceSource = readFileSync(new URL("./components/TerminalWorkSurface.tsx", import.meta.url), "utf8");
 const terminalStyles = readFileSync(new URL("./components/TerminalWorkSurface.css", import.meta.url), "utf8");
@@ -17,9 +18,13 @@ describe("desktop navigation and history contracts", () => {
 
   it("keeps stored history on one bounded native scroll surface", () => {
     expect(styles).toMatch(/\.session-drawer\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden/);
-    expect(styles).toMatch(/\.stored-list\s*\{[\s\S]*grid-row:\s*3;[\s\S]*overflow-y:\s*auto;[\s\S]*touch-action:\s*pan-y/);
+    expect(styles).toMatch(/\.stored-list\s*\{[\s\S]*grid-row:\s*4;[\s\S]*overflow-y:\s*auto;[\s\S]*touch-action:\s*pan-y/);
+    expect(drawerSource).toContain('aria-label="Filter history by compute source"');
     expect(drawerSource).toContain('class="stored-list" onScroll={revealMoreNearBottom}');
     expect(drawerSource).toContain("setLimit((value) => value + 500)");
+    expect(coordinatorHomeSource).not.toContain('class="home-history"');
+    expect(coordinatorHomeSource).not.toContain("Browse all stored sessions");
+    expect(coordinatorHomeSource).toContain('class="home-continue"');
   });
 
   it("refreshes the compute registry before federating session history", () => {

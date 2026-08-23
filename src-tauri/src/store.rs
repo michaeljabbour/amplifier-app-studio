@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
@@ -13,10 +13,11 @@ use std::{
 const SESSION_EXPORT_SCHEMA: &str = "amplifier-tui/session-export/v1";
 const SESSION_EXPORT_SCHEMA_PREFIX: &str = "amplifier-tui/session-export/";
 const SESSION_SEARCH_TEXT_LIMIT: usize = 8 * 1024;
-// v2 forces older Studio indexes to rebuild the bounded full-conversation
-// searchText field instead of silently deserializing it as empty.
-const SESSION_INDEX_CACHE_VERSION: u8 = 2;
-const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v2.json";
+const SESSION_SEARCH_HEAD_LIMIT: usize = 2 * 1024;
+// v3 rebuilds indexes with durable event counts/signatures so a session whose
+// visual ledger changes can never keep a stale cached summary.
+const SESSION_INDEX_CACHE_VERSION: u8 = 3;
+const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v3.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +29,7 @@ pub struct StoredSession {
     pub tags: Vec<String>,
     pub turn_count: Option<u64>,
     pub message_count: u64,
+    pub event_count: u64,
     pub mtime_ms: u64,
     pub project_slug: String,
     pub project_dir: Option<String>,
@@ -207,6 +209,8 @@ fn session_signature(session_dir: &Path) -> u64 {
         session_dir.join("metadata.json.backup"),
         session_dir.join("transcript.jsonl"),
         session_dir.join("transcript.jsonl.backup"),
+        session_dir.join("events.jsonl"),
+        session_dir.join("ui-events.jsonl"),
     ] {
         path.file_name().hash(&mut hasher);
         match fs::metadata(path) {
@@ -232,6 +236,8 @@ fn session_mtime_ms(session_dir: &Path) -> u64 {
         session_dir.join("metadata.json.backup"),
         session_dir.join("transcript.jsonl"),
         session_dir.join("transcript.jsonl.backup"),
+        session_dir.join("events.jsonl"),
+        session_dir.join("ui-events.jsonl"),
     ]
     .iter()
     .filter_map(|path| modified_ms(path))
@@ -515,6 +521,7 @@ fn summarize(
             .with_file_name("transcript.jsonl.backup")
             .is_file();
     let message_count = transcript.unwrap_or(0);
+    let event_count = count_ui_events(session_dir);
 
     let state = if transcript_exists && transcript.is_none() {
         if metadata_valid {
@@ -567,6 +574,7 @@ fn summarize(
         project_dir,
         session_id,
         message_count,
+        event_count,
         mtime_ms,
         project_slug,
         state: state.to_owned(),
@@ -575,12 +583,44 @@ fn summarize(
     }
 }
 
+/// Count the durable records amplifier-runtime indexes for `history.replay`.
+///
+/// Current UI-ledger records carry `kind`; canonical pre-ledger Amplifier hook
+/// records carry `event`. The runtime normalizes the latter through its event
+/// contract and reports both the delivered UI-event count and this wider
+/// indexed-record count. Torn/unparseable and genuinely foreign JSON objects
+/// remain excluded.
+fn count_ui_events(session_dir: &Path) -> u64 {
+    [
+        session_dir.join("events.jsonl"),
+        session_dir.join("ui-events.jsonl"),
+    ]
+    .into_iter()
+    .filter_map(|path| File::open(path).ok())
+    .flat_map(|file| BufReader::new(file).lines())
+    .filter_map(Result::ok)
+    .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+    .filter(|record| {
+        record.as_object().is_some_and(|object| {
+            object.get("kind").and_then(Value::as_str).is_some()
+                || object.get("event").and_then(Value::as_str).is_some()
+        })
+    })
+    .count()
+    .min(u64::MAX as usize) as u64
+}
+
 #[derive(Default)]
 struct TranscriptSummary {
     first_user: Option<String>,
     last_assistant: Option<String>,
     search_text: String,
     search_terms: HashSet<String>,
+    search_head: Vec<String>,
+    search_head_bytes: usize,
+    search_head_full: bool,
+    search_order: VecDeque<String>,
+    search_bytes: usize,
 }
 
 struct TranscriptScan {
@@ -680,6 +720,13 @@ fn scan_transcript_with_backup(path: &Path) -> Option<TranscriptScan> {
             }
         }
         if valid {
+            summary.search_text = summary
+                .search_head
+                .iter()
+                .chain(summary.search_order.iter())
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
             return Some(TranscriptScan { count, summary });
         }
     }
@@ -701,21 +748,40 @@ fn append_search_text(summary: &mut TranscriptSummary, text: &str) {
         if term.len() < 2 || term.len() > 128 || summary.search_terms.contains(&term) {
             continue;
         }
-        let separator = usize::from(!summary.search_text.is_empty());
-        if summary
-            .search_text
-            .len()
-            .saturating_add(separator)
-            .saturating_add(term.len())
-            > SESSION_SEARCH_TEXT_LIMIT
+        summary.search_terms.insert(term.clone());
+        let head_separator = usize::from(!summary.search_head.is_empty());
+        if !summary.search_head_full
+            && summary
+                .search_head_bytes
+                .saturating_add(head_separator)
+                .saturating_add(term.len())
+                <= SESSION_SEARCH_HEAD_LIMIT
         {
+            summary.search_head_bytes = summary
+                .search_head_bytes
+                .saturating_add(head_separator)
+                .saturating_add(term.len());
+            summary.search_head.push(term);
             continue;
         }
-        summary.search_terms.insert(term.clone());
-        if separator > 0 {
-            summary.search_text.push(' ');
+        summary.search_head_full = true;
+        summary.search_bytes = summary
+            .search_bytes
+            .saturating_add(usize::from(!summary.search_order.is_empty()))
+            .saturating_add(term.len());
+        summary.search_order.push_back(term);
+        let recent_limit = SESSION_SEARCH_TEXT_LIMIT.saturating_sub(summary.search_head_bytes + 1);
+        while summary.search_bytes > recent_limit {
+            let Some(evicted) = summary.search_order.pop_front() else {
+                summary.search_bytes = 0;
+                break;
+            };
+            summary.search_terms.remove(&evicted);
+            summary.search_bytes = summary.search_bytes.saturating_sub(evicted.len());
+            if !summary.search_order.is_empty() {
+                summary.search_bytes = summary.search_bytes.saturating_sub(1);
+            }
         }
-        summary.search_text.push_str(&term);
     }
 }
 
@@ -1140,6 +1206,17 @@ mod tests {
                 "{\"role\":\"user\",\"content\":\"keep this conversation\"}\n",
             )
             .expect("transcript");
+            if project == &first {
+                fs::write(
+                    session_dir.join("events.jsonl"),
+                    concat!(
+                        "{\"kind\":\"prompt_submit\",\"event_id\":\"legacy-1\"}\n",
+                        "{\"timestamp\":\"foreign hook record\"}\n",
+                        "not json\n",
+                    ),
+                )
+                .expect("legacy events");
+            }
         }
 
         let sessions =
@@ -1154,6 +1231,14 @@ mod tests {
         assert!(!sessions
             .iter()
             .any(|session| session.project_slug == project_slug(&outside)));
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.project_slug == project_slug(&first))
+                .expect("first session")
+                .event_count,
+            1,
+        );
         assert!(projects.join(SESSION_INDEX_CACHE_FILE).is_file());
 
         let cached = list_stored_sessions_for_roots_from(&projects, std::slice::from_ref(&allowed));
@@ -1174,6 +1259,16 @@ mod tests {
         )
         .expect("append transcript");
         drop(transcript);
+        let first_events = projects
+            .join(project_slug(&first))
+            .join("sessions")
+            .join("shared-session-1234")
+            .join("ui-events.jsonl");
+        fs::write(
+            first_events,
+            "{\"kind\":\"prompt_complete\",\"event_id\":\"current-2\"}\n",
+        )
+        .expect("append current event ledger");
         let refreshed =
             list_stored_sessions_for_roots_from(&projects, std::slice::from_ref(&allowed));
         let first_session = refreshed
@@ -1181,6 +1276,7 @@ mod tests {
             .find(|session| session.project_slug == project_slug(&first))
             .expect("first session");
         assert_eq!(first_session.message_count, 2);
+        assert_eq!(first_session.event_count, 2);
         assert!(first_session.search_text.contains("invalidated"));
     }
 
@@ -1200,6 +1296,10 @@ mod tests {
         );
         assert_eq!(summary.state, "empty");
         assert_eq!(summary.message_count, 0);
+        assert_eq!(
+            summary.event_count, 1,
+            "canonical hook records are indexed for legacy replay"
+        );
         assert!(summary.summary.contains("No resumable conversation"));
     }
 
@@ -1268,6 +1368,32 @@ mod tests {
         assert!(summary.search_text.contains("nested project scan"));
         assert!(!summary.search_text.contains("secret tool output"));
         assert!(!summary.search_text.contains("hidden instruction"));
+    }
+
+    #[test]
+    fn transcript_search_keeps_recent_terms_when_a_long_session_exceeds_its_payload_budget() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let transcript = temp.path().join("transcript.jsonl");
+        let mut records =
+            String::from("{\"role\":\"user\",\"content\":\"Initial release investigation\"}\n");
+        for index in 0..2_000 {
+            records.push_str(&format!(
+                "{{\"role\":\"assistant\",\"content\":\"diagnostic-token-{index:04}\"}}\n"
+            ));
+        }
+        records
+            .push_str("{\"role\":\"assistant\",\"content\":\"Latest provisioning resolution\"}\n");
+        fs::write(&transcript, records).expect("transcript");
+
+        let summary = read_transcript_summary(&transcript);
+        assert!(summary.search_text.len() <= SESSION_SEARCH_TEXT_LIMIT);
+        assert!(summary
+            .search_text
+            .contains("initial release investigation"));
+        assert!(summary
+            .search_text
+            .contains("latest provisioning resolution"));
+        assert!(summary.search_text.contains("diagnostic-token-1999"));
     }
 
     #[test]

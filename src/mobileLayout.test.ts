@@ -120,6 +120,14 @@ describe("mobile layout contracts", () => {
     expect(mobileCss).toMatch(/\.mobile-open-session-menu > button\s*\{[\s\S]*min-height:\s*52px/);
   });
 
+  it("keeps federated history scrollable and labels each mobile row by compute origin", () => {
+    expect(drawerSource).toContain('aria-label="Filter history by compute source"');
+    expect(drawerSource).toContain('class="stored-mobile-origin"');
+    expect(mobileCss).toMatch(/\.session-drawer,[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column/);
+    expect(mobileCss).toMatch(/\.stored-list\s*\{[\s\S]*flex:\s*1 1 auto;[\s\S]*overflow-y:\s*auto/);
+    expect(mobileCss).toMatch(/\.stored-mobile-origin\s*\{[\s\S]*display:\s*flex/);
+  });
+
   it("gives the transcript its own touch scroll surface and keeps jump outside it", () => {
     expect(mobileCss).toMatch(/\.session-column,[\s\S]*display:\s*flex[\s\S]*flex-direction:\s*column/);
     expect(mobileCss).toMatch(/\.transcript-frame\s*\{[\s\S]*flex:\s*1 1 auto/);

@@ -92,6 +92,7 @@ describe("update restart continuity", () => {
       requestedModel: "anthropic/claude-opus-5",
       requestedProvider: "anthropic",
       expectedHistoryMessages: 101,
+      expectedHistoryEvents: 284,
     };
 
     expect(saveUpdateRestorePlan(storage, [remote], "remote", 10)).toBe(true);
@@ -106,6 +107,7 @@ describe("update restart continuity", () => {
       mode: "auto",
       resumeId: "runtime-remote",
       expectedHistoryMessages: 101,
+      expectedHistoryEvents: 284,
       active: true,
     }]);
   });
@@ -125,6 +127,7 @@ describe("update restart continuity", () => {
       bundle: "anchors",
       tags: [],
       messageCount: 101,
+      eventCount: 284,
       mtimeMs: 1,
       projectSlug: "project",
       projectDir: "/home/mjabbour/dev/project",
@@ -137,6 +140,7 @@ describe("update restart continuity", () => {
       hostName: "Spark 288f",
       hostUrl: "http://127.0.0.1:4318/",
       expectedHistoryMessages: 101,
+      expectedHistoryEvents: 284,
     });
   });
 

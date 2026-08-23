@@ -3,6 +3,7 @@ import { Copy, MonitorUp, X } from "lucide-solid";
 import { keepModalFocus } from "../focusTrap";
 import type { StoredSession } from "../protocol";
 import { storedSessionCanDuplicate, storedSessionResumeBlocker, storedSessionWarning } from "../sessionAvailability";
+import { storedSessionSourceLabel } from "../storedSessions";
 
 interface Props {
   session: StoredSession;
@@ -58,9 +59,10 @@ export function StoredSessionDialog(props: Props) {
         </header>
 
         <div class="stored-session-origin">
-          <div><span>Stored on</span><strong>{origin()}</strong></div>
+          <div><span>Source</span><strong>{storedSessionSourceLabel(props.session)}</strong></div>
           <div><span>Project</span><strong>{props.session.projectDir || props.session.projectSlug}</strong></div>
           <div><span>Conversation</span><strong>{props.session.messageCount} messages · {props.session.turnCount ?? "—"} turns</strong></div>
+          <div><span>Durable history</span><strong>{props.session.eventCount === undefined ? "Verified on open" : `${props.session.eventCount} records indexed`}</strong></div>
         </div>
 
         <Show when={blocker() || warning()} keyed>{(message) => <p class="stored-session-health">{message}</p>}</Show>
@@ -93,7 +95,7 @@ export function StoredSessionDialog(props: Props) {
               : "Studio could not resolve the original project path, so it cannot safely locate this checkpoint."}
           </p>
         </Show>
-        <p class="stored-session-footnote">A duplicate transfers conversation and metadata, not a running process, UI telemetry, or provider credentials.</p>
+        <p class="stored-session-footnote">Resume replays the complete durable timeline on its owning compute. A duplicate transfers the portable conversation checkpoint, not a running process or provider credentials.</p>
       </section>
     </div>
   );

@@ -75,6 +75,12 @@ export function sessionToolbarStatus(state: SessionViewState): string {
       if (state.connectivity?.status === "reconnecting") return "Reconnecting to compute · runtime remains available";
       if (state.busy) return state.activity;
       if (state.restoreProgress?.history && state.restoreProgress.status) {
+        if (state.restoredEventCount) {
+          const turns = state.archivedMetadata?.turnCount;
+          return turns
+            ? `Ready · ${turns} turn${turns === 1 ? "" : "s"} and ${state.restoredEventCount} activity records restored`
+            : `Ready · ${state.restoredEventCount} activity records restored`;
+        }
         return state.restoredTranscriptMessages
           ? `Ready · ${state.restoredTranscriptMessages} saved messages restored`
           : "Ready · History restored";
