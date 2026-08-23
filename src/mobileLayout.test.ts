@@ -14,8 +14,13 @@ const inspectorSource = readFileSync(new URL("./components/Inspector.tsx", impor
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
 const coordinatorHomeSource = readFileSync(new URL("./components/CoordinatorHome.tsx", import.meta.url), "utf8");
 const madeThemeCss = readFileSync(new URL("./madeTheme.css", import.meta.url), "utf8");
+const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("mobile layout contracts", () => {
+  it("never hard-wraps a CSS selector identifier", () => {
+    expect(stylesCss).not.toMatch(/(?:\.[a-z][\w-]*|:[a-z][\w-]*)-\s*\r?\n\s*[a-z]/i);
+  });
+
   it("exposes iOS safe-area insets without disabling user zoom", () => {
     expect(indexHtml).toContain("viewport-fit=cover");
     expect(indexHtml).not.toMatch(/user-scalable\s*=\s*no|maximum-scale\s*=\s*1/i);
