@@ -100,6 +100,9 @@ place.
   machine inspector instead of masquerading as chat messages
 - Read-only all-project session drawer with project-path recovery for TUI/CLI
   sessions and safe resume/reattach
+- OS-native desktop pickers for every local session workspace confirmation,
+  stored-session resume, attachment selection, and visual/diagnostic export;
+  remote compute uses its authenticated host-side directory browser
 - Friendly errors for resume exit codes 2, 3, and 4
 - Named runtime-host registry shared with the TUI, per-tab host selection,
   remote project browsing, HTTPS connections, visible host badges, and a
@@ -125,7 +128,8 @@ npm run tauri dev
 
 For an isolated native macOS QA bundle that cannot replace an installed
 release, run `npm run macos:build:peer-qa`. It uses a separate bundle
-identifier and app name.
+identifier and app name, plus the same stable Developer ID identity as the
+release build so rebuilt QA apps keep macOS privacy and Keychain grants.
 
 Build the native package for the current desktop platform:
 
@@ -286,7 +290,10 @@ Coordinator Markdown can include explicit `amplifier-dot`, `amplifier-svg`,
 and `amplifier-html` fences. Studio renders DOT locally, sanitizes static SVG,
 and gives HTML a unique-origin sandbox with no network or Tauri access. That
 sandbox inherits Studio's CSP, so artifact markup renders but author JavaScript
-does not run; see `docs/INLINE-VISUALIZATION-PROTOCOL.md`. Incomplete visual fences collapse into a small composing state while
+does not run; see `docs/INLINE-VISUALIZATION-PROTOCOL.md`. Finished DOT and SVG
+figures are also registered in the session's Outputs inventory. Their viewer
+can open edge-to-edge, exit with Escape, and export a bounded PNG through the
+operating system's native save picker. Incomplete visual fences collapse into a small composing state while
 the model streams, so raw HTML never floods the conversation. Ordinary code
 fences stay code. The complete authoring and security
 contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATION-PROTOCOL.md).

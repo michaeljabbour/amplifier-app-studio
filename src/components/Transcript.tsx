@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import type { SessionViewState, TranscriptBlock } from "../protocol";
+import type { InlineVisualArtifact, SessionViewState, TranscriptBlock } from "../protocol";
 import { loadOutputPreview } from "../transport";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { Markdown } from "./Markdown";
@@ -14,6 +14,7 @@ interface Props {
   retryLabel?: string;
   onResume?: () => void;
   onExport: () => void;
+  onVisualArtifact?: (artifact: InlineVisualArtifact) => void;
 }
 
 /**
@@ -246,6 +247,7 @@ export function Transcript(props: Props) {
           hostUrl={props.state.hostUrl}
           hostId={props.state.hostId}
           onThinkingExpanded={props.onThinkingExpanded}
+          onVisualArtifact={props.onVisualArtifact}
         />}</For>
 
         <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
@@ -460,6 +462,7 @@ function BlockView(props: {
   hostUrl?: string;
   hostId?: string;
   onThinkingExpanded: (blockId: string, expanded: boolean) => void;
+  onVisualArtifact?: (artifact: InlineVisualArtifact) => void;
 }) {
   const block = () => props.block;
   return (
@@ -498,7 +501,11 @@ function BlockView(props: {
           </Show>
           <Show when={block().kind === "answer"}>
             <div class="block-label">AMPLIFIER AGENT{(block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
-            <Markdown class="answer-text" text={(block() as Extract<TranscriptBlock, { kind: "answer" }>).text} />
+            <Markdown
+              class="answer-text"
+              text={(block() as Extract<TranscriptBlock, { kind: "answer" }>).text}
+              onVisualArtifact={props.onVisualArtifact}
+            />
           </Show>
           <Show when={block().kind === "notice"}>
             <Markdown

@@ -257,6 +257,15 @@ export class TerminalCoordinator implements TerminalCoordinatorContract {
             connection: { ...active.connection, lastDataAt: Date.now() },
           });
         },
+        onSnapshot: (snapshot) => {
+          if (!isCurrent()) return;
+          const active = this.requireSession(id);
+          this.patchSession(id, {
+            snapshot,
+            liveOutput: "",
+            connection: { ...active.connection, lastDataAt: Date.now() },
+          });
+        },
         onClose: (event) => {
           if (!isCurrent()) return;
           closedBeforeRegistration = true;

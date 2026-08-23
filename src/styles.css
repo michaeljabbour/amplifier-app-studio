@@ -980,12 +980,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .visual-artifact > header nav { display: flex; gap: 6px; margin-left: auto; }
 .visual-artifact > header button { border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 9px; background: rgba(255,255,255,.025); color: #91a8ba; font-size: 8px; cursor: pointer; }
 .visual-artifact > header button:hover { border-color: rgba(101,226,223,.32); color: #c9f4f1; }
+.visual-artifact > header button:disabled { opacity: .55; cursor: wait; }
 .visual-artifact-stage { display: grid; place-items: stretch; min-height: 300px; background: #0b1118; }
 .visual-artifact iframe { display: block; width: 100%; height: 420px; border: 0; background: #0b1118; }
-.visual-artifact.expanded iframe { height: min(80vh, 1000px); }
 .visual-artifact-svg { display: grid; place-items: center; min-height: 300px; overflow: auto; padding: 18px; }
-.visual-artifact.expanded .visual-artifact-svg { min-height: min(72vh, 820px); }
 .visual-artifact-svg svg { width: 100%; height: auto; min-height: 240px; max-height: 680px; }
+.visual-artifact-save-message { margin: 0; border-bottom: 1px solid var(--line); padding: 8px 14px; color: #8fb9ae; font: 9px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace; overflow-wrap: anywhere; }
+.visual-artifact-open { overflow: hidden; }
+.visual-artifact.full-screen { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; width: auto; margin: 0; border: 0; border-radius: 0; background: #080d13; box-shadow: none; }
+.visual-artifact.full-screen > header { min-height: 68px; padding-right: 20px; }
+.visual-artifact.full-screen .visual-artifact-stage { flex: 1; min-height: 0; height: 100%; }
+.visual-artifact.full-screen iframe { height: 100%; }
+.visual-artifact.full-screen .visual-artifact-svg { min-height: 0; height: 100%; padding: 28px; }
+.visual-artifact.full-screen .visual-artifact-svg svg { width: 100%; height: 100%; min-height: 0; max-height: none; object-fit: contain; }
+.visual-artifact.full-screen .visual-artifact-source { flex: 1; min-height: 0; max-height: none !important; height: 100%; overflow: auto; }
 .visual-artifact-source { max-height: 520px !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; padding: 16px !important; background: rgba(0,0,0,.3) !important; color: #a9c3d3 !important; white-space: pre-wrap !important; }
 .visual-artifact-error, .visual-artifact-loading { margin: 0; padding: 24px; color: #d7979c; font: 10px/1.55 ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .visual-artifact-loading { color: #7fa5bb; }

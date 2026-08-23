@@ -90,12 +90,14 @@ remain in TypeScript.
 
 ## Work-surface integration
 
-`src/components/TerminalWorkSurface.tsx` is a Studio MADE vertical slice with a
-host/project session rail, live/read-only/reconnect state, attention badges,
-safe create/rename/detach/terminate controls, paged scrollback, a command
-composer, and a compact mobile layout. It renders terminal output as sanitized
-plain text; a later full-screen TUI milestone can replace only the screen view
-with a terminal emulator without changing the coordinator or adapter.
+`src/components/TerminalWorkSurface.tsx` keeps host/project sessions in a
+compact left rail and gives the remaining pane to a real xterm cell grid.
+ANSI redraws remain in-place, the grid fits the available pane, and xterm's
+keyboard bytes flow through the authorized interactive-input seam, including
+Ctrl+C, Ctrl+D, Escape, arrows, paste, and ordinary typing. There is no second
+command composer: clicking the terminal focuses the real session. Native tmux
+polling publishes complete replacement frames with cursor position, while the
+MuxPlex adapter continues to publish its raw ttyd stream.
 
 Desktop Studio now constructs a native `TerminalCoordinator`, disposes it with
 the workbench, and exposes it through the top `Terminal` switcher. The Agent

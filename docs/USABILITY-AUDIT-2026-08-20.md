@@ -47,7 +47,7 @@ reviewed OS-keychain/keystore implementation and signed physical-device proof.
 | Lifecycle | Split **Detach view** from destructive **Stop runtime**; keep detached live runtimes in the mobile and desktop drawers; retain failed-stop state | Closing a view no longer silently stops or makes paid work unreachable |
 | Tabs | Added native tab semantics, roving Arrow/Home/End focus, and separate close buttons | Parallel sessions are keyboard-operable and screen-reader coherent |
 | Remote state | Bound outputs to the owning host and surfaced connected/reconnecting state | Drafts remain visible and sending is disabled honestly while offline |
-| Desktop setup | Opened the Studio setup sheet before the native folder picker | The user understands project, host, bundle, and model choices before leaving the app |
+| Desktop setup | Opened the Studio setup sheet before the native folder picker, then required native folder confirmation before every local start or resume | The user understands project, host, bundle, and model choices before leaving the app, and remembered paths never silently select a workspace |
 | Mobile Work | Added a full-screen Work hub with Run, Loop, Plan, Setup, Bundles, Outputs, and Context; global attention opens its owning session | A background approval never opens an unrelated session |
 | Mobile lifecycle | Added touch-sized overflow actions for Detach and Stop | A phone user can stop cost-bearing work explicitly |
 | Mobile navigation | Hydrate the real compute-host ID before readiness checks and route Android Back through the topmost Studio surface | Cold start no longer falls back to a false local-runtime error, and Back dismisses UI before leaving the app |

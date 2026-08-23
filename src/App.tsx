@@ -45,12 +45,14 @@ import {
   markRestoreDegraded,
   openRestoreAnyway,
   reduceRecord,
+  registerInlineVisual,
   resolveAttention,
   retryRestore,
   setComposerDraft,
   setComposerAttachments,
   setThinkingExpanded,
 } from "./reducer";
+import { saveInlineVisualPng } from "./visualExport";
 import {
   createGuiId,
   addBundle,
@@ -1014,6 +1016,7 @@ export default function App() {
                 onRetryRestore={() => retrySessionRestore(session().guiId)}
                 onOpenRestoreAnyway={() => openSessionWithoutFullRestore(session().guiId)}
                 onThinkingExpanded={(blockId, expanded) => update(session().guiId, (state) => setThinkingExpanded(state, blockId, expanded))}
+                onVisualArtifact={(artifact) => update(session().guiId, (state) => registerInlineVisual(state, artifact))}
                 onRetry={session().projectDir ? () => void relaunchFailedSession(session(), true) : undefined}
                 retryLabel={session().runtimeSessionId || session().resumeId ? "Retry resume" : "Retry"}
                 onExport={() => void exportSessionDiagnostics(session())}
@@ -1066,9 +1069,10 @@ export default function App() {
               onCapabilities={() => setCapabilitiesOpen(true)}
               onStartCapability={openCapability}
               onRequestContext={() => void requestContextForActive()}
-              onOpenOutput={async (path) => {
+              onOpenOutput={async (output) => {
                 try {
-                  await openLocalOutput(session().projectDir, path, session().hostUrl, session().hostId);
+                  if (output.inlineVisual) await saveInlineVisualPng(output.inlineVisual);
+                  else await openLocalOutput(session().projectDir, output.path, session().hostUrl, session().hostId);
                 } catch (error) {
                   update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
                 }
@@ -1348,7 +1352,10 @@ export default function App() {
     const remembered = host?.url
       ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
       : knownHostProjectRoot(host);
-    const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
+    // A remembered local path is a useful default, not permission to silently
+    // reuse a folder. Every fresh desktop session confirms its workspace in
+    // the operating system's native directory picker.
+    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
     await start({ projectDir, ...sessionHostInput(host) }, text, attachments);
   }
@@ -1393,7 +1400,9 @@ export default function App() {
     const host = runtimeHostForStoredSession(session, runtimeHosts());
     if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);
     const remembered = session.projectDir || knownHostProjectRoot(host);
-    const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
+    // Resuming can target a moved checkout. Confirm even a remembered local
+    // path with the native picker instead of trusting stale persisted state.
+    const projectDir = host.url ? remembered : await selectProjectFolder(remembered);
     if (!projectDir) throw new Error("Choose the original project folder before resuming this session.");
     setDrawerOpen(false);
     setStoredSessionDialog(undefined);

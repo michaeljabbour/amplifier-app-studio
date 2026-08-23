@@ -312,11 +312,52 @@ export interface SessionOutput {
   kind: "file" | "image" | "diagram" | "data";
   title: string;
   path: string;
+  /** A transcript-authored SVG/DOT visual has no backing project file. Keep the
+   * sanitized render beside the output inventory so Open can export it through
+   * the native save picker instead of pretending it is a filesystem path. */
+  inlineVisual?: InlineVisualArtifact;
   source?: string;
   laneId?: string;
   toolCallId?: string;
   eventId?: string;
   runtimeHost?: string;
+}
+
+export interface ArchivedTurnOutcome {
+  turnId?: string;
+  checkpointId?: string;
+  costUsd?: string;
+  elapsedSeconds?: number;
+  tokens?: number;
+  cachedPercent?: number;
+  interrupted?: boolean;
+  yields: Array<{ kind: string; label: string }>;
+}
+
+export interface ArchivedSessionMetadata {
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  turnCount?: number;
+  totalCostUsd?: string;
+  permissionPosture?: string;
+  permissionProfile?: {
+    name?: string;
+    auto: string[];
+    ask: string[];
+    block: string[];
+    classifierGated?: boolean;
+  };
+  outcomes: ArchivedTurnOutcome[];
+}
+
+export interface InlineVisualArtifact {
+  id: string;
+  title: string;
+  format: "svg" | "dot";
+  source: string;
+  /** Sanitized SVG, ready for presentation and bounded PNG rasterization. */
+  svg: string;
 }
 
 export interface ArchivedTurnOutcome {

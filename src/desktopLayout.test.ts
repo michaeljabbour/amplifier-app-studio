@@ -9,6 +9,7 @@ const terminalSurfaceSource = readFileSync(new URL("./components/TerminalWorkSur
 const terminalStyles = readFileSync(new URL("./components/TerminalWorkSurface.css", import.meta.url), "utf8");
 const newSessionSource = readFileSync(new URL("./components/NewSessionDialog.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const packageSource = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 
 describe("desktop navigation and history contracts", () => {
   it("renders the desktop drawer icon with an explicit visible stroke", () => {
@@ -41,6 +42,26 @@ describe("desktop navigation and history contracts", () => {
     expect(openNewDialog).not.toContain("selectProjectFolder(");
   });
 
+  it("requires the native folder picker before starting or resuming local work", () => {
+    expect(newSessionSource).toContain('nativeProjectPicker() && !localProjectConfirmed()');
+    expect(newSessionSource).toContain('await props.onPickProjectDir(projectDir())');
+    expect(newSessionSource).toContain('setLocalProjectConfirmed(true)');
+
+    const startFromHome = appSource.slice(
+      appSource.indexOf("async function startFromHome"),
+      appSource.indexOf("async function chooseHomeProject"),
+    );
+    expect(startFromHome).toContain("await selectProjectFolder(remembered)");
+    expect(startFromHome).not.toContain("remembered ||");
+
+    const prepareStoredResume = appSource.slice(
+      appSource.indexOf("async function prepareStoredResume"),
+      appSource.indexOf("async function duplicateStoredSession"),
+    );
+    expect(prepareStoredResume).toContain("await selectProjectFolder(remembered)");
+    expect(prepareStoredResume).not.toContain("remembered ||");
+  });
+
   it("keeps GitHub clone inside fresh-session setup and outside resume payloads", () => {
     expect(newSessionSource).toContain("Clone GitHub repository");
     expect(newSessionSource).toContain("!props.initial.resumeId");
@@ -59,14 +80,21 @@ describe("desktop navigation and history contracts", () => {
     expect(tabStripSource).toContain('<SquareTerminal aria-hidden="true" />');
     expect(tabStripSource).toContain("aria-pressed={props.terminalOpen}");
     expect(terminalSurfaceSource).toContain("project: props.project");
-    expect(terminalSurfaceSource).toContain('class="terminal-back terminal-mobile-back"');
+    expect(terminalSurfaceSource).toContain('class="terminal-back"');
+    expect(terminalSurfaceSource).toContain("<TerminalEmulator");
+    expect(terminalSurfaceSource).not.toContain("terminal-command-bar");
   });
 
   it("gives the terminal pane the remaining workbench height without duplicating desktop navigation", () => {
     expect(terminalStyles).toMatch(/\.terminal-work-surface\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column/);
     expect(terminalStyles).toMatch(/\.terminal-work-layout\s*\{[\s\S]*flex:\s*1 1 auto/);
     expect(terminalStyles).toMatch(/\.terminal-stage\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column/);
-    expect(terminalStyles).toContain(".terminal-mobile-back { display: none !important; }");
-    expect(terminalStyles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.terminal-mobile-back \{ display: inline-flex !important; \}/);
+    expect(terminalStyles).toContain(".terminal-back { display: none !important; }");
+    expect(terminalStyles).toMatch(/@media \(max-width: 720px\)[\s\S]*\.terminal-back \{ display: grid !important; \}/);
+  });
+
+  it("builds the isolated Peer QA app with a stable signing identity", () => {
+    expect(packageSource).toContain('"macos:build:peer-qa": "./scripts/build-macos-signed.sh');
+    expect(packageSource).not.toContain('"macos:build:peer-qa": "tauri build');
   });
 });

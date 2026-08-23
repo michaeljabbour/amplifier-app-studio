@@ -6,6 +6,7 @@ import {
   type LaneEventState,
   type LaneState,
   type LaneToolState,
+  type InlineVisualArtifact,
   type ComposerAttachment,
   type PlanItemState,
   type PipelineNodeState,
@@ -495,6 +496,29 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
     default:
       return next;
   }
+}
+
+/** Register a transcript-rendered visual in the same inventory as concrete
+ * tool files. Replay and rerender can report it repeatedly, so this operation
+ * is deliberately idempotent. */
+export function registerInlineVisual(
+  state: SessionViewState,
+  artifact: InlineVisualArtifact,
+): SessionViewState {
+  const existing = state.outputs.find((output) => output.id === artifact.id);
+  if (existing?.inlineVisual?.svg === artifact.svg && existing.title === `${artifact.title}.png`) return state;
+  const output = {
+    id: artifact.id,
+    kind: "diagram" as const,
+    title: `${artifact.title}.png`,
+    path: artifact.id,
+    source: "Amplifier response",
+    inlineVisual: artifact,
+  };
+  return {
+    ...state,
+    outputs: [...state.outputs.filter((item) => item.id !== artifact.id), output].slice(-80),
+  };
 }
 
 export function queueLocalSteer(state: SessionViewState): SessionViewState {
