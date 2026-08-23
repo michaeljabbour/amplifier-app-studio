@@ -36,7 +36,8 @@ jobs:
           test -d "$DEVELOPER_DIR" || { echo "Required Xcode toolchain is unavailable: $DEVELOPER_DIR" >&2; exit 1; }
           sudo xcode-select --switch "$DEVELOPER_DIR"
           test "$(xcode-select --print-path)" = "$DEVELOPER_DIR"
-          XCODE_VERSION="$(xcodebuild -version | head -1)"
+          XCODE_VERSION_OUTPUT="$(xcodebuild -version)"
+          XCODE_VERSION="${XCODE_VERSION_OUTPUT%%$'\n'*}"
           IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
           echo "$XCODE_VERSION"
           echo "iOS SDK $IOS_SDK_VERSION"
