@@ -1352,7 +1352,10 @@ export default function App() {
     const remembered = host?.url
       ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
       : knownHostProjectRoot(host);
-    const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
+    // A remembered local path is a useful default, not permission to silently
+    // reuse a folder. Every fresh desktop session confirms its workspace in
+    // the operating system's native directory picker.
+    const projectDir = host?.url ? remembered : await selectProjectFolder(remembered);
     if (!projectDir) throw new Error("Choose a project folder before starting the coordinator");
     await start({ projectDir, ...sessionHostInput(host) }, text, attachments);
   }
@@ -1397,7 +1400,9 @@ export default function App() {
     const host = runtimeHostForStoredSession(session, runtimeHosts());
     if (!host) throw new Error(`The compute host for “${session.name}” is no longer available. Reconnect it in Settings to resume this session.`);
     const remembered = session.projectDir || knownHostProjectRoot(host);
-    const projectDir = remembered || (host?.url ? undefined : await selectProjectFolder());
+    // Resuming can target a moved checkout. Confirm even a remembered local
+    // path with the native picker instead of trusting stale persisted state.
+    const projectDir = host.url ? remembered : await selectProjectFolder(remembered);
     if (!projectDir) throw new Error("Choose the original project folder before resuming this session.");
     setDrawerOpen(false);
     setStoredSessionDialog(undefined);

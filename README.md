@@ -100,6 +100,9 @@ place.
   machine inspector instead of masquerading as chat messages
 - Read-only all-project session drawer with project-path recovery for TUI/CLI
   sessions and safe resume/reattach
+- OS-native desktop pickers for every local session workspace confirmation,
+  stored-session resume, attachment selection, and visual/diagnostic export;
+  remote compute uses its authenticated host-side directory browser
 - Friendly errors for resume exit codes 2, 3, and 4
 - Named runtime-host registry shared with the TUI, per-tab host selection,
   remote project browsing, HTTPS connections, visible host badges, and a

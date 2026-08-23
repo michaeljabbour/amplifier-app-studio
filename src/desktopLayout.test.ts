@@ -42,6 +42,26 @@ describe("desktop navigation and history contracts", () => {
     expect(openNewDialog).not.toContain("selectProjectFolder(");
   });
 
+  it("requires the native folder picker before starting or resuming local work", () => {
+    expect(newSessionSource).toContain('nativeProjectPicker() && !localProjectConfirmed()');
+    expect(newSessionSource).toContain('await props.onPickProjectDir(projectDir())');
+    expect(newSessionSource).toContain('setLocalProjectConfirmed(true)');
+
+    const startFromHome = appSource.slice(
+      appSource.indexOf("async function startFromHome"),
+      appSource.indexOf("async function chooseHomeProject"),
+    );
+    expect(startFromHome).toContain("await selectProjectFolder(remembered)");
+    expect(startFromHome).not.toContain("remembered ||");
+
+    const prepareStoredResume = appSource.slice(
+      appSource.indexOf("async function prepareStoredResume"),
+      appSource.indexOf("async function duplicateStoredSession"),
+    );
+    expect(prepareStoredResume).toContain("await selectProjectFolder(remembered)");
+    expect(prepareStoredResume).not.toContain("remembered ||");
+  });
+
   it("keeps GitHub clone inside fresh-session setup and outside resume payloads", () => {
     expect(newSessionSource).toContain("Clone GitHub repository");
     expect(newSessionSource).toContain("!props.initial.resumeId");

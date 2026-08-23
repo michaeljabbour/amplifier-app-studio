@@ -25,6 +25,7 @@ export function NewSessionDialog(props: Props) {
   let remoteBrowserBack: HTMLButtonElement | undefined;
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
   const [existingProjectDir, setExistingProjectDir] = createSignal(props.initial.projectDir);
+  const [localProjectConfirmed, setLocalProjectConfirmed] = createSignal(false);
   const [hostId, setHostId] = createSignal(props.initial.hostId || props.hosts[0]?.id || "local");
   const [bundle, setBundle] = createSignal(props.initial.bundle || "");
   const [model, setModel] = createSignal(props.initial.model || "");
@@ -61,6 +62,25 @@ export function NewSessionDialog(props: Props) {
     if (projectSource() === "github" && !cloneResult()) {
       setError("Clone the repository before starting this session.");
       return;
+    }
+    if (projectSource() === "existing" && nativeProjectPicker() && !localProjectConfirmed()) {
+      setPickingProject(true);
+      setError("");
+      try {
+        const selected = await props.onPickProjectDir(projectDir());
+        if (!selected) {
+          setError("Choose the project directory this session may work in.");
+          return;
+        }
+        setExistingProjectDir(selected);
+        setProjectDir(selected);
+        setLocalProjectConfirmed(true);
+      } catch (caught) {
+        setError(String(caught));
+        return;
+      } finally {
+        setPickingProject(false);
+      }
     }
     if (!projectDir().trim()) {
       setError("Choose the project directory this session may work in.");
@@ -133,6 +153,7 @@ export function NewSessionDialog(props: Props) {
       if (selected) {
         setExistingProjectDir(selected);
         setProjectDir(selected);
+        setLocalProjectConfirmed(true);
       }
     } catch (caught) {
       setError(String(caught));
