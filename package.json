@@ -20,6 +20,7 @@
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build",
     "macos:build:peer-qa": "tauri build --debug --bundles app --config src-tauri/tauri.peer-qa.conf.json",
+    "macos:build:real-window-smoke": "VITE_STUDIO_REAL_WINDOW_SMOKE=1 tauri build --debug --bundles app --config src-tauri/tauri.peer-qa.conf.json",
     "macos:build:signed": "./scripts/build-macos-signed.sh",
     "tauri": "tauri"
   },
