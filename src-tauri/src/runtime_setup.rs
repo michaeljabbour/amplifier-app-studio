@@ -13,11 +13,11 @@ use tokio::io::AsyncWriteExt;
 /// argument resolve to this commit, so "what Studio installs" is a single reviewable value.
 ///
 /// This is the identity Studio actually cares about, and `REQUIRED_RUNTIME_VERSION` cannot stand
-/// in for it: the runtime's version only moves on release commits, so several revisions all
-/// honestly report the same `0.1.8`. A version check therefore passes in exactly the case where
-/// the pin has drifted, which is the case it exists to catch. `installed_runtime_commit` reads
+/// in for it: the runtime's version only moves on release commits, so multiple revisions can
+/// honestly report the same version. A version check can therefore pass when the pin has
+/// drifted, which is the case it exists to catch. `installed_runtime_commit` reads
 /// the commit the package manager recorded and `status()` compares it against this constant.
-const RUNTIME_INSTALL_REF: &str = "6d469156b90a14a4289772c4ebc16740748dbbc1";
+const RUNTIME_INSTALL_REF: &str = "0bdb81593218eea95a544c64fdfef771c555b243";
 
 /// Bootstrap scripts are fetched from the pinned commit and checksum-verified before they run.
 ///
@@ -34,7 +34,7 @@ const INSTALL_SCRIPT_SHA256: &str =
 const WINDOWS_INSTALL_SCRIPT_SHA256: &str =
     "85c13a6bd4f14b51c6e434081d437e4ae136b2ae4fe65e0183f7fa66271369aa";
 
-const REQUIRED_RUNTIME_VERSION: &str = "0.1.8";
+const REQUIRED_RUNTIME_VERSION: &str = "0.1.9";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 
@@ -136,8 +136,8 @@ pub fn status() -> RuntimeStatus {
         .and_then(|path| installed_runtime_commit(path));
     // Compare the commit when one is recorded, and fall back to the version when it is not.
     // The version alone cannot detect pin drift: the runtime's version moves only on release
-    // commits, so several revisions all report the same 0.1.8 and the check passes in exactly
-    // the case it exists to catch.
+    // commits, so multiple revisions can report the same version and the check can otherwise
+    // pass in exactly the case it exists to catch.
     let version_ok = version
         .as_deref()
         .is_some_and(|value| runtime_version_at_least(value, REQUIRED_RUNTIME_VERSION));
@@ -177,9 +177,9 @@ pub fn status() -> RuntimeStatus {
     let message = if installed && current {
         "Amplifier runtime is ready".to_owned()
     } else if installed {
-        // Say which identity is wrong. "0.1.8 update required" is baffling when the installed
-        // runtime reports exactly 0.1.8 -- which is the normal case for pin drift, because the
-        // version does not move between releases.
+        // Say which identity is wrong. A version-only update message is baffling when the
+        // installed runtime already reports the required version -- which is the normal case for
+        // pin drift between releases.
         match commit.as_deref() {
             Some(installed_commit) if installed_commit != RUNTIME_INSTALL_REF => format!(
                 "Amplifier runtime is pinned to {} but {} is installed; reinstall to update",
@@ -517,8 +517,8 @@ fn runtime_candidates() -> Vec<(String, RuntimeAdapter)> {
 
 /// The commit the package manager recorded for the installed runtime.
 ///
-/// `amplifier-runtime --version` reports only `0.1.8`, which is the same string for every
-/// revision between releases, so the binary cannot answer this. A PEP 610 install records the
+/// `amplifier-runtime --version` reports only the release version, which is the same string for
+/// every revision between releases, so the binary cannot answer this. A PEP 610 install records the
 /// resolved revision in `direct_url.json` beside the dist-info, and both uv and pip write it.
 /// Absent (a path install, a wheel from an index) means "unknown", not "wrong".
 fn installed_runtime_commit(executable: &Path) -> Option<String> {
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn runtime_version_gate_accepts_required_and_newer_versions() {
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.8",
+            "amplifier-runtime, version 0.1.9",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(runtime_version_at_least(
@@ -658,7 +658,7 @@ mod tests {
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
-            "amplifier-runtime, version 0.1.7",
+            "amplifier-runtime, version 0.1.8",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
@@ -739,15 +739,15 @@ mod tests {
     /// The pin is a commit, so the check has to be a commit.
     ///
     /// REQUIRED_RUNTIME_VERSION cannot stand in for it: the runtime's version only advances on
-    /// release commits, so b9568a2, 7447612 and 6d46915 all honestly report 0.1.8. A version
+    /// release commits, so multiple revisions can honestly report the same version. A version
     /// check therefore passes in exactly the situation it exists to catch. Verified against the
     /// real installation on a developer machine, where the guard reported current=false with
-    /// version 0.1.8 and the superseded commit.
+    /// the required version and a superseded commit.
     #[test]
     fn a_matching_version_does_not_excuse_a_mismatched_commit() {
         let required = REQUIRED_RUNTIME_VERSION;
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.8",
+            "amplifier-runtime, version 0.1.9",
             required
         ));
 
