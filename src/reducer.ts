@@ -44,6 +44,7 @@ export function createSessionState(
     resumeId?: string;
     resumeName?: string;
     expectedHistoryMessages?: number;
+    expectedHistoryEvents?: number;
     capabilityId?: string;
     capabilityName?: string;
   },
@@ -61,6 +62,7 @@ export function createSessionState(
     requestedProvider: input.provider,
     resumeId: input.resumeId,
     expectedHistoryMessages: input.expectedHistoryMessages,
+    expectedHistoryEvents: input.expectedHistoryEvents,
     title: usableSessionTitle(input.resumeName)
       || input.capabilityName
       || (input.resumeId ? "Restoring saved work" : "New session"),
@@ -78,6 +80,7 @@ export function createSessionState(
     replaying: Boolean(input.resumeId),
     replayedTranscriptMessageIds: new Set(),
     acceptedReplayTranscriptMessages: 0,
+    acceptedReplayEvents: 0,
     restoreProgress: input.resumeId ? { history: false, status: false } : undefined,
     context: emptyContext(),
     effortLevels: [...DEFAULT_EFFORT_LEVELS],
@@ -145,7 +148,11 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
     }
     case "runtime.event": {
       const event = asEvent(record.event);
-      return event ? reduceEvent(next, event, record.replay === true) : next;
+      if (!event) return next;
+      if (record.replay === true) {
+        next = { ...next, acceptedReplayEvents: (next.acceptedReplayEvents || 0) + 1 };
+      }
+      return reduceEvent(next, event, record.replay === true);
     }
     case "approval.required":
       return markLaneAwaitingApproval({
@@ -281,11 +288,62 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       return {
         ...next,
         replaying: true,
-        restoreSource: record.source === "transcript" ? "transcript" : "ui-events",
+        restoreSource: historySource(record.source),
         acceptedReplayTranscriptMessages: 0,
+        acceptedReplayEvents: 0,
+        restoredEventCount: undefined,
+        indexedHistoryRecords: undefined,
+        archivedMetadata: undefined,
         phase: next.restoreProgress && next.phase !== "degraded" ? "starting" : next.phase,
         bootLabel: "Replaying durable history",
       };
+    case "history.metadata": {
+      if (record.replay !== true || !isRecord(record.metadata)) return next;
+      const metadata = record.metadata;
+      const permission = isRecord(metadata.permission_profile) ? metadata.permission_profile : undefined;
+      const outcomes = Array.isArray(metadata.outcome_ledger)
+        ? metadata.outcome_ledger.filter(isRecord).map((outcome) => ({
+            turnId: optionalString(outcome.turn_id),
+            checkpointId: optionalString(outcome.checkpoint_id),
+            costUsd: optionalMoney(outcome.cost),
+            elapsedSeconds: optionalFiniteNumber(outcome.elapsed_seconds),
+            tokens: optionalFiniteNumber(outcome.tokens),
+            cachedPercent: optionalFiniteNumber(outcome.cached_percent),
+            interrupted: typeof outcome.interrupted === "boolean" ? outcome.interrupted : undefined,
+            yields: Array.isArray(outcome.yields)
+              ? outcome.yields.filter(isRecord).map((item) => ({
+                  kind: stringValue(item.kind),
+                  label: stringValue(item.label),
+                })).filter((item) => item.kind || item.label)
+              : [],
+          }))
+        : [];
+      return {
+        ...next,
+        title: stringValue(metadata.name, next.title),
+        bundle: stringValue(metadata.bundle, next.bundle),
+        model: stringValue(metadata.model, next.model),
+        mode: stringValue(metadata.active_mode, stringValue(metadata.ui_mode, next.mode)),
+        archivedMetadata: {
+          description: optionalString(metadata.description),
+          createdAt: optionalString(metadata.created),
+          updatedAt: optionalString(metadata.updated),
+          turnCount: optionalFiniteNumber(metadata.turn_count),
+          totalCostUsd: optionalMoney(metadata.session_cost_usd),
+          permissionPosture: optionalString(metadata.permission_posture),
+          permissionProfile: permission ? {
+            name: optionalString(permission.name),
+            auto: stringList(permission.auto),
+            ask: stringList(permission.ask),
+            block: stringList(permission.block),
+            classifierGated: typeof permission.classifier_gated === "boolean"
+              ? permission.classifier_gated
+              : undefined,
+          } : undefined,
+          outcomes,
+        },
+      };
+    }
     case "transcript.message": {
       const text = stringValue(record.text).trim();
       if (!text || record.replay !== true) return next;
@@ -308,9 +366,13 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       // The next live record will not follow the pre-replay sequence; re-baseline on it.
       next = { ...next, sequenceResyncPending: true };
       const expectedMessages = Math.max(0, next.expectedHistoryMessages || 0);
+      const expectedEvents = Math.max(0, next.expectedHistoryEvents || 0);
       const replayedEvents = Math.max(0, numberValue(record.count));
+      const hasReportedEventCount = typeof record.count === "number" && Number.isFinite(record.count);
       const replayedTranscript = Math.max(0, numberValue(record.transcript_count));
       const acceptedTranscript = Math.max(0, next.acceptedReplayTranscriptMessages || 0);
+      const acceptedEvents = Math.max(0, next.acceptedReplayEvents || 0);
+      const indexedRecords = Math.max(0, numberValue(record.indexed_record_count, replayedEvents));
       const hasVisibleConversation = next.blocks.some((block) => block.kind === "user" || block.kind === "answer");
       if (
         next.restoreProgress
@@ -327,7 +389,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
       }
       if (
         next.restoreProgress
-        && record.source === "transcript"
+        && replayedTranscript > 0
         && acceptedTranscript !== replayedTranscript
       ) {
         return markRestoreDegraded(
@@ -335,12 +397,46 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
           `The runtime reported ${replayedTranscript} transcript message${replayedTranscript === 1 ? "" : "s"}, but Studio accepted ${acceptedTranscript}. The conversation replay is incomplete; retry the restore before continuing.`,
         );
       }
+      if (
+        next.restoreProgress
+        && record.source !== "transcript"
+        && hasReportedEventCount
+        && acceptedEvents !== replayedEvents
+      ) {
+        return markRestoreDegraded(
+          next,
+          `The runtime reported ${replayedEvents} durable event${replayedEvents === 1 ? "" : "s"}, but Studio accepted ${acceptedEvents}. The visual history replay is incomplete; retry the restore before continuing.`,
+        );
+      }
+      if (
+        next.restoreProgress
+        && record.source !== "transcript"
+        && expectedEvents > 0
+        && indexedRecords < expectedEvents
+      ) {
+        return markRestoreDegraded(
+          next,
+          `Studio indexed ${expectedEvents} durable record${expectedEvents === 1 ? "" : "s"} before resume, but the runtime found ${indexedRecords}. The visual history is incomplete; restart the compute host and retry the restore.`,
+        );
+      }
+      const archivedCost = optionalMoney(next.archivedMetadata?.totalCostUsd);
+      // The persisted session total is the runtime's authoritative accounting
+      // checkpoint. Replayed usage events are still valuable for token/model
+      // attribution, but older logs may contain only a subset of priced model
+      // responses. Seed the live meter from the saved total; later live usage
+      // events add to it normally.
+      const context = archivedCost && Number(archivedCost) > 0
+        ? { ...next.context, costUsd: archivedCost, costBasis: "reported" as const }
+        : next.context;
       return markRestoreProgress({
         ...next,
-        restoreSource: record.source === "transcript" ? "transcript" : next.restoreSource || "ui-events",
-        restoredTranscriptMessages: record.source === "transcript"
-          ? Math.max(0, numberValue(record.transcript_count))
+        context,
+        restoreSource: historySource(record.source, next.restoreSource),
+        restoredTranscriptMessages: replayedTranscript > 0
+          ? replayedTranscript
           : next.restoredTranscriptMessages,
+        restoredEventCount: replayedEvents,
+        indexedHistoryRecords: indexedRecords,
       }, "history");
     }
     case "steer.deferred": {
@@ -624,8 +720,12 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       pendingDecision: undefined,
       restoreSource: undefined,
       restoredTranscriptMessages: undefined,
+      restoredEventCount: undefined,
+      indexedHistoryRecords: undefined,
+      archivedMetadata: undefined,
       replayedTranscriptMessageIds: new Set(),
       acceptedReplayTranscriptMessages: 0,
+      acceptedReplayEvents: 0,
       liveTail: undefined,
       openThinkingId: undefined,
       nextBlock: 1,
@@ -2102,6 +2202,12 @@ function contextCostFromRecord(
   if (!Number.isFinite(numeric) || numeric < 0) {
     return { costUsd: current.costUsd, costBasis: current.costBasis };
   }
+  // A resumed legacy session can carry an authoritative persisted total even
+  // when the newly booted runtime has no in-memory context meter yet. Do not
+  // erase that non-zero history with a transient zero-valued status snapshot.
+  if (numeric === 0 && finiteMoney(current.costUsd) > 0 && current.costBasis === "reported") {
+    return { costUsd: current.costUsd, costBasis: current.costBasis };
+  }
   const estimatedOrIncomplete = record.cost_estimated === true;
   return {
     costUsd: moneyString(numeric),
@@ -2598,6 +2704,31 @@ function goalNoticeLevel(state: string): "info" | "warning" | "error" | "success
   if (state === "stalled" || state === "error") return "error";
   if (state === "cap_hit" || state === "cancelled") return "warning";
   return "info";
+}
+
+function historySource(
+  value: unknown,
+  fallback: SessionViewState["restoreSource"] = "ui-events",
+): SessionViewState["restoreSource"] {
+  if (value === "transcript" || value === "legacy-events" || value === "mixed-events" || value === "ui-events") {
+    return value;
+  }
+  return fallback;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function optionalFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
+function optionalMoney(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? moneyString(numeric) : undefined;
 }
 
 function bootMessage(action: string, detail: string): string {

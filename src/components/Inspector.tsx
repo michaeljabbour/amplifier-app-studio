@@ -364,6 +364,9 @@ function ContextPanel(props: Props) {
   const window = () => props.state.context.window.toLocaleString();
   const cost = () => formatSessionCost(props.state.context.costUsd, props.state.context.costBasis);
   const usage = () => props.state.context.inputTokens + props.state.context.outputTokens;
+  const archive = () => props.state.archivedMetadata;
+  const archiveTokens = () => archive()?.outcomes.reduce((total, turn) => total + (turn.tokens || 0), 0) || 0;
+  const archiveSeconds = () => archive()?.outcomes.reduce((total, turn) => total + (turn.elapsedSeconds || 0), 0) || 0;
   return (
     <>
       <InspectorSection title="Context window" meta={`${Math.round(props.state.context.percent)}%`}>
@@ -378,7 +381,15 @@ function ContextPanel(props: Props) {
           <div><dt>Cost</dt><dd>{cost()}</dd></div>
           <div><dt>Session input</dt><dd>{props.state.context.inputTokens.toLocaleString()} tokens</dd></div>
           <div><dt>Session output</dt><dd>{props.state.context.outputTokens.toLocaleString()} tokens</dd></div>
+          <Show when={props.state.restoreSource} keyed>{(source) => <div><dt>History source</dt><dd>{historySourceLabel(source)}</dd></div>}</Show>
+          <Show when={props.state.restoredEventCount !== undefined}><div><dt>Activity restored</dt><dd>{props.state.restoredEventCount?.toLocaleString()} events</dd></div></Show>
+          <Show when={props.state.indexedHistoryRecords !== undefined}><div><dt>Durable records indexed</dt><dd>{props.state.indexedHistoryRecords?.toLocaleString()}</dd></div></Show>
+          <Show when={archive()?.turnCount !== undefined}><div><dt>Saved turns</dt><dd>{archive()?.turnCount}</dd></div></Show>
+          <Show when={archive()?.permissionPosture}><div><dt>Trust posture</dt><dd>{archive()?.permissionPosture}</dd></div></Show>
+          <Show when={archiveTokens() > 0}><div><dt>Historical usage</dt><dd>{archiveTokens().toLocaleString()} tokens</dd></div></Show>
+          <Show when={archiveSeconds() > 0}><div><dt>Recorded runtime</dt><dd>{formatDuration(archiveSeconds())}</dd></div></Show>
         </dl>
+        <Show when={archive()?.description}><p class="inspector-guidance">{archive()?.description}</p></Show>
         <Show when={props.state.context.costBasis === "estimated"}>
           <p class="inspector-empty">
             Estimated from {usage().toLocaleString()} blended tokens using Studio's built-in RunPod planning rate
@@ -392,6 +403,34 @@ function ContextPanel(props: Props) {
           </p>
         </Show>
       </InspectorSection>
+      <Show when={archive()} keyed>{(metadata) => (
+        <InspectorSection title="Saved run metadata" meta={`${metadata.outcomes.length} TURN${metadata.outcomes.length === 1 ? "" : "S"}`}>
+          <Show when={metadata.permissionProfile} keyed>{(profile) => (
+            <dl class="context-facts archived-permission-facts">
+              <div><dt>Permission profile</dt><dd>{profile.name || "custom"}</dd></div>
+              <div><dt>Allowed automatically</dt><dd>{profile.auto.join(", ") || "None"}</dd></div>
+              <div><dt>Ask first</dt><dd>{profile.ask.join(", ") || "None"}</dd></div>
+              <div><dt>Blocked</dt><dd>{profile.block.join(", ") || "None"}</dd></div>
+            </dl>
+          )}</Show>
+          <Show when={metadata.outcomes.length}>
+            <div class="archived-outcome-list">
+              <For each={metadata.outcomes}>{(turn, index) => (
+                <article>
+                  <div><strong>Turn {index() + 1}</strong><span>{turn.costUsd ? `$${turn.costUsd}` : "Cost unavailable"}</span></div>
+                  <small>{[
+                    turn.tokens ? `${turn.tokens.toLocaleString()} tokens` : "",
+                    turn.elapsedSeconds ? formatDuration(turn.elapsedSeconds) : "",
+                    turn.cachedPercent !== undefined ? `${turn.cachedPercent}% cached` : "",
+                    turn.interrupted ? "interrupted" : "",
+                  ].filter(Boolean).join(" · ")}</small>
+                  <Show when={turn.yields.length}><p>{turn.yields.map((item) => item.label || item.kind).join(" · ")}</p></Show>
+                </article>
+              )}</For>
+            </div>
+          </Show>
+        </InspectorSection>
+      )}</Show>
       <Show when={props.state.logs.length}>
         <InspectorSection title="Process log" meta={String(props.state.logs.length)}>
           <details class="process-log"><summary>Show recent bridge output</summary><pre>{props.state.logs.slice(-30).join("\n")}</pre></details>
@@ -399,6 +438,22 @@ function ContextPanel(props: Props) {
       </Show>
     </>
   );
+}
+
+function historySourceLabel(source: NonNullable<SessionViewState["restoreSource"]>): string {
+  if (source === "legacy-events") return "Amplifier canonical event log";
+  if (source === "mixed-events") return "Canonical + UI event logs";
+  if (source === "transcript") return "Legacy transcript only";
+  return "Amplifier UI event ledger";
+}
+
+function formatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${rounded}s`;
 }
 
 function InspectorSection(props: { title: string; meta?: string; children: unknown }) {

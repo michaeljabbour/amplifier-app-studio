@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, RadioTower, RefreshCw, Search, Settings, Square, Unplug, X } from "lucide-solid";
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
-import { storedSessionMatchesQuery } from "../storedSessions";
+import { storedSessionMatchesQuery, storedSessionSourceKind, storedSessionSourceLabel } from "../storedSessions";
 import { keepModalFocus } from "../focusTrap";
 
 interface Props {
@@ -28,18 +28,29 @@ interface Props {
 
 export function SessionDrawer(props: Props) {
   const [query, setQuery] = createSignal("");
+  const [sourceFilter, setSourceFilter] = createSignal<"all" | "local" | "remote">("all");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [openSessionMenu, setOpenSessionMenu] = createSignal<string>();
-  const [limit, setLimit] = createSignal(500);
+  const [limit, setLimit] = createSignal(1_000);
   const detachedSessionIds = createMemo(() => new Set(props.detachedSessionIds));
   const detachedOpenSessions = createMemo(() => props.openSessions.filter((session) => detachedSessionIds().has(session.guiId)));
   const matching = createMemo(() => {
     const needle = query().trim();
+    const source = sourceFilter();
     const resumable = props.sessions.filter(storedSessionShouldList);
+    const fromSource = source === "all"
+      ? resumable
+      : resumable.filter((session) => storedSessionSourceKind(session) === source);
     return needle
-      ? resumable.filter((session) => storedSessionMatchesQuery(session, needle))
-      : resumable;
+      ? fromSource.filter((session) => storedSessionMatchesQuery(session, needle))
+      : fromSource;
   });
+  const sourceCounts = createMemo(() => props.sessions
+    .filter(storedSessionShouldList)
+    .reduce((counts, session) => {
+      counts[storedSessionSourceKind(session)] += 1;
+      return counts;
+    }, { local: 0, remote: 0 }));
   const visible = createMemo(() => matching().slice(0, limit()));
   const revealMoreNearBottom = (event: Event) => {
     const list = event.currentTarget as HTMLDivElement;
@@ -152,6 +163,12 @@ export function SessionDrawer(props: Props) {
           <button onClick={props.onRefresh} aria-label="Refresh sessions" title="Refresh">↻</button>
         </div>
 
+        <div class="history-source-filter" role="group" aria-label="Filter history by compute source">
+          <button type="button" classList={{ active: sourceFilter() === "all" }} onClick={() => setSourceFilter("all")}>All <span>{sourceCounts().local + sourceCounts().remote}</span></button>
+          <button type="button" classList={{ active: sourceFilter() === "local" }} onClick={() => setSourceFilter("local")}>Local <span>{sourceCounts().local}</span></button>
+          <button type="button" classList={{ active: sourceFilter() === "remote" }} onClick={() => setSourceFilter("remote")}>Remote <span>{sourceCounts().remote}</span></button>
+        </div>
+
         <div class="stored-list" onScroll={revealMoreNearBottom}>
           <Show when={detachedOpenSessions().length > 0}>
             <section class="drawer-detached-sessions" aria-labelledby="drawer-detached-heading">
@@ -180,17 +197,23 @@ export function SessionDrawer(props: Props) {
               const blocker = () => storedSessionResumeBlocker(session, false);
               const note = () => blocker() || storedSessionWarning(session);
               return (
-                <button class="stored-row" classList={{ "needs-recovery": Boolean(blocker()) }} title={note()} onClick={() => void props.onResume(session)}>
+                <button class="stored-row" classList={{ "needs-recovery": Boolean(blocker()) }} title={[storedSessionSourceLabel(session), note()].filter(Boolean).join(" · ")} onClick={() => void props.onResume(session)}>
                   <div class="stored-topline">
                     <strong>{session.name}</strong>
                     <span>{timeAgo(session.mtimeMs)}</span>
                   </div>
+                  <div class="stored-mobile-origin">
+                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
+                    <span>{session.hostName || "This computer"}</span>
+                  </div>
                   <p class="stored-summary">{session.summary}</p>
                   <div class="stored-meta">
+                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
                     <span>{session.hostName || "This computer"}</span><i />
                     <span>{session.bundle}</span><i />
                     <span>{session.turnCount ?? "—"} turns</span><i />
-                    <span>{session.messageCount} messages</span>
+                    <span>{session.messageCount} messages</span><i />
+                    <span>{session.eventCount === undefined ? "history verified on open" : `${session.eventCount} records`}</span>
                   </div>
                   <div class="stored-path">{session.projectDir || session.projectSlug}</div>
                   <div class="stored-bottomline">
@@ -210,7 +233,7 @@ export function SessionDrawer(props: Props) {
           </Show>
         </div>
         <div class="drawer-footer">
-          {props.sourceName} · showing {visible().length} of {matching().length} resumable matches across compute
+          {props.sourceName} · showing {visible().length} of {matching().length} resumable matches · {sourceFilter() === "all" ? "all sources" : `${sourceFilter()} only`}
         </div>
         <div class="mobile-drawer-footer">
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>

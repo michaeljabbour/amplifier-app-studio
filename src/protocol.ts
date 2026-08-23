@@ -319,6 +319,34 @@ export interface SessionOutput {
   runtimeHost?: string;
 }
 
+export interface ArchivedTurnOutcome {
+  turnId?: string;
+  checkpointId?: string;
+  costUsd?: string;
+  elapsedSeconds?: number;
+  tokens?: number;
+  cachedPercent?: number;
+  interrupted?: boolean;
+  yields: Array<{ kind: string; label: string }>;
+}
+
+export interface ArchivedSessionMetadata {
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  turnCount?: number;
+  totalCostUsd?: string;
+  permissionPosture?: string;
+  permissionProfile?: {
+    name?: string;
+    auto: string[];
+    ask: string[];
+    block: string[];
+    classifierGated?: boolean;
+  };
+  outcomes: ArchivedTurnOutcome[];
+}
+
 export interface SessionViewState {
   guiId: string;
   hostId?: string;
@@ -341,6 +369,9 @@ export interface SessionViewState {
    * resume. Used only to detect an older live runtime owner that reports a
    * successful but empty replay for a non-empty legacy session. */
   expectedHistoryMessages?: number;
+  /** Number of normalized UI events indexed before resume. When present,
+   * Studio verifies that the complete visual ledger was delivered. */
+  expectedHistoryEvents?: number;
   title: string;
   bundle: string;
   model: string;
@@ -369,8 +400,11 @@ export interface SessionViewState {
   /** Which durable source rebuilt the visible history on resume. UI events
    * retain rich plan/tool/output state; legacy transcript snapshots carry
    * only the user/assistant conversation that was actually persisted. */
-  restoreSource?: "ui-events" | "transcript";
+  restoreSource?: "ui-events" | "legacy-events" | "mixed-events" | "transcript";
   restoredTranscriptMessages?: number;
+  restoredEventCount?: number;
+  indexedHistoryRecords?: number;
+  archivedMetadata?: ArchivedSessionMetadata;
   /** Synthetic transcript message ids already folded into this view. Native
    * retries do not pass through the bridge transport's replay deduplicator. */
   /**
@@ -387,6 +421,8 @@ export interface SessionViewState {
    * the initial restore gate is active; reported delivery counts alone are
    * not proof that Studio received the conversation. */
   acceptedReplayTranscriptMessages?: number;
+  /** Normalized UI events actually accepted since the latest history.begin. */
+  acceptedReplayEvents?: number;
   restoreProgress?: {
     history: boolean;
     status: boolean;
@@ -439,6 +475,7 @@ export interface NewSessionInput {
   /** Studio-only resume expectation; deliberately omitted from runtime wire
    * options because it describes the catalog entry, not runtime behavior. */
   expectedHistoryMessages?: number;
+  expectedHistoryEvents?: number;
   capabilityId?: string;
   capabilityName?: string;
 }
@@ -449,12 +486,16 @@ export interface StoredSession {
   hostId?: string;
   hostName?: string;
   hostUrl?: string;
+  sourceKind?: "local" | "remote";
   name: string;
   bundle: string;
   model?: string;
   tags: string[];
   turnCount?: number;
   messageCount: number;
+  /** Normalized UI events available for a lossless visual replay. Older
+   * compute hosts omit this field. */
+  eventCount?: number;
   mtimeMs: number;
   projectSlug: string;
   projectDir?: string;

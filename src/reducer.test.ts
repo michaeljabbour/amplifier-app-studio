@@ -351,7 +351,8 @@ describe("session reducer", () => {
 
     const beforeReplay = state;
     state = reduceRecord(state, { ...startRecord, replay: true });
-    expect(state).toBe(beforeReplay);
+    expect(state).not.toBe(beforeReplay);
+    expect(state.acceptedReplayEvents).toBe(1);
     expect(state.pipeline?.nodes.inspect.status).toBe("completed");
   });
 
@@ -521,6 +522,102 @@ describe("session reducer", () => {
     expect(state.plans).toEqual({});
     expect(state.outputs).toEqual([]);
     expect(state.lanes).toEqual({});
+  });
+
+  it("rebuilds rich legacy Amplifier history and its saved metadata", () => {
+    let state = createSessionState("gui-rich-legacy", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryMessages: 2,
+      expectedHistoryEvents: 6,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.begin",
+      source: "legacy-events",
+      since: 0,
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.metadata",
+      replay: true,
+      metadata: {
+        name: "Testing Amplifier TUI in DTU",
+        description: "Observation-only reality check",
+        bundle: "bundle:anchors",
+        model: "claude-sonnet-5",
+        active_mode: "debug",
+        permission_posture: "bypass",
+        permission_profile: {
+          name: "bypass",
+          auto: ["read", "write"],
+          ask: [],
+          block: [],
+          classifier_gated: false,
+        },
+        turn_count: 1,
+        session_cost_usd: "1.25",
+        outcome_ledger: [{
+          turn_id: "turn-1",
+          cost: "0.04",
+          elapsed_seconds: 12.5,
+          tokens: 150,
+          cached_percent: 80,
+          yields: [{ kind: "tests", label: "tests passed" }],
+        }],
+      },
+    });
+    state = reduceRecord(state, runtime(1, { kind: "prompt_submit", prompt: "Inspect the workspace", mode: "debug" }, true));
+    state = reduceRecord(state, runtime(2, { kind: "tool_pre", tool_name: "bash", tool_call_id: "call-1", tool_input: { command: "pwd" } }, true));
+    state = reduceRecord(state, runtime(3, { kind: "tool_post", tool_name: "bash", tool_call_id: "call-1", result: { content: "/workspace" } }, true));
+    state = reduceRecord(state, runtime(4, { kind: "agent_spawned", agent: "foundation:bug-hunter", sub_session_id: "child-1", parent_session_id: "runtime-1" }, true));
+    state = reduceRecord(state, runtime(5, { kind: "content_block_end", block_type: "text", block: { text: "Workspace inspected." } }, true));
+    state = reduceRecord(state, runtime(6, { kind: "provider_response_usage", input_tokens: 120, output_tokens: 30, cost_usd: "0.04", model: "claude-sonnet-5" }, true));
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "history.end",
+      source: "legacy-events",
+      cursor: 6,
+      count: 6,
+      indexed_record_count: 6,
+      legacy_record_count: 6,
+      native_event_count: 0,
+    });
+    state = reduceRecord(state, {
+      schema_version: 1,
+      type: "session.status",
+      state: "idle",
+      turn: { active: false },
+      session: { bundle: "bundle:anchors", model: "claude-sonnet-5" },
+      context: { context_tokens: 0, context_window: 300_000, context_pct: 0, cost_usd: "0" },
+      pending: { decisions: [] },
+    });
+
+    expect(state).toMatchObject({
+      phase: "ready",
+      title: "Testing Amplifier TUI in DTU",
+      bundle: "bundle:anchors",
+      model: "claude-sonnet-5",
+      mode: "debug",
+      restoreSource: "legacy-events",
+      restoredEventCount: 6,
+      indexedHistoryRecords: 6,
+      context: { inputTokens: 120, outputTokens: 30, costUsd: "1.25", costBasis: "reported" },
+      archivedMetadata: {
+        turnCount: 1,
+        permissionPosture: "bypass",
+        totalCostUsd: "1.25",
+        permissionProfile: { name: "bypass", auto: ["read", "write"] },
+        outcomes: [{ tokens: 150, cachedPercent: 80, yields: [{ kind: "tests", label: "tests passed" }] }],
+      },
+    });
+    expect(state.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "user", text: "Inspect the workspace", mode: "debug" }),
+      expect.objectContaining({ kind: "tool", toolName: "bash", status: "completed" }),
+      expect.objectContaining({ kind: "answer", text: "Workspace inspected." }),
+    ]));
+    expect(state.lanes["child-1"]).toMatchObject({ agent: "foundation:bug-hunter", status: "detached" });
   });
 
   it("preserves a 25-turn compatibility replay and its trailing notices after status settles", () => {
@@ -825,6 +922,63 @@ describe("session reducer", () => {
     });
     expect(state.restoreIssue?.message).toContain("reported 49 transcript messages");
     expect(state.restoreIssue?.message).toContain("Studio accepted 1");
+  });
+
+  it("rejects a visual replay when fewer events arrive than history.end reports", () => {
+    let state = createSessionState("gui-partial-events", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryEvents: 3,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0, source: "ui-events" });
+    state = reduceRecord(state, runtime(1, { kind: "prompt_submit", prompt: "Only one event arrived" }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 3, count: 3, source: "ui-events" });
+
+    expect(state).toMatchObject({
+      phase: "degraded",
+      acceptedReplayEvents: 1,
+      restoreProgress: { history: false, status: false },
+    });
+    expect(state.restoreIssue?.message).toContain("reported 3 durable events");
+    expect(state.restoreIssue?.message).toContain("Studio accepted 1");
+  });
+
+  it("rejects a replay shorter than the durable ledger indexed before resume", () => {
+    let state = createSessionState("gui-short-ledger", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryEvents: 3,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0, source: "ui-events" });
+    state = reduceRecord(state, runtime(1, { kind: "prompt_submit", prompt: "One indexed event" }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 1, count: 1, source: "ui-events" });
+
+    expect(state.phase).toBe("degraded");
+    expect(state.restoreIssue?.message).toContain("indexed 3 durable records");
+    expect(state.restoreIssue?.message).toContain("runtime found 1");
+  });
+
+  it("accepts a complete visual replay that matches the indexed ledger", () => {
+    let state = createSessionState("gui-complete-ledger", {
+      projectDir: "/tmp/project",
+      resumeId: "stored-session-1",
+      expectedHistoryEvents: 2,
+    });
+    state = reduceRecord(state, { schema_version: 1, type: "session.attached", session_id: "runtime-1" });
+    state = reduceRecord(state, { schema_version: 1, type: "history.begin", since: 0, source: "ui-events" });
+    state = reduceRecord(state, runtime(1, { kind: "prompt_submit", prompt: "Complete prompt" }, true));
+    state = reduceRecord(state, runtime(2, { kind: "prompt_complete", response: "Complete answer" }, true));
+    state = reduceRecord(state, { schema_version: 1, type: "history.end", cursor: 2, count: 2, source: "ui-events" });
+
+    expect(state.phase).not.toBe("degraded");
+    expect(state.acceptedReplayEvents).toBe(2);
+    expect(state.restoreProgress).toMatchObject({ history: true, status: false });
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "user", text: "Complete prompt" }),
+      expect.objectContaining({ kind: "answer", text: "Complete answer" }),
+    ]);
   });
 
   it("does not reclassify a deduplicated post-restore transcript reconnect as an initial restore failure", () => {

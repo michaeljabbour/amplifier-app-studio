@@ -840,6 +840,7 @@ export default function App() {
       resumeId,
       resumeName: resumeId ? session.title : undefined,
       expectedHistoryMessages: session.expectedHistoryMessages,
+      expectedHistoryEvents: session.expectedHistoryEvents,
       capabilityId: session.capabilityId,
       capabilityName: session.capabilityName,
       hostId: session.hostId,
@@ -934,7 +935,6 @@ export default function App() {
           fallback={
           <CoordinatorHome
             sessions={stored()}
-            loading={storedLoading()}
             transport={transport()}
             runtime={runtime()}
             checking={runtimeChecking()}
@@ -942,11 +942,9 @@ export default function App() {
             error={runtimeError()}
             onSend={startFromHome}
             onResume={requestStoredResume}
-            onNew={openNew}
             projectDir={knownHostProjectRoot(sessionHomeHost())}
             onChooseProject={chooseHomeProject}
             remoteRuntime={Boolean(sessionHomeHost()?.url) || usesWebBridge()}
-            onDrawer={openDrawer}
             onInstall={() => void installLocalRuntime()}
             onConfigureProvider={() => setProviderSetupOpen(true)}
             providerSetupSupported={!sessionHomeHost()?.url && !usesWebBridge()}
@@ -1132,7 +1130,7 @@ export default function App() {
           loading={storedLoading()}
           error={storedError()}
           warning={storedWarning()}
-          sourceName={`All compute · ${runtimeHosts().length || 1} host${(runtimeHosts().length || 1) === 1 ? "" : "s"}`}
+          sourceName={`${isMobileRuntime() ? "Connected compute" : "All compute"} · ${runtimeHosts().length || 1} host${(runtimeHosts().length || 1) === 1 ? "" : "s"}`}
           sessionHomeName={sessionHomeHost()?.name || "This computer"}
           onClose={() => setDrawerOpen(false)}
           onRefresh={() => void refreshStored()}
@@ -1406,6 +1404,7 @@ export default function App() {
       resumeId: session.sessionId,
       resumeName: session.name,
       expectedHistoryMessages: session.messageCount,
+      expectedHistoryEvents: session.eventCount,
     });
   }
 
@@ -1444,6 +1443,9 @@ export default function App() {
       resumeId: copyId,
       resumeName: copyName,
       expectedHistoryMessages: session.messageCount,
+      // Older hosts import only the portable conversation checkpoint. Newer
+      // hosts may preserve the event ledger, but the refreshed catalog is the
+      // authority for that copy; do not claim the source count here.
     });
   }
 

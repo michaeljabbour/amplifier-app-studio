@@ -48,6 +48,7 @@ export async function loadStoredSessionsAcrossHosts(
         hostId: host.id,
         hostName: host.name,
         hostUrl: host.url || undefined,
+        sourceKind: runtimeHostSourceKind(host),
       };
       const key = `${host.id}\u0000${session.projectSlug}\u0000${session.sessionId}`;
       const existing = sessions.get(key);
@@ -73,6 +74,8 @@ export function storedSessionMatchesQuery(session: StoredSession, query: string)
     session.projectSlug,
     session.projectDir,
     session.hostName,
+    storedSessionSourceLabel(session),
+    storedSessionSourceKind(session),
     session.summary,
     session.searchText,
     ...session.tags,
@@ -82,11 +85,27 @@ export function storedSessionMatchesQuery(session: StoredSession, query: string)
 
 export function storedHistoryFailureMessage(result: FederatedStoredSessions): string | undefined {
   if (!result.failures.length) return undefined;
-  const names = result.failures.map((failure) => failure.hostName).join(", ");
+  const details = result.failures
+    .map((failure) => `${failure.hostName}: ${failure.message}`)
+    .join("; ");
   if (result.failures.length === result.hostsQueried) {
-    return `Could not read history from ${names}.`;
+    return `Could not read history from any configured compute. ${details}`;
   }
-  return `History is partial. Could not reach ${names}.`;
+  return `History is partial. ${result.hostsQueried - result.failures.length} of ${result.hostsQueried} compute sources responded. ${details}`;
+}
+
+export function storedSessionSourceKind(session: Pick<StoredSession, "sourceKind" | "hostId" | "hostUrl">): "local" | "remote" {
+  return session.sourceKind || (session.hostId === "local" || !session.hostUrl ? "local" : "remote");
+}
+
+export function storedSessionSourceLabel(session: Pick<StoredSession, "sourceKind" | "hostId" | "hostName" | "hostUrl">): string {
+  const kind = storedSessionSourceKind(session);
+  const host = session.hostName || (kind === "local" ? "This computer" : "Remote compute");
+  return `${kind === "local" ? "Local" : "Remote"} · ${host}`;
+}
+
+function runtimeHostSourceKind(host: RuntimeHost): "local" | "remote" {
+  return host.id === "local" || !host.url ? "local" : "remote";
 }
 
 function dedupeHosts(hosts: RuntimeHost[]): RuntimeHost[] {

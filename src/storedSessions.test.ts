@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredSession } from "./protocol";
-import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, storedSessionMatchesQuery } from "./storedSessions";
+import { loadStoredSessionsAcrossHosts, storedHistoryFailureMessage, storedSessionMatchesQuery, storedSessionSourceLabel } from "./storedSessions";
 import type { RuntimeHost } from "./transport";
 
 const hosts: RuntimeHost[] = [
@@ -18,7 +18,8 @@ describe("federated stored sessions", () => {
         : [session("remote-2", 20)]);
 
     expect(result.sessions.map((item) => item.sessionId)).toEqual(["remote-1", "remote-2", "local-1"]);
-    expect(result.sessions[0]).toMatchObject({ hostId: "spark-a", hostName: "Spark A", hostUrl: "http://127.0.0.1:4318/" });
+    expect(result.sessions[0]).toMatchObject({ hostId: "spark-a", hostName: "Spark A", hostUrl: "http://127.0.0.1:4318/", sourceKind: "remote" });
+    expect(result.sessions.at(-1)).toMatchObject({ hostId: "local", sourceKind: "local" });
     expect(result.failures).toEqual([]);
   });
 
@@ -47,12 +48,13 @@ describe("federated stored sessions", () => {
 
     expect(result.sessions.map((item) => item.sessionId)).toEqual(["available"]);
     expect(result.failures).toEqual([{ hostId: "spark-b", hostName: "Spark B", message: "bridge timed out" }]);
-    expect(storedHistoryFailureMessage(result)).toBe("History is partial. Could not reach Spark B.");
+    expect(storedHistoryFailureMessage(result)).toBe("History is partial. 1 of 2 compute sources responded. Spark B: bridge timed out");
   });
 
   it("searches summaries and bounded conversation text with multi-term queries", () => {
     const item = session("stored-1", 10, {
       hostName: "Spark 288f",
+      hostUrl: "http://127.0.0.1:4318/",
       projectDir: "/home/mjabbour/dev/runtime",
       summary: "Last update: release verification complete.",
       searchText: "Earlier we diagnosed the federated history scanner and repaired Graphviz rendering.",
@@ -61,7 +63,9 @@ describe("federated stored sessions", () => {
     expect(storedSessionMatchesQuery(item, "federated graphviz")).toBe(true);
     expect(storedSessionMatchesQuery(item, "spark runtime")).toBe(true);
     expect(storedSessionMatchesQuery(item, "release verification")).toBe(true);
+    expect(storedSessionMatchesQuery(item, "remote spark")).toBe(true);
     expect(storedSessionMatchesQuery(item, "missing phrase")).toBe(false);
+    expect(storedSessionSourceLabel(item)).toBe("Remote · Spark 288f");
   });
 });
 

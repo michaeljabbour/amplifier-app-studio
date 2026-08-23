@@ -44,6 +44,7 @@ export function saveUpdateRestorePlan(
       resumeName: usableSessionTitle(session.title),
       expectedHistoryMessages: session.expectedHistoryMessages
         ?? (visibleHistoryMessages > 0 ? visibleHistoryMessages : undefined),
+      expectedHistoryEvents: session.expectedHistoryEvents,
       active: session.guiId === activeId,
     }];
   });
@@ -106,6 +107,7 @@ export function hydrateLegacyUpdateRestoreEntry(
     hostName: match.hostName,
     hostUrl: match.hostUrl,
     expectedHistoryMessages: match.messageCount,
+    expectedHistoryEvents: match.eventCount,
   };
 }
 

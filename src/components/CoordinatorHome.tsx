@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import { ArrowUp, Check, ChevronRight, Cloud, Folder, Monitor, Sparkles } from "lucide-solid";
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import type { ComposerAttachment, StoredSession } from "../protocol";
@@ -12,7 +12,6 @@ import { VoiceInputButton } from "./VoiceInputButton";
 
 interface Props {
   sessions: StoredSession[];
-  loading: boolean;
   transport: string;
   runtime?: RuntimeStatus;
   checking: boolean;
@@ -20,11 +19,9 @@ interface Props {
   error?: string;
   onSend: (text: string, attachments: ComposerAttachment[]) => Promise<void>;
   onResume: (session: StoredSession) => void | Promise<void>;
-  onNew: () => void;
   projectDir: string;
   onChooseProject: () => Promise<void>;
   remoteRuntime: boolean;
-  onDrawer: () => void;
   onInstall: () => void;
   onConfigureProvider: () => void;
   providerSetupSupported: boolean;
@@ -44,8 +41,9 @@ export function CoordinatorHome(props: Props) {
   const [localError, setLocalError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
   const [locationOpen, setLocationOpen] = createSignal(false);
-  const recent = createMemo(() => props.sessions.filter(storedSessionShouldList).slice(0, 24));
-  const latest = createMemo(() => recent().find((session) => !storedSessionResumeBlocker(session, true)));
+  const latest = createMemo(() => props.sessions
+    .filter(storedSessionShouldList)
+    .find((session) => !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
   const ready = () => runtimeAvailable() && providerStatusAvailable() && props.runtime?.providerConfigured === true;
@@ -94,35 +92,6 @@ export function CoordinatorHome(props: Props) {
 
   return (
     <main class="coordinator-home">
-      <aside class="home-history" aria-label="Session history">
-        <div class="home-history-heading">
-          <div><span>AMPLIFIER</span><strong>History</strong></div>
-          <button type="button" onClick={props.onNew}>New</button>
-        </div>
-        <Show when={!props.loading} fallback={<div class="home-history-state"><span class="mini-spinner" /> Loading history…</div>}>
-          <Show when={recent().length > 0} fallback={<div class="home-history-state">Your Amplifier sessions will appear here.</div>}>
-            <div class="home-history-list">
-              <For each={recent()}>{(session) => (
-                <button
-                  type="button"
-                  class="home-history-row"
-                  classList={{ "needs-recovery": Boolean(storedSessionResumeBlocker(session, true)) }}
-                  disabled={starting()}
-                  title={storedSessionResumeBlocker(session, true)}
-                  onClick={() => void props.onResume(session)}
-                >
-                  <strong>{session.name}</strong>
-                  <span>{session.hostName || "This computer"} · {session.bundle} · {timeAgo(session.mtimeMs)}</span>
-                  <p>{session.summary}</p>
-                  <Show when={storedSessionResumeBlocker(session, true)} keyed>{(reason) => <small>{reason}</small>}</Show>
-                </button>
-              )}</For>
-            </div>
-          </Show>
-        </Show>
-        <button type="button" class="home-all-history" onClick={props.onDrawer}>Browse all stored sessions</button>
-      </aside>
-
       <section class="home-conversation">
         <div class="home-conversation-intro">
           <div class="home-machine-mark" aria-hidden="true"><Sparkles /></div>
@@ -295,16 +264,4 @@ export function CoordinatorHome(props: Props) {
       </section>
     </main>
   );
-}
-
-function timeAgo(timestamp: number): string {
-  if (!timestamp) return "unknown";
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000));
-  if (seconds < 60) return "now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return days < 30 ? `${days}d` : `${Math.floor(days / 30)}mo`;
 }

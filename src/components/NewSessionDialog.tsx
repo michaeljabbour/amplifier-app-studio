@@ -89,6 +89,7 @@ export function NewSessionDialog(props: Props) {
         resumeId: props.initial.resumeId,
         resumeName: props.initial.resumeName,
         expectedHistoryMessages: props.initial.expectedHistoryMessages,
+        expectedHistoryEvents: props.initial.expectedHistoryEvents,
         capabilityId: props.initial.capabilityId,
         capabilityName: props.initial.capabilityName,
       });
