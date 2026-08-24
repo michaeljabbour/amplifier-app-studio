@@ -7,8 +7,9 @@ published releases. A green build is not certification.
 
 - **Windows:** ship an MSIX through Microsoft Store. The Store provides package
   hosting, signing, installation, and updates without an Azure Artifact Signing
-  subscription or a commercial PFX. Direct EXE/MSI downloads remain disabled
-  until a trusted Authenticode identity exists.
+  subscription or a commercial PFX. GitHub Releases also carry compiled x64
+  EXE/MSI evaluation installers, but they must be labeled unsigned and are not
+  a substitute for a Store-certified or Authenticode-signed release.
 - **Android:** ship an Android App Bundle through Google Play with Play App
   Signing enabled. Google holds the app-signing key; CI uses a separate upload
   key that can be replaced if compromised.
@@ -45,9 +46,11 @@ Before Store submission:
    tailnet, and Microsoft may reject an app whose required server cannot be
    reached during certification.
 
-Only direct web distribution of EXE/MSI installers needs a separately funded
-Authenticode identity. That optional channel must not block the free Store
-channel or the macOS release.
+Trusted direct web distribution of EXE/MSI installers needs a separately funded
+Authenticode identity. The unsigned GitHub evaluation artifacts prove the
+tagged x64 build exists; they do not prove publisher identity, clean-machine
+installation, or Windows certification. That optional trust channel must not
+block the free Store channel or the macOS release.
 
 ## Android release gate
 

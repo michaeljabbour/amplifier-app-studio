@@ -1,0 +1,95 @@
+name: Build desktop package smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: amplifier-studio-desktop-package-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-15
+            label: macos-aarch64
+            args: --target aarch64-apple-darwin --bundles app,dmg
+            target: aarch64-apple-darwin
+            updater_enabled: "true"
+          - platform: macos-15
+            label: macos-x86_64
+            args: --target x86_64-apple-darwin --bundles app,dmg
+            target: x86_64-apple-darwin
+            updater_enabled: "true"
+          - platform: windows-latest
+            label: windows-x86_64-nsis
+            args: --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+            target: x86_64-pc-windows-msvc
+            updater_enabled: "true"
+          - platform: windows-latest
+            label: windows-x86_64-msi
+            args: --target x86_64-pc-windows-msvc --bundles msi --config src-tauri/tauri.windows.conf.json
+            target: x86_64-pc-windows-msvc
+            updater_enabled: "false"
+          - platform: ubuntu-22.04
+            label: linux-x86_64
+            args: --target x86_64-unknown-linux-gnu --bundles appimage
+            target: x86_64-unknown-linux-gnu
+            updater_enabled: "true"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - name: Use npm 11
+        run: npm install -g npm@11
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross-compilation target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run release:check
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_STUDIO_UPDATER_ENABLED: ${{ matrix.updater_enabled }}
+        with:
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: amplifier-studio-${{ matrix.label }}-[bundle]
+      - name: Verify platform package outputs
+        shell: bash
+        run: |
+          TARGET_BUNDLE_ROOT="src-tauri/target/${{ matrix.target }}/release/bundle"
+          case "${{ matrix.label }}" in
+            macos-*)
+              find "$TARGET_BUNDLE_ROOT/macos" -type d -name 'Amplifier Studio.app' -print -quit | grep -q .
+              find "$TARGET_BUNDLE_ROOT/dmg" -type f -name '*.dmg' -print -quit | grep -q .
+              ;;
+            windows-x86_64-nsis)
+              find "$TARGET_BUNDLE_ROOT/nsis" -type f -name '*.exe' -print -quit | grep -q .
+              ;;
+            windows-x86_64-msi)
+              find "$TARGET_BUNDLE_ROOT/msi" -type f -name '*.msi' -print -quit | grep -q .
+              ;;
+            linux-x86_64)
+              find "$TARGET_BUNDLE_ROOT/appimage" -type f -name '*.AppImage' -print -quit | grep -q .
+              ;;
+          esac

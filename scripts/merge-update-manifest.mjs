@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { resolveDesktopUpdaterAssets } from "./desktop-release-assets.mjs";
 
 const [tag, assetDirectory] = process.argv.slice(2);
 if (!tag || !assetDirectory) {
@@ -19,22 +20,10 @@ if (tag !== `studio-v${version}`) {
 const assets = readdirSync(assetDirectory, { withFileTypes: true })
   .filter((entry) => entry.isFile())
   .map((entry) => entry.name);
-// The direct updater is the signed Apple Silicon channel. Windows, Android,
-// and iOS updates are owned by their platform stores.
-const specs = {
-  "darwin-aarch64": /_aarch64\.app\.tar\.gz$/,
-};
 const platforms = {};
-for (const [platform, pattern] of Object.entries(specs)) {
-  const matches = assets.filter((asset) => pattern.test(asset));
-  if (matches.length !== 1) {
-    throw new Error(`${platform} requires exactly one updater asset; found ${matches.join(", ") || "none"}`);
-  }
-  const asset = matches[0];
-  const signaturePath = join(assetDirectory, `${asset}.sig`);
-  if (!assets.includes(`${asset}.sig`)) {
-    throw new Error(`${basename(signaturePath)} is missing`);
-  }
+for (const [platform, resolved] of Object.entries(resolveDesktopUpdaterAssets(assets))) {
+  const { asset, signature: signatureAsset } = resolved;
+  const signaturePath = join(assetDirectory, signatureAsset);
   const signature = readFileSync(signaturePath, "utf8").trim();
   if (!signature) throw new Error(`${basename(signaturePath)} is empty`);
   platforms[platform] = {
