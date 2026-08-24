@@ -29,8 +29,25 @@ jobs:
       matrix:
         include:
           - platform: macos-15
-            args: --target aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
             target: aarch64-apple-darwin
+            updater_enabled: "true"
+          - platform: macos-15
+            args: --target x86_64-apple-darwin --bundles app,dmg
+            target: x86_64-apple-darwin
+            updater_enabled: "true"
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+            target: x86_64-pc-windows-msvc
+            updater_enabled: "true"
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc --bundles msi --config src-tauri/tauri.windows.conf.json
+            target: x86_64-pc-windows-msvc
+            updater_enabled: "false"
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu --bundles appimage
+            target: x86_64-unknown-linux-gnu
+            updater_enabled: "true"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -38,6 +55,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
       # Node 22 bundles npm 10.9.x, whose arborist crashes resolving vitest 4's peer graph
       # ("Cannot read properties of null (reading 'edgesOut')" in #loadPeerSet). npm 11 resolves
       # it. Without this every runner fails at install, before a single test runs.
@@ -108,14 +130,18 @@ jobs:
           APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-          VITE_STUDIO_UPDATER_ENABLED: "true"
+          VITE_STUDIO_UPDATER_ENABLED: ${{ matrix.updater_enabled }}
         with:
           tagName: studio-v__VERSION__
           releaseName: Amplifier Studio v__VERSION__
-          releaseBody: Signed and notarized macOS installer and updater artifacts for Amplifier Studio.
+          releaseBody: >-
+            Signed and notarized macOS installers for Apple Silicon and Intel,
+            Windows x64 MSI and NSIS installers, and a Linux x64 AppImage.
+            Windows packages are updater-signed but not Authenticode-signed.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: false
+          retryAttempts: 1
           args: >-
             ${{ matrix.args }}
             --config '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"endpoints":["https://github.com/${{ github.repository }}/releases/latest/download/latest.json"]}}}'
@@ -162,6 +188,8 @@ jobs:
         run: npm install -g npm@11
       - name: Download the complete draft release
         run: gh release download "$TAG_NAME" --dir release-assets
+      - name: Verify every supported desktop installer is present
+        run: node scripts/verify-desktop-release-assets.mjs release-assets
       - name: Build one cross-platform updater manifest
         run: node scripts/merge-update-manifest.mjs "$TAG_NAME" release-assets
       - name: Publish exactly one complete desktop release
@@ -178,7 +206,7 @@ jobs:
             const manifest = JSON.parse(readFileSync("public-latest.json", "utf8"));
             const expected = JSON.parse(readFileSync("package.json", "utf8")).version;
             if (manifest.version !== expected) throw new Error(`public updater is ${manifest.version}; expected ${expected}`);
-            for (const platform of ["darwin-aarch64"]) {
+            for (const platform of ["darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64"]) {
               if (!manifest.platforms?.[platform]?.url || !manifest.platforms?.[platform]?.signature) {
                 throw new Error(`public updater is missing ${platform}`);
               }

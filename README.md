@@ -303,9 +303,10 @@ contract is in [`docs/INLINE-VISUALIZATION-PROTOCOL.md`](docs/INLINE-VISUALIZATI
 A matching `studio-vX.Y.Z` tag fans out into three independently visible
 GitHub workflows:
 
-- `.github/workflows/publish.yml` builds the signed and notarized Apple Silicon
-  desktop app plus the Authenticode-signed Windows installers, then publishes
-  one GitHub Release and cross-platform `latest.json` updater feed;
+- `.github/workflows/publish.yml` builds signed and notarized macOS installers
+  for Apple Silicon and Intel x64, Windows x64 MSI and NSIS installers, and
+  a Linux x64 AppImage, then publishes one GitHub Release and
+  cross-platform `latest.json` updater feed;
 - `.github/workflows/ios-testflight.yml` builds an App Store IPA, validates and
   uploads it with Apple's API key, waits for processing, and assigns it to the
   configured TestFlight group;
@@ -353,8 +354,16 @@ the selection. GitHub's protected `release` environment holds:
 The App Store Connect key replaces Apple-ID passwords in CI and is shared by
 macOS notarization and TestFlight delivery.
 
-Windows uses the Microsoft Store MSIX channel so the Store supplies its public
-signature and updates without a paid Azure signing subscription. Copy the exact
+The GitHub Release includes compiled Windows x64 MSI and NSIS installers so the
+same tagged source is available for evaluation on every desktop OS. They carry
+Tauri artifact signatures but are not Authenticode-signed, so Windows may show
+an Unknown Publisher or SmartScreen warning. The NSIS build participates in
+Studio's direct updater; the separately built MSI keeps in-app updates disabled
+because the updater channel cannot safely replace an MSI installation with an
+NSIS package. The Microsoft Store MSIX channel remains the recommended Windows
+distribution path because the Store supplies
+its public signature and updates without a paid Azure signing subscription.
+Copy the exact
 Partner Center Product identity values into the protected `release` environment
 variables `WINDOWS_STORE_IDENTITY_NAME`, `WINDOWS_STORE_PUBLISHER_ID`, and
 `WINDOWS_STORE_PUBLISHER_DISPLAY_NAME`, then run **Build Windows Store
@@ -373,16 +382,18 @@ To publish, update the version in `package.json`, `src-tauri/Cargo.toml`,
 increment the shared mobile build number, then push a matching tag such as
 `studio-v0.2.0`. `npm run release:check` rejects marketing-version, tag, and
 mobile-build mismatches. The desktop workflow holds a draft GitHub Release
-while macOS finishes, generates its `latest.json`, and only then publishes the
-release as latest.
+while both macOS architectures, Windows x64, and Linux x64 finish, verifies the
+complete installer inventory, generates its `latest.json`, and only then
+publishes the release as latest.
 `releases/latest/download/latest.json` becomes the update feed only after that
 final job succeeds. Production desktop builds check the canonical Amplifier
 Studio feed by default; set `VITE_STUDIO_UPDATER_ENABLED=false` for a local or
 forked production build that must not check upstream. Development builds leave
 updates disabled unless the flag is explicitly set to `true`.
 
-Android, iOS, and Windows updates are store-owned. Tauri's desktop updater is
-used only by the directly distributed, signed macOS build.
+Android and iOS updates are store-owned. Tauri's desktop updater covers the
+directly distributed macOS, Windows, and Linux builds; its signature proves
+artifact integrity but does not replace Authenticode trust on Windows.
 
 ## Protocol boundary
 

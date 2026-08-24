@@ -224,10 +224,11 @@ the distributed complexity.
 
 ### Windows
 
-The repository already produces x64 MSI and NSIS installers in GitHub Actions.
-Before publishing them as native releases:
+The repository publishes updater-signed but Authenticode-unsigned x64 MSI and
+NSIS evaluation installers with each GitHub desktop release. Before calling
+them trusted or release-proven Windows packages:
 
-- choose direct GitHub distribution, Microsoft Store distribution, or both;
+- choose trusted direct distribution, Microsoft Store distribution, or both;
 - configure Authenticode signing for the executable and installers (Azure
   Artifact Signing is the preferred direct-download path; a protected CA-issued
   certificate is the alternative);
