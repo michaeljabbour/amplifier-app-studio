@@ -17,7 +17,7 @@ use tokio::io::AsyncWriteExt;
 /// honestly report the same version. A version check can therefore pass when the pin has
 /// drifted, which is the case it exists to catch. `installed_runtime_commit` reads
 /// the commit the package manager recorded and `status()` compares it against this constant.
-const RUNTIME_INSTALL_REF: &str = "0bdb81593218eea95a544c64fdfef771c555b243";
+const RUNTIME_INSTALL_REF: &str = "5cb6916bb7d6025be90b633f5baafbccb98e7396";
 
 /// Bootstrap scripts are fetched from the pinned commit and checksum-verified before they run.
 ///
@@ -34,7 +34,7 @@ const INSTALL_SCRIPT_SHA256: &str =
 const WINDOWS_INSTALL_SCRIPT_SHA256: &str =
     "85c13a6bd4f14b51c6e434081d437e4ae136b2ae4fe65e0183f7fa66271369aa";
 
-const REQUIRED_RUNTIME_VERSION: &str = "0.1.9";
+const REQUIRED_RUNTIME_VERSION: &str = "0.1.10";
 const RUNTIME_BINARY_ENV: &str = "AMPLIFIER_STUDIO_RUNTIME_BIN";
 const NEUTRAL_RUNTIME_BINARY: &str = "amplifier-runtime";
 
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn runtime_version_gate_accepts_required_and_newer_versions() {
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.9",
+            "amplifier-runtime, version 0.1.10",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(runtime_version_at_least(
@@ -658,7 +658,7 @@ mod tests {
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
-            "amplifier-runtime, version 0.1.8",
+            "amplifier-runtime, version 0.1.9",
             REQUIRED_RUNTIME_VERSION
         ));
         assert!(!runtime_version_at_least(
@@ -747,7 +747,7 @@ mod tests {
     fn a_matching_version_does_not_excuse_a_mismatched_commit() {
         let required = REQUIRED_RUNTIME_VERSION;
         assert!(runtime_version_at_least(
-            "amplifier-runtime, version 0.1.9",
+            "amplifier-runtime, version 0.1.10",
             required
         ));
 
