@@ -123,6 +123,11 @@ interface StopRuntimeRequest {
   error?: string;
 }
 
+interface SettingsEntry {
+  section?: "appearance" | "connection";
+  reconnectHostId?: string;
+}
+
 export default function App() {
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
   const [activeId, setActiveId] = createSignal<string>();
@@ -136,7 +141,9 @@ export default function App() {
   const [storedSessionDialog, setStoredSessionDialog] = createSignal<StoredSessionRecovery>();
   const [stopRuntimeRequest, setStopRuntimeRequest] = createSignal<StopRuntimeRequest>();
   const [defaultDir, setDefaultDir] = createSignal("");
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [settingsEntry, setSettingsEntry] = createSignal<SettingsEntry>();
+  const settingsOpen = () => settingsEntry() !== undefined;
+  const setSettingsOpen = (open: boolean) => setSettingsEntry(open ? {} : undefined);
   const [studioTheme, setStudioTheme] = createSignal<StudioTheme>(loadStudioTheme());
   const [providerSetupOpen, setProviderSetupOpen] = createSignal(false);
   const [capabilitiesOpen, setCapabilitiesOpen] = createSignal(false);
@@ -197,6 +204,14 @@ export default function App() {
   const sessionHomeHost = createMemo(() => runtimeHosts().find((host) => host.id === sessionHomeHostId())
     || runtimeHosts().find((host) => host.id === "local")
     || runtimeHosts()[0]);
+  const computeAccessRequired = createMemo(() => {
+    const host = sessionHomeHost();
+    return Boolean(isMobileRuntime() && host?.url && !configuredBridgeToken(host.url));
+  });
+  const openComputeConnection = () => {
+    const host = sessionHomeHost();
+    setSettingsEntry({ section: "connection", reconnectHostId: host?.url ? host.id : undefined });
+  };
 
   const knownHostProjectRoot = (host?: RuntimeHost) => host?.url
     ? remoteProjectDefault(host, hostProjectRoots()[host.id] || "")
@@ -951,6 +966,9 @@ export default function App() {
             onConfigureProvider={() => setProviderSetupOpen(true)}
             providerSetupSupported={!sessionHomeHost()?.url && !usesWebBridge()}
             onSettings={() => setSettingsOpen(true)}
+            computeHost={sessionHomeHost()}
+            computeAccessRequired={computeAccessRequired()}
+            onComputeConnection={openComputeConnection}
             attachments={homeAttachments()}
             onAttachments={setHomeAttachments}
             onPickAttachments={pickAttachments}
@@ -1175,6 +1193,8 @@ export default function App() {
           initialTheme={studioTheme()}
           runtimeHosts={runtimeHosts()}
           initialSessionHomeHostId={sessionHomeHostId()}
+          initialSection={settingsEntry()?.section}
+          reconnectHostId={settingsEntry()?.reconnectHostId}
           runtimeSettingsAvailable={localRuntimeSettingsAvailable()}
           nativeProjectPicker={nativeProjectPickerAvailable()}
           onPickProjectDir={pickProjectDirectory}
@@ -1186,7 +1206,7 @@ export default function App() {
           onAddRuntimeHost={async (url, token) => {
             const cleanedUrl = url.trim();
             const cleanedToken = token.trim();
-            if (!cleanedUrl || !cleanedToken) throw new Error("Enter both the compute host URL and bearer token");
+            if (!cleanedUrl || !cleanedToken) throw new Error("Enter the compute host address and access token");
             const normalized = cleanedUrl.replace(/\/$/, "");
             const matchingHost = runtimeHosts().find((host) => host.url.replace(/\/$/, "") === normalized);
             saveBridgeToken(cleanedToken, cleanedUrl);
@@ -1210,6 +1230,13 @@ export default function App() {
             const hosts = await listRuntimeHosts();
             setRuntimeHosts(hosts);
             return hosts.find((candidate) => candidate.id === host.id) || host;
+          }}
+          onHostConnected={async (host) => {
+            setSessionHomeHost(host.id);
+            setSettingsOpen(false);
+            setTransport(transportLabel());
+            await refreshRuntime();
+            await refreshHostProjectRoot(host).catch(() => undefined);
           }}
           onRemoveRuntimeHost={async (id) => {
             await removeRuntimeHost(id);

@@ -6,6 +6,7 @@ import {
   configuredBridgeUrl,
   cloneGithubRepository,
   durableRuntimeHostForSession,
+  getRuntimeStatus,
   launchSession,
   loadOutputPreview,
   listRuntimeHosts,
@@ -65,7 +66,7 @@ describe("bridge trust storage", () => {
     await expect(prepareSessionLaunch({
       projectDir: "/remote/project",
       hostUrl: "http://127.0.0.1:9555",
-    })).rejects.toThrow("Enter the Rust bridge bearer token");
+    })).rejects.toThrow("Access token required for this compute host");
 
     saveBridgeToken("0123456789abcdef0123456789abcdef", "http://127.0.0.1:9555");
     await expect(prepareSessionLaunch({
@@ -97,6 +98,13 @@ describe("bridge trust storage", () => {
     ]);
     expect(configuredBridgeUrl()).toBe(url);
     expect(configuredBridgeToken()).toBe(token);
+
+    sessionStorage.clear();
+    await expect(listRuntimeHosts()).resolves.toEqual([
+      { ...host, url: `${url}/`, tokenRef: "session" },
+    ]);
+    expect(configuredBridgeToken(url)).toBe("");
+    await expect(getRuntimeStatus(url, host.id)).rejects.toThrow("Access token required for this compute host");
 
     await expect(removeRuntimeHost(host.id)).resolves.toEqual([]);
     expect(configuredBridgeUrl()).toBe("");

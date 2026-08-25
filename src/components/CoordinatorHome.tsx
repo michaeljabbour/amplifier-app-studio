@@ -3,7 +3,9 @@ import { ArrowUp, Check, ChevronRight, Cloud, Folder, Monitor, Sparkles } from "
 import { appendAttachmentFiles, appendComposerAttachments, hasAttachmentFiles, isSupportedBrowserFile } from "../attachments";
 import type { ComposerAttachment, StoredSession } from "../protocol";
 import type { RuntimeStatus } from "../transport";
+import type { RuntimeHost } from "../transport";
 import type { TranscriptionStatus } from "../transport";
+import { computeConnectionPrompt } from "../computeConnection";
 import type { AudioRecording } from "../transcription";
 import { storedSessionResumeBlocker, storedSessionShouldList } from "../sessionAvailability";
 import { projectDisplayName } from "../projectDisplayName";
@@ -26,6 +28,9 @@ interface Props {
   onConfigureProvider: () => void;
   providerSetupSupported: boolean;
   onSettings: () => void;
+  computeHost?: RuntimeHost;
+  computeAccessRequired: boolean;
+  onComputeConnection: () => void;
   attachments: ComposerAttachment[];
   onAttachments: (attachments: ComposerAttachment[]) => void;
   onPickAttachments: () => Promise<ComposerAttachment[]>;
@@ -47,6 +52,11 @@ export function CoordinatorHome(props: Props) {
   const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
   const ready = () => runtimeAvailable() && providerStatusAvailable() && props.runtime?.providerConfigured === true;
+  const connectionPrompt = createMemo(() => computeConnectionPrompt(
+    props.computeHost,
+    props.computeAccessRequired,
+    props.runtime?.message || props.error,
+  ));
 
   const run = async (action: () => Promise<void>) => {
     if (starting()) return;
@@ -109,13 +119,13 @@ export function CoordinatorHome(props: Props) {
         </div>
 
         <Show when={!props.checking && !runtimeAvailable()}>
-          <div class="runtime-setup-card home-runtime-card">
-            <div><span>ENGINE SETUP</span><strong>{props.runtime?.message || "Runtime check unavailable"}</strong></div>
-            <p>Studio uses Amplifier’s existing Python runtime out of process.</p>
+          <div class="runtime-setup-card home-runtime-card" role="status">
+            <div><span>{connectionPrompt().kicker}</span><strong>{connectionPrompt().title}</strong></div>
+            <p>{connectionPrompt().description}</p>
             <div>
-              <Show when={props.runtime?.installSupported} fallback={<button class="primary-button" onClick={props.onSettings}>Connect compute host</button>}>
+              <Show when={props.runtime?.installSupported} fallback={<button class="primary-button" onClick={props.onComputeConnection}>{connectionPrompt().action}</button>}>
                 <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? props.runtime?.installed ? "Updating…" : "Installing…" : props.runtime?.installed ? "Update Amplifier runtime" : "Install Amplifier runtime"}</button>
-                <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
+                <button class="secondary-button" onClick={props.onSettings}>Use compute host</button>
               </Show>
             </div>
           </div>
@@ -127,7 +137,7 @@ export function CoordinatorHome(props: Props) {
             <p>{props.runtime?.providerMessage || "This Amplifier runtime predates provider readiness checks, so Studio cannot safely accept a prompt yet."}</p>
             <div>
               <button class="primary-button" disabled={props.installing} onClick={props.onInstall}>{props.installing ? "Updating…" : "Update Amplifier runtime"}</button>
-              <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
+              <button class="secondary-button" onClick={props.onSettings}>Use compute host</button>
             </div>
           </div>
         </Show>
@@ -140,7 +150,7 @@ export function CoordinatorHome(props: Props) {
               <Show when={props.providerSetupSupported}>
                 <button class="primary-button" onClick={props.onConfigureProvider}>Configure provider</button>
               </Show>
-              <button class="secondary-button" onClick={props.onSettings}>Use remote bridge</button>
+              <button class="secondary-button" onClick={props.onSettings}>Use compute host</button>
             </div>
           </div>
         </Show>
@@ -173,12 +183,12 @@ export function CoordinatorHome(props: Props) {
           }}
         >
           <Show when={draggingAttachments()}><div class="composer-drop-target">Drop files to start with</div></Show>
-          <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting Amplifier Agent…" : ready() ? "Ready when you are" : props.checking ? "Checking runtime…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : "Runtime setup required"}</div>
+          <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting Amplifier Agent…" : ready() ? "Ready when you are" : props.checking ? "Checking compute…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : connectionPrompt().composerLabel}</div>
           <textarea
             value={text()}
             disabled={!ready() || starting()}
             readOnly={dictating()}
-            placeholder={ready() ? "Tell Amplifier what you want to build, investigate, or organize…" : runtimeAvailable() && !providerStatusAvailable() ? "Update Amplifier to verify provider readiness" : runtimeAvailable() ? "Configure a model provider to start a run" : "Install or connect the Amplifier runtime to start"}
+            placeholder={ready() ? "Tell Amplifier what you want to build, investigate, or organize…" : runtimeAvailable() && !providerStatusAvailable() ? "Update Amplifier to verify provider readiness" : runtimeAvailable() ? "Configure a model provider to start a run" : connectionPrompt().composerPlaceholder}
             aria-label="Message Amplifier"
             onInput={(event) => setText(event.currentTarget.value)}
             onPaste={(event) => {
@@ -243,7 +253,7 @@ export function CoordinatorHome(props: Props) {
                     </button>
                     <button type="button" role="menuitem" classList={{ selected: props.remoteRuntime }} onClick={() => props.onSettings()}>
                       <Cloud aria-hidden="true" />
-                      <span><strong>{props.remoteRuntime ? "Remote host" : "Cloud or remote"}</strong><small>{props.remoteRuntime ? "Connected through the authenticated bridge" : "Not configured yet · open Settings"}</small></span>
+                      <span><strong>{props.remoteRuntime ? "Remote host" : "Cloud or remote"}</strong><small>{props.remoteRuntime ? "Connected securely to this compute host" : "Not configured yet · open Settings"}</small></span>
                       <i aria-hidden="true">{props.remoteRuntime ? <Check /> : null}</i>
                     </button>
                   </div>
@@ -253,7 +263,7 @@ export function CoordinatorHome(props: Props) {
             </div>
             <button type="button" disabled={(!text().trim() && !attachments().length) || !ready() || starting()} onClick={() => void send()}>Send <span aria-hidden="true"><ArrowUp /></span></button>
           </div>
-          <Show when={localError() || props.error}><small class="home-composer-error">{localError() || props.error}</small></Show>
+          <Show when={localError() || (!props.computeAccessRequired && props.error)}><small class="home-composer-error">{localError() || props.error}</small></Show>
         </div>
 
         <div class="home-transport">
