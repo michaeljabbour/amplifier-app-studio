@@ -152,13 +152,19 @@ describe("mobile layout contracts", () => {
     expect(appSource).toMatch(/void listRuntimeHosts\(\)\.then\(\(hosts\) => \{[\s\S]*void refreshRuntime\(\);/);
   });
 
-  it("uses one legible compute-host action when mobile has no local installer", () => {
-    const engineSetup = coordinatorHomeSource.slice(
-      coordinatorHomeSource.indexOf("ENGINE SETUP"),
-      coordinatorHomeSource.indexOf("RUNTIME UPDATE"),
-    );
-    expect(engineSetup).toContain("Connect compute host");
-    expect(engineSetup).not.toContain("Configure bridge");
+  it("routes a saved mobile home through one prefilled reconnect action", () => {
+    expect(appSource).toContain('setSettingsEntry({ section: "connection", reconnectHostId: host?.url ? host.id : undefined })');
+    expect(appSource).toContain("computeAccessRequired={computeAccessRequired()}");
+    expect(appSource).toContain("onComputeConnection={openComputeConnection}");
+    expect(coordinatorHomeSource).toContain("computeConnectionPrompt(");
+    expect(coordinatorHomeSource).toContain("connectionPrompt().action");
+    expect(settingsSource).toContain('createSignal<SettingsSectionId>(props.initialSection || "appearance")');
+    expect(settingsSource).toContain('createSignal(reconnectHost?.url || "")');
+    expect(settingsSource).toContain("tokenInput?.focus()");
+    expect(settingsSource).toContain("For security, Studio asks for this token again after the app is fully closed.");
+    expect(settingsSource).not.toContain("Bearer token");
+    expect(coordinatorHomeSource).not.toContain("Runtime check unavailable");
+    expect(coordinatorHomeSource).not.toContain("Rust bridge bearer token");
     expect(madeThemeCss).toMatch(/:root\[data-theme="made"\] \.runtime-setup-card \{[^}]*background:\s*rgba\(182,130,53,\.055\)/);
     expect(madeThemeCss).toMatch(/:root\[data-theme="made"\] \.runtime-setup-card p \{[^}]*color:\s*#605d5d/);
   });

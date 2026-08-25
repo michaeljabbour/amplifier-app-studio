@@ -20,19 +20,22 @@ import {
   type RuntimeHost,
 } from "../transport";
 
-type SettingsSectionId = "appearance" | "connection" | "maintenance" | string;
+export type SettingsSectionId = "appearance" | "connection" | "maintenance" | string;
 
 interface Props {
   initialProjectDir: string;
   initialTheme: StudioTheme;
   runtimeHosts: RuntimeHost[];
   initialSessionHomeHostId: string;
+  initialSection?: SettingsSectionId;
+  reconnectHostId?: string;
   runtimeSettingsAvailable: boolean;
   nativeProjectPicker: boolean;
   onPickProjectDir: (defaultPath?: string) => Promise<string | undefined>;
   onThemePreview: (theme: StudioTheme) => void;
   onCancel: () => void;
   onAddRuntimeHost: (url: string, token: string) => Promise<RuntimeHost>;
+  onHostConnected?: (host: RuntimeHost) => void | Promise<void>;
   onRemoveRuntimeHost: (id: string) => Promise<void>;
   onSaveStudio: (theme: StudioTheme, sessionHomeHostId: string) => Promise<void>;
 }
@@ -41,16 +44,17 @@ const SETTINGS_CONTEXTS_KEY = "amplifier-studio.settings-project-contexts";
 
 const STATIC_SECTIONS = [
   { id: "appearance", title: "Appearance", summary: "Studio visual language" },
-  { id: "connection", title: "Connection", summary: "Local or remote Rust bridge" },
+  { id: "connection", title: "Connection", summary: "Compute hosts and access" },
 ];
 
 export function StudioSettingsDialog(props: Props) {
+  const reconnectHost = props.runtimeHosts.find((host) => host.id === props.reconnectHostId);
   const initialSettingsHostId = props.runtimeHosts.some((host) => host.id === props.initialSessionHomeHostId)
     ? props.initialSessionHomeHostId
     : "local";
   const initialSettingsHost = props.runtimeHosts.find((host) => host.id === initialSettingsHostId);
   const [settingsContexts, setSettingsContexts] = createSignal<Record<string, string>>(loadSettingsContexts());
-  const [section, setSection] = createSignal<SettingsSectionId>("appearance");
+  const [section, setSection] = createSignal<SettingsSectionId>(props.initialSection || "appearance");
   const [scope, setScope] = createSignal<RuntimeSettingScope>("global");
   const [settingsHostId, setSettingsHostId] = createSignal(initialSettingsHostId);
   const [projectDir, setProjectDir] = createSignal(
@@ -61,7 +65,7 @@ export function StudioSettingsDialog(props: Props) {
     ),
   );
   const [theme, setTheme] = createSignal<StudioTheme>(props.initialTheme);
-  const [url, setUrl] = createSignal("");
+  const [url, setUrl] = createSignal(reconnectHost?.url || "");
   const [token, setToken] = createSignal("");
   const [sessionHomeHostId, setSessionHomeHostId] = createSignal(props.initialSessionHomeHostId);
   const [snapshot, setSnapshot] = createSignal<RuntimeSettingsSnapshot>();
@@ -190,17 +194,20 @@ export function StudioSettingsDialog(props: Props) {
   const addHost = async () => {
     if (addingHost()) return;
     if (!url().trim() || !token().trim()) {
-      setError("Enter both the compute host URL and bearer token.");
+      setError("Enter the compute host address and access token.");
       return;
     }
     setAddingHost(true);
     setError("");
     try {
       const host = await props.onAddRuntimeHost(url(), token());
-      setUrl("");
-      setToken("");
       if (sessionHomeHostId() === "local" || !props.runtimeHosts.some((candidate) => candidate.id === sessionHomeHostId())) {
         setSessionHomeHostId(host.id);
+      }
+      if (props.reconnectHostId) await props.onHostConnected?.(host);
+      else {
+        setUrl("");
+        setToken("");
       }
     } catch (caught) {
       setError(cleanError(caught));
@@ -330,6 +337,7 @@ export function StudioSettingsDialog(props: Props) {
             <Show when={section() === "connection"}>
               <ConnectionSection
                 mobile={isMobileRuntime()}
+                reconnectHost={reconnectHost}
                 url={url()}
                 token={token()}
                 hosts={props.runtimeHosts}
@@ -438,6 +446,7 @@ function AppearanceSection(props: { theme: StudioTheme; onTheme: (theme: StudioT
 
 function ConnectionSection(props: {
   mobile: boolean;
+  reconnectHost?: RuntimeHost;
   url: string;
   token: string;
   hosts: RuntimeHost[];
@@ -450,18 +459,26 @@ function ConnectionSection(props: {
   onSessionHomeHost: (id: string) => void;
   onRemoveHost: (id: string) => void;
 }) {
+  let tokenInput: HTMLInputElement | undefined;
   const savedHosts = () => props.hosts.filter((host) => Boolean(host.url));
+  const reconnecting = () => Boolean(props.reconnectHost);
+  const reconnectName = () => props.reconnectHost?.name || "saved compute";
+  onMount(() => {
+    if (props.reconnectHost) queueMicrotask(() => tokenInput?.focus());
+  });
   return (
     <div class="settings-section">
       <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description={props.mobile
-        ? "Connect this phone to an authenticated compute host. Studio proves the URL and token before making it the home for new sessions."
-        : "Desktop sessions use the local Rust bridge by default. Save a remote URL and token to test the host, add it to this pool, and protect its credential in the operating system’s secure credential store."} />
+        ? props.reconnectHost
+          ? `${props.reconnectHost.name} is still saved as Session home. Re-enter its access token to unlock this compute after reopening Studio.`
+          : "Connect this phone to an authenticated compute host. Studio verifies the address and access token before making it the home for new sessions."
+        : "Desktop sessions use this computer by default. Save a remote address and access token to test another host, add it to this pool, and protect its credential in the operating system’s secure credential store."} />
       <div class="settings-field-stack">
-        <label class="settings-form-field"><span>Bridge URL <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://studio-bridge.example.com" inputMode="url" /><small>Use a loopback SSH tunnel on desktop, or HTTPS for a directly reachable remote host.</small></label>
-        <label class="settings-form-field"><span>Bearer token <em>protected credential</em></span><input type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste the bridge bearer token" autocomplete="off" /><small>{props.mobile
-          ? "The token remains private to this app session and is never placed in the URL."
+        <label class="settings-form-field"><span>Compute host address <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://spark.example.com" inputMode="url" /><small>Use the HTTPS address for the computer that runs your Amplifier sessions.</small></label>
+        <label class="settings-form-field"><span>Access token <em>private</em></span><input ref={tokenInput} type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste this compute host’s access token" autocomplete="off" /><small>{props.mobile
+          ? "For security, Studio asks for this token again after the app is fully closed. Your saved compute host and sessions remain."
           : "The token stays session-only until the host proves it can start a session. Studio then moves it to the operating system’s secure credential store—never settings, the host registry, or a shared URL."}</small></label>
-        <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? "Testing & adding…" : "Add compute host"}</button><small>The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings.</small></div>
+        <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? reconnecting() ? `Reconnecting ${reconnectName()}…` : "Testing & adding…" : reconnecting() ? `Reconnect ${reconnectName()}` : "Add compute host"}</button><small>{reconnecting() ? "Studio will verify this saved host and return you to the workspace." : "The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings."}</small></div>
       </div>
       <div class="compute-pool">
         <div class="compute-pool-heading"><div><span>AVAILABLE COMPUTE</span><strong>{savedHosts().length} saved host{savedHosts().length === 1 ? "" : "s"}</strong></div><small>Each new session remains pinned to the host you choose.</small></div>
@@ -470,7 +487,7 @@ function ConnectionSection(props: {
             <For each={savedHosts()}>{(host) => (
               <article>
                 <div><strong>{host.name}</strong><code>{host.url}</code><small>{host.defaultProjectRoot || "Choose a project root when starting"}</small></div>
-                <span>{host.tokenRef.startsWith("keychain:") ? "SECURE" : host.tokenRef === "session" ? "SESSION" : "ENV"}</span>
+                <span>{props.reconnectHost?.id === host.id ? "ACCESS NEEDED" : host.tokenRef.startsWith("keychain:") ? "SECURE" : host.tokenRef === "session" ? "SESSION" : "ENV"}</span>
                 <button type="button" disabled={props.removingHost === host.id} onClick={() => props.onRemoveHost(host.id)}>{props.removingHost === host.id ? "Removing…" : "Remove"}</button>
               </article>
             )}</For>

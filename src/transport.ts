@@ -1381,7 +1381,7 @@ export function hostRequestFailureMessage(origin: string, caught: unknown, reque
 
 function requireBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
   const token = configuredBridgeToken(bridgeUrl).trim();
-  if (!token) throw new Error("Enter the Rust bridge bearer token in Bridge settings");
+  if (!token) throw new Error("Access token required for this compute host. Open Connection settings to continue.");
   return token;
 }
 
