@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createSessionState } from "./reducer";
 import type { LaneState, SessionViewState } from "./protocol";
-import { sessionPlacement, workAttentionItems, workAttentionSummary } from "./mobileWork";
+import {
+  releaseEditorForWork,
+  revealWorkAfterAutopilot,
+  sessionPlacement,
+  workAttentionItems,
+  workAttentionSummary,
+} from "./mobileWork";
 
 function lane(id: string, status: LaneState["status"], activity: string): LaneState {
   return {
@@ -22,6 +28,21 @@ function session(id: string, title: string): SessionViewState {
 }
 
 describe("mobile Work summaries", () => {
+  it("keeps mobile conversation in place when Autopilot starts", () => {
+    expect(revealWorkAfterAutopilot(true)).toBe(false);
+    expect(revealWorkAfterAutopilot(false)).toBe(true);
+  });
+
+  it("releases a focused editor before changing Work surfaces", () => {
+    let blurred = false;
+    expect(releaseEditorForWork({
+      matches: (selector) => selector.includes("textarea"),
+      blur: () => { blurred = true; },
+    })).toBe(true);
+    expect(blurred).toBe(true);
+    expect(releaseEditorForWork({ matches: () => false })).toBe(false);
+  });
+
   it("surfaces the exact names of approvals, decisions, and waiting agents", () => {
     const state: SessionViewState = {
       ...session("alpha", "Release follow-up"),

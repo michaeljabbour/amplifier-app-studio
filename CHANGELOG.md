@@ -4,6 +4,21 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.75 — 2026-08-25
+
+Mobile Work navigation and recovery.
+
+- Kept the global mobile app bar visible while Work is open, so the Work toggle
+  remains an independent escape route instead of being covered by the panel.
+- Stopped Autopilot activation from replacing the phone conversation with Work.
+- Made Run, Agents, Loop, Plan, Setup, Bundles, Outputs, and Context visible in
+  a touch-sized two-row tab grid, with a permanent Agents view and agent detail.
+- Unified Back, Close, the Work toggle, and Android system Back on one close
+  path, released any focused editor during transitions, and restored focus to
+  the Work control after returning to the conversation.
+- Added rendered DOM regressions that exercise every Work view plus both mobile
+  return controls instead of checking markup strings alone.
+
 ## 0.1.68 — 2026-08-23
 
 Release metadata completion and dependency maintenance.

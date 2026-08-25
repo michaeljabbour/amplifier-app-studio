@@ -76,7 +76,7 @@ describe("mobile layout contracts", () => {
     expect(mobileCss).toContain("--mobile-header-height: 56px");
   });
 
-  it("opens a full-screen Work hub from Activity with explicit return controls", () => {
+  it("opens a persistent-navigation Work hub with explicit return controls", () => {
     expect(tabStripSource).toContain('class="mobile-topbar-button mobile-work-button"');
     expect(tabStripSource).toContain('class="mobile-work-label">Work');
     expect(tabStripSource).toContain("onClick={() => props.onToggleInspector(attention().sessionId)}");
@@ -85,11 +85,14 @@ describe("mobile layout contracts", () => {
     expect(inspectorSource).toContain("{props.state.title}");
     expect(inspectorSource).toContain("{placement().host}");
     expect(inspectorSource).toContain("{placement().project}");
-    for (const label of ["Run", "Loop", "Plan", "Setup", "Bundles", "Outputs", "Context"]) {
+    for (const label of ["Run", "Agents", "Loop", "Plan", "Setup", "Bundles", "Outputs", "Context"]) {
       expect(inspectorSource).toContain(`>${label}</button>`);
     }
-    expect(mobileCss).toMatch(/\.machine-inspector,[\s\S]*top:\s*0;[\s\S]*height:\s*100dvh;[\s\S]*display:\s*flex/);
-    expect(mobileCss).toMatch(/\.inspector-tabs button,[\s\S]*min-height:\s*48px/);
+    expect(mobileCss).toMatch(/\.machine-inspector,[\s\S]*top:\s*calc\(var\(--mobile-header-height\)[\s\S]*height:\s*auto;[\s\S]*display:\s*flex/);
+    expect(mobileCss).toMatch(/\.inspector-tabs,[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    expect(mobileCss).toMatch(/\.inspector-tabs button,[\s\S]*min-height:\s*44px/);
+    expect(appSource).toContain("revealWorkAfterAutopilot(isMobileRuntime())");
+    expect(appSource).toContain("<Show when={rightOpen()}>");
   });
 
   it("routes Android system Back through the topmost Studio overlay", () => {
@@ -106,7 +109,7 @@ describe("mobile layout contracts", () => {
       "setCapabilitiesOpen(false)",
       "setSettingsOpen(false)",
       "setDialog(undefined)",
-      "setRightOpen(false)",
+      "closeInspector()",
       "setDrawerOpen(false)",
     ]) expect(dismiss).toContain(close);
     expect(dismiss).toContain("if (!dialogBusy()) setDialog(undefined)");
