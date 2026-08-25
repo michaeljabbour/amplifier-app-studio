@@ -334,7 +334,11 @@ export async function saveRuntimeHost(host: RuntimeHost): Promise<RuntimeHost[]>
     saveBridgeUrl(host.url);
     const url = bridgeBaseUrl();
     if (!url) throw new Error("The compute host URL is invalid");
-    const mobileHost = { ...host, url, tokenRef: "session" };
+    const mobileHost = {
+      ...host,
+      url,
+      tokenRef: isTauriRuntime() ? `keychain:${host.id}` : "session",
+    };
     localStorage.setItem(MOBILE_HOST_STORAGE_KEY, JSON.stringify(mobileHost));
     return [mobileHost];
   }
@@ -346,6 +350,7 @@ export async function removeRuntimeHost(id: string): Promise<RuntimeHost[]> {
   if (isMobileRuntime()) {
     const host = mobileRuntimeHost();
     if (!host || host.id !== id) return host ? [host] : [];
+    if (isTauriRuntime()) await invoke("delete_mobile_bridge_token", { account: host.id });
     saveBridgeToken("", host.url);
     localStorage.removeItem(MOBILE_HOST_STORAGE_KEY);
     saveBridgeUrl("");
@@ -359,6 +364,7 @@ export async function storeRuntimeHostToken(id: string, token: string): Promise<
   if (isMobileRuntime()) {
     const host = mobileRuntimeHost();
     if (!host || host.id !== id) throw new Error(`Unknown Amplifier host '${id}'`);
+    if (isTauriRuntime()) await invoke("store_mobile_bridge_token", { account: id, token: token.trim() });
     saveBridgeToken(token, host.url);
     return;
   }
@@ -381,7 +387,7 @@ function mobileRuntimeHost(): RuntimeHost | undefined {
           id: host.id,
           name: host.name,
           url: configured,
-          tokenRef: "session",
+          tokenRef: isTauriRuntime() ? `keychain:${host.id}` : "session",
           defaultProjectRoot: typeof host.defaultProjectRoot === "string"
             ? host.defaultProjectRoot
             : undefined,
@@ -395,7 +401,7 @@ function mobileRuntimeHost(): RuntimeHost | undefined {
     id: runtimeHostId(configured),
     name: `Compute · ${new URL(configured).hostname}`,
     url: configured,
-    tokenRef: "session",
+    tokenRef: isTauriRuntime() ? `keychain:${runtimeHostId(configured)}` : "session",
   };
 }
 
@@ -1387,9 +1393,16 @@ function requireBridgeToken(bridgeUrl = configuredBridgeUrl()): string {
 
 async function ensureBridgeToken(bridgeUrl: string, hostId?: string): Promise<void> {
   if (configuredBridgeToken(bridgeUrl)) return;
-  if (!isDesktopRuntime() || !hostId) return;
-  const token = await invoke<string>("resolve_runtime_host_token", { id: hostId });
-  saveBridgeToken(token, bridgeUrl);
+  if (!hostId) return;
+  if (isDesktopRuntime()) {
+    const token = await invoke<string>("resolve_runtime_host_token", { id: hostId });
+    saveBridgeToken(token, bridgeUrl);
+    return;
+  }
+  if (isMobileRuntime() && isTauriRuntime()) {
+    const token = await invoke<string | null>("resolve_mobile_bridge_token", { account: hostId });
+    if (token) saveBridgeToken(token, bridgeUrl);
+  }
 }
 
 function websocketBearerProtocol(token: string): string {

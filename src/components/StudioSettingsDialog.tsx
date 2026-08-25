@@ -470,13 +470,13 @@ function ConnectionSection(props: {
     <div class="settings-section">
       <SectionHeading kicker="CONNECTION" title="Runtime & compute pool" description={props.mobile
         ? props.reconnectHost
-          ? `${props.reconnectHost.name} is still saved as Session home. Re-enter its access token to unlock this compute after reopening Studio.`
+          ? `${props.reconnectHost.name} is still saved as Session home, but its protected access credential is unavailable on this device. Enter the token once to reconnect.`
           : "Connect this phone to an authenticated compute host. Studio verifies the address and access token before making it the home for new sessions."
         : "Desktop sessions use this computer by default. Save a remote address and access token to test another host, add it to this pool, and protect its credential in the operating system’s secure credential store."} />
       <div class="settings-field-stack">
         <label class="settings-form-field"><span>Compute host address <em>mobile / remote</em></span><input value={props.url} onInput={(event) => props.onUrl(event.currentTarget.value)} placeholder="https://spark.example.com" inputMode="url" /><small>Use the HTTPS address for the computer that runs your Amplifier sessions.</small></label>
         <label class="settings-form-field"><span>Access token <em>private</em></span><input ref={tokenInput} type="password" value={props.token} onInput={(event) => props.onToken(event.currentTarget.value)} placeholder="Paste this compute host’s access token" autocomplete="off" /><small>{props.mobile
-          ? "For security, Studio asks for this token again after the app is fully closed. Your saved compute host and sessions remain."
+          ? "After this compute is verified, Studio protects its access token in this device’s secure credential store so reconnects survive a full app close."
           : "The token stays session-only until the host proves it can start a session. Studio then moves it to the operating system’s secure credential store—never settings, the host registry, or a shared URL."}</small></label>
         <div class="settings-form-actions"><button type="button" class="primary-button" disabled={props.addingHost || !props.url.trim() || !props.token.trim()} onClick={props.onAddHost}>{props.addingHost ? reconnecting() ? `Reconnecting ${reconnectName()}…` : "Testing & adding…" : reconnecting() ? `Reconnect ${reconnectName()}` : "Add compute host"}</button><small>{reconnecting() ? "Studio will verify this saved host and return you to the workspace." : "The host is tested and added now. You can add another before choosing Session home and reviewing the remaining settings."}</small></div>
       </div>

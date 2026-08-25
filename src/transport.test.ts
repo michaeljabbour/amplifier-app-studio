@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const nativeInvoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke: nativeInvoke }));
 import {
   configuredBridgeToken,
   configuredBridgeUrl,
@@ -28,6 +31,7 @@ describe("bridge trust storage", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    nativeInvoke.mockReset();
     vi.stubGlobal("localStorage", memoryStorage());
     vi.stubGlobal("sessionStorage", memoryStorage());
     localStorage.clear();
@@ -89,24 +93,34 @@ describe("bridge trust storage", () => {
     };
 
     saveBridgeToken(token, url);
-    await expect(saveRuntimeHost(host)).resolves.toEqual([
-      { ...host, url: `${url}/`, tokenRef: "session" },
-    ]);
+    await expect(saveRuntimeHost(host)).resolves.toEqual([{ ...host, url: `${url}/` }]);
     await expect(storeRuntimeHostToken(host.id, token)).resolves.toBeUndefined();
-    await expect(listRuntimeHosts()).resolves.toEqual([
-      { ...host, url: `${url}/`, tokenRef: "session" },
-    ]);
+    expect(nativeInvoke).toHaveBeenCalledWith("store_mobile_bridge_token", {
+      account: host.id,
+      token,
+    });
+    await expect(listRuntimeHosts()).resolves.toEqual([{ ...host, url: `${url}/` }]);
     expect(configuredBridgeUrl()).toBe(url);
     expect(configuredBridgeToken()).toBe(token);
 
     sessionStorage.clear();
-    await expect(listRuntimeHosts()).resolves.toEqual([
-      { ...host, url: `${url}/`, tokenRef: "session" },
-    ]);
+    await expect(listRuntimeHosts()).resolves.toEqual([{ ...host, url: `${url}/` }]);
     expect(configuredBridgeToken(url)).toBe("");
-    await expect(getRuntimeStatus(url, host.id)).rejects.toThrow("Access token required for this compute host");
+    nativeInvoke.mockImplementation(async (command: string) => {
+      if (command === "resolve_mobile_bridge_token") return token;
+      return undefined;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      installed: true,
+      runtimeVersion: "0.1.10",
+      meetsMinimum: true,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    await expect(getRuntimeStatus(url, host.id)).resolves.toMatchObject({ installed: true });
+    expect(nativeInvoke).toHaveBeenCalledWith("resolve_mobile_bridge_token", { account: host.id });
+    expect(configuredBridgeToken(url)).toBe(token);
 
     await expect(removeRuntimeHost(host.id)).resolves.toEqual([]);
+    expect(nativeInvoke).toHaveBeenCalledWith("delete_mobile_bridge_token", { account: host.id });
     expect(configuredBridgeUrl()).toBe("");
     expect(configuredBridgeToken(url)).toBe("");
   });

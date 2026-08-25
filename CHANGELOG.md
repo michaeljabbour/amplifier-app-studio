@@ -4,6 +4,28 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.76 — 2026-08-25
+
+Mobile voice visibility and durable secure compute access.
+
+- Kept the app shell and composer aligned to WKWebView's visible viewport while
+  voice capture is active, including visual-viewport offset changes caused by
+  the keyboard. Both the home and in-session composers now remain scrollable
+  instead of extending beyond the phone frame.
+- Added an in-composer listening explanation and returned focus to the editable
+  draft after transcription, with the caret and scroll position at the newly
+  inserted speech. Voice input still never sends automatically.
+- Replaced mobile's session-only compute credential with OS-backed persistence:
+  iOS uses the device-local data-protection Keychain and Android encrypts its
+  credential store with Android Keystore. Host metadata never contains the
+  token, and removing a host removes its protected credential.
+- Rehydrated the credential into the WebView only when an authenticated host
+  request needs it, so a full app close no longer turns a saved Session home
+  into a misleading reconnect setup flow.
+- Added cold-relaunch, secure-store routing, voice capture/transcription, layout,
+  and native credential-boundary regressions; disabled Android cloud backup so
+  encrypted preferences cannot be restored without their device key.
+
 ## 0.1.75 — 2026-08-25
 
 Mobile Work navigation and recovery.

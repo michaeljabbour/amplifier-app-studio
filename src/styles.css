@@ -1055,6 +1055,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .voice-input-control > small > button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 4px; padding: 0; background: transparent; color: #d39196; font-size: 13px; cursor: pointer; }
 .voice-input-control > small > button:hover { background: rgba(255,255,255,.06); color: #fff; }
 .voice-input-status { position: absolute; left: 50%; bottom: calc(100% + 8px); width: max-content; max-width: 230px; transform: translateX(-50%); border: 1px solid rgba(79,183,255,.18); border-radius: 999px; padding: 5px 8px; background: #101821; color: #91afc4; font-size: 8px; pointer-events: none; }
+.composer-voice-guidance { display: flex; align-items: baseline; gap: 9px; margin: 8px 12px 0; border: 1px solid rgba(255,111,120,.22); border-radius: 8px; padding: 8px 10px; background: rgba(255,111,120,.075); color: #a8bfd0; font-size: 10px; line-height: 1.4; }
+.composer-voice-guidance strong { flex: 0 0 auto; color: #ff8a92; }
 .voice-input-icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .voice-input-stop { width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
 .voice-input-spinner { width: 13px; height: 13px; border: 1.5px solid rgba(113,135,155,.32); border-top-color: currentColor; border-radius: 50%; animation: spin .72s linear infinite; }

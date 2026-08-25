@@ -13,6 +13,7 @@ const transcriptSource = readFileSync(new URL("./components/Transcript.tsx", imp
 const inspectorSource = readFileSync(new URL("./components/Inspector.tsx", import.meta.url), "utf8");
 const drawerSource = readFileSync(new URL("./components/SessionDrawer.tsx", import.meta.url), "utf8");
 const coordinatorHomeSource = readFileSync(new URL("./components/CoordinatorHome.tsx", import.meta.url), "utf8");
+const composerSource = readFileSync(new URL("./components/Composer.tsx", import.meta.url), "utf8");
 const madeThemeCss = readFileSync(new URL("./madeTheme.css", import.meta.url), "utf8");
 const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
@@ -48,6 +49,10 @@ describe("mobile layout contracts", () => {
     expect(mobileCss).toMatch(/body\s*\{[\s\S]*position:\s*fixed/);
     expect(mobileCss).toMatch(/\.tab-strip\s*\{[\s\S]*position:\s*fixed/);
     expect(mobileCss).toMatch(/body:has\(input:focus, textarea:focus, select:focus\) \.app-shell[\s\S]*height:\s*var\(--studio-visual-viewport-height[\s\S]*transform:\s*none/);
+    expect(mobileCss).toMatch(/body:has\(\.composer-shell\.voice-active, \.home-composer\.voice-active\) \.app-shell[\s\S]*top:\s*var\(--studio-visual-offset-top[\s\S]*height:\s*var\(--studio-visual-viewport-height/);
+    expect(mobileCss).toMatch(/\.input-zone:has\(\.composer-shell\.voice-active\)[\s\S]*max-height:[\s\S]*overflow-y:\s*auto/);
+    expect(mobileCss).toMatch(/\.composer-shell\.voice-active,[\s\S]*\.home-composer\.voice-active[\s\S]*overflow-y:\s*auto/);
+    expect(mobileCss).toMatch(/\.composer-voice-guidance\s*\{[\s\S]*font:\s*500 13px/);
     expect(mobileCss).not.toMatch(/body:has\(input:focus, textarea:focus, select:focus\) \.app-shell[\s\S]*translateY\(/);
     expect(mobileCss).toMatch(/body:has\(\.home-composer textarea:focus\) \.home-conversation-intro[\s\S]*justify-content:\s*flex-start/);
     expect(mobileCss).toMatch(/\.coordinator-home,[\s\S]*\.workspace\s*\{[\s\S]*grid-row:\s*2/);
@@ -55,6 +60,11 @@ describe("mobile layout contracts", () => {
     expect(mobileCss).toMatch(/\.composer-actions\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
     expect(mobileCss).toMatch(/\.footer-bar\s*\{[\s\S]*position:\s*fixed[\s\S]*grid-template-columns:\s*repeat\(4/);
     expect(mobileCss).toMatch(/\.footer-project,[\s\S]*\.footer-model,[\s\S]*display:\s*none/);
+    expect(composerSource).toContain('"voice-active": dictating()');
+    expect(coordinatorHomeSource).toContain('"voice-active": dictating()');
+    expect(composerSource).toContain('class="composer-voice-guidance"');
+    expect(coordinatorHomeSource).toContain('class="composer-voice-guidance"');
+    expect(composerSource).toContain("textarea?.focus({ preventScroll: true })");
   });
 
   it("uses compact session chrome and one native touch-scroll settings surface", () => {
@@ -164,7 +174,7 @@ describe("mobile layout contracts", () => {
     expect(settingsSource).toContain('createSignal<SettingsSectionId>(props.initialSection || "appearance")');
     expect(settingsSource).toContain('createSignal(reconnectHost?.url || "")');
     expect(settingsSource).toContain("tokenInput?.focus()");
-    expect(settingsSource).toContain("For security, Studio asks for this token again after the app is fully closed.");
+    expect(settingsSource).toContain("secure credential store so reconnects survive a full app close");
     expect(settingsSource).not.toContain("Bearer token");
     expect(coordinatorHomeSource).not.toContain("Runtime check unavailable");
     expect(coordinatorHomeSource).not.toContain("Rust bridge bearer token");
