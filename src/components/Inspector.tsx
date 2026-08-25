@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import { ChevronLeft, MapPin, TriangleAlert, X } from "lucide-solid";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionOutput, SessionViewState } from "../protocol";
@@ -9,7 +9,7 @@ import { formatSessionCost } from "../costEstimate";
 import { sessionPlacement, workAttentionItems } from "../mobileWork";
 import { sessionUsesCapability, STUDIO_CAPABILITIES, type StudioCapability } from "../capabilities";
 
-export type InspectorTab = "run" | "map" | "plan" | "agent" | "build" | "bundles" | "outputs" | "context";
+export type InspectorTab = "run" | "agents" | "map" | "plan" | "agent" | "build" | "bundles" | "outputs" | "context";
 
 interface Props {
   state: SessionViewState;
@@ -30,16 +30,29 @@ interface Props {
   onStartCapability: (capability: StudioCapability) => void;
   onRequestContext: () => void;
   onOpenOutput?: (output: SessionOutput) => Promise<void>;
-  onClose?: () => void;
+  onClose: () => void;
 }
 
 export function Inspector(props: Props) {
   const placement = () => sessionPlacement(props.state);
   const attention = () => workAttentionItems(props.state);
+  let backButton: HTMLButtonElement | undefined;
+  let body: HTMLDivElement | undefined;
+  const tabId = (tab: InspectorTab) => `inspector-tab-${props.state.guiId}-${tab}`;
+  const panelId = () => `inspector-panel-${props.state.guiId}`;
+  const selectTab = (tab: InspectorTab) => {
+    props.onTab(tab);
+    queueMicrotask(() => body?.scrollTo?.({ top: 0, behavior: "auto" }));
+  };
+
+  onMount(() => {
+    if (window.innerWidth <= 760) queueMicrotask(() => backButton?.focus({ preventScroll: true }));
+  });
+
   return (
     <aside class="machine-inspector" aria-label="Session inspector">
       <div class="inspector-heading">
-        <button type="button" class="mobile-work-back" onClick={props.onClose} aria-label="Back to session">
+        <button ref={backButton} type="button" class="mobile-work-back" onClick={props.onClose} aria-label="Back to session">
           <ChevronLeft aria-hidden="true" /><span>Back</span>
         </button>
         <div class="inspector-heading-copy">
@@ -59,18 +72,20 @@ export function Inspector(props: Props) {
           <span><strong>{attention().length} item{attention().length === 1 ? "" : "s"} need{attention().length === 1 ? "s" : ""} attention</strong><small>{attention()[0]?.name}</small></span>
         </button>
       </Show>
-      <nav class="inspector-tabs" aria-label="Inspector views">
-        <button classList={{ active: props.tab === "run" }} onClick={() => props.onTab("run")}>Run</button>
-        <button classList={{ active: props.tab === "map" }} onClick={() => props.onTab("map")}>Loop</button>
-        <button classList={{ active: props.tab === "plan" }} onClick={() => props.onTab("plan")}>Plan</button>
-        <Show when={props.lane}><button classList={{ active: props.tab === "agent" }} onClick={() => props.onTab("agent")}>Agent</button></Show>
-        <button classList={{ active: props.tab === "build" }} onClick={() => props.onTab("build")}>Setup</button>
-        <button classList={{ active: props.tab === "bundles" }} onClick={() => props.onTab("bundles")}>Bundles</button>
-        <button classList={{ active: props.tab === "outputs" }} onClick={() => props.onTab("outputs")}>Outputs</button>
-        <button classList={{ active: props.tab === "context" }} onClick={() => props.onTab("context")}>Context</button>
+      <nav class="inspector-tabs" aria-label="Work views" role="tablist">
+        <button type="button" id={tabId("run")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "run"} classList={{ active: props.tab === "run" }} onClick={() => selectTab("run")}>Run</button>
+        <button type="button" id={tabId("agents")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "agents"} classList={{ active: props.tab === "agents" }} onClick={() => selectTab("agents")}>Agents</button>
+        <button type="button" id={tabId("map")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "map"} classList={{ active: props.tab === "map" }} onClick={() => selectTab("map")}>Loop</button>
+        <button type="button" id={tabId("plan")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "plan"} classList={{ active: props.tab === "plan" }} onClick={() => selectTab("plan")}>Plan</button>
+        <button type="button" id={tabId("build")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "build"} classList={{ active: props.tab === "build" }} onClick={() => selectTab("build")}>Setup</button>
+        <button type="button" id={tabId("bundles")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "bundles"} classList={{ active: props.tab === "bundles" }} onClick={() => selectTab("bundles")}>Bundles</button>
+        <button type="button" id={tabId("outputs")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "outputs"} classList={{ active: props.tab === "outputs" }} onClick={() => selectTab("outputs")}>Outputs</button>
+        <button type="button" id={tabId("context")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "context"} classList={{ active: props.tab === "context" }} onClick={() => selectTab("context")}>Context</button>
+        <Show when={props.lane}><button type="button" id={tabId("agent")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "agent"} classList={{ active: props.tab === "agent" }} onClick={() => selectTab("agent")}>Agent detail</button></Show>
       </nav>
-      <div class="inspector-body">
+      <div ref={body} class="inspector-body" id={panelId()} role="tabpanel" aria-labelledby={tabId(props.tab)}>
         <Show when={props.tab === "run"}><RunPanel {...props} /></Show>
+        <Show when={props.tab === "agents"}><AgentsPanel state={props.state} onSelectLane={props.onSelectLane} /></Show>
         <Show when={props.tab === "map"}><ExecutionMap state={props.state} /></Show>
         <Show when={props.tab === "plan"}><PlanPanel state={props.state} /></Show>
         <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} /></Show>
@@ -157,19 +172,28 @@ function RunPanel(props: Props) {
         </InspectorSection>
       </Show>
 
-      <InspectorSection title="This session's agents" meta={liveCount() > 0 ? `${liveCount()} LIVE · ${lanes().length} TOTAL` : `${lanes().length} TOTAL`}>
-        <Show when={lanes().length} fallback={<p class="inspector-empty">The coordinator has not created a delegate workspace yet.</p>}>
-          <div class="inspector-agent-list">
-            <For each={lanes()}>{(lane) => (
-              <button onClick={() => props.onSelectLane(lane.id)}>
-                <span class={`mini-state ${lane.status}`}>{lane.status}</span>
-                <strong>{lane.agent}</strong><Markdown compact class="agent-list-summary" text={lane.activity} />
-              </button>
-            )}</For>
-          </div>
-        </Show>
-      </InspectorSection>
+      <AgentsPanel state={props.state} onSelectLane={props.onSelectLane} />
     </>
+  );
+}
+
+function AgentsPanel(props: Pick<Props, "state" | "onSelectLane">) {
+  const lanes = () => orderAgentLanes(Object.values(props.state.lanes));
+  const liveCount = () => liveAgentCount(lanes());
+  return (
+    <InspectorSection title="This session's agents" meta={liveCount() > 0 ? `${liveCount()} LIVE · ${lanes().length} TOTAL` : `${lanes().length} TOTAL`}>
+      <Show when={lanes().length} fallback={<p class="inspector-empty">The coordinator has not created a delegate workspace yet. Agents appear here as Amplifier delegates work.</p>}>
+        <p class="inspector-guidance">Open an agent to inspect its assignment, live work, result, and timeline.</p>
+        <div class="inspector-agent-list">
+          <For each={lanes()}>{(lane) => (
+            <button type="button" onClick={() => props.onSelectLane(lane.id)}>
+              <span class={`mini-state ${lane.status}`}>{lane.status}</span>
+              <strong>{lane.agent}</strong><Markdown compact class="agent-list-summary" text={lane.activity} />
+            </button>
+          )}</For>
+        </div>
+      </Show>
+    </InspectorSection>
   );
 }
 

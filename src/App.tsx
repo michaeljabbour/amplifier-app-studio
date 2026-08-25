@@ -27,6 +27,7 @@ import {
   promptWithDocumentAttachments,
 } from "./attachments";
 import { nativeProjectPickerAvailable, pickAttachments, pickProjectDirectory, saveDiagnosticsFile } from "./nativePickers";
+import { releaseEditorForWork, revealWorkAfterAutopilot } from "./mobileWork";
 import { remoteProjectDefault, shouldRememberProjectLocally } from "./projectFolders";
 import type { CapabilityCatalog, ComposerAttachment, NewSessionInput, ProtocolRecord, ProviderOption, SessionViewState, StoredSession } from "./protocol";
 import {
@@ -212,6 +213,13 @@ export default function App() {
     const host = sessionHomeHost();
     setSettingsEntry({ section: "connection", reconnectHostId: host?.url ? host.id : undefined });
   };
+  const closeInspector = () => {
+    if (isMobileRuntime()) releaseEditorForWork(document.activeElement);
+    setRightOpen(false);
+    if (isMobileRuntime()) {
+      queueMicrotask(() => document.querySelector<HTMLElement>(".mobile-work-button")?.focus({ preventScroll: true }));
+    }
+  };
 
   const knownHostProjectRoot = (host?: RuntimeHost) => host?.url
     ? remoteProjectDefault(host, hostProjectRoots()[host.id] || "")
@@ -249,7 +257,7 @@ export default function App() {
     else if (dialog()) {
       if (!dialogBusy()) setDialog(undefined);
     }
-    else if (rightOpen()) setRightOpen(false);
+    else if (rightOpen()) closeInspector();
     else if (drawerOpen()) setDrawerOpen(false);
   };
 
@@ -751,7 +759,7 @@ export default function App() {
         "Autopilot is waiting at a consequential decision. Resolve it before autonomous work continues.",
         "warning",
       ));
-      openInspector("run");
+      if (revealWorkAfterAutopilot(isMobileRuntime())) openInspector("run");
       return;
     }
     const op = activeSessionAutopilotOp(session);
@@ -766,13 +774,14 @@ export default function App() {
     update(session.guiId, markAutopilotPending);
     try {
       await sendOp(session.guiId, op);
-      openInspector("run");
+      if (revealWorkAfterAutopilot(isMobileRuntime())) openInspector("run");
     } catch (error) {
       update(session.guiId, (state) => markAutopilotSendFailed(state, cleanError(error)));
     }
   };
 
   const openInspector = (tab: InspectorTab) => {
+    if (isMobileRuntime()) releaseEditorForWork(document.activeElement);
     setInspectorTab(tab);
     setRightOpen(true);
   };
@@ -928,11 +937,13 @@ export default function App() {
         inspectorOpen={workbenchSurface() === "agent" && rightOpen()}
         inspectorAvailable={workbenchSurface() === "agent" && Boolean(active())}
         onToggleInspector={(attentionSessionId) => {
-          const opening = !rightOpen();
-          if (opening && attentionSessionId) activateSessionView(attentionSessionId);
           setWorkbenchSurface("agent");
-          if (opening) setInspectorTab("run");
-          setRightOpen(opening);
+          if (rightOpen()) {
+            closeInspector();
+            return;
+          }
+          if (attentionSessionId) activateSessionView(attentionSessionId);
+          openInspector("run");
         }}
         onOpenExecution={() => openInspector("map")}
         onOpenPlan={() => openInspector("plan")}
@@ -1069,34 +1080,36 @@ export default function App() {
                 onToggleWorkspace={() => setLeftOpen((value) => !value)}
               />
             </div>
-            <Inspector
-              state={session()}
-              lane={selectedLane()}
-              tab={inspectorTab()}
-              transport={transport()}
-              bundles={catalog().bundles}
-              providers={catalog().providers}
-              catalogError={catalogError()}
-              onTab={setInspectorTab}
-              onSelectLane={selectLane}
-              onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
-              onCycleEffort={() => void cycleEffort()}
-              onStartSibling={openSibling}
-              onAddBundle={registerBundle}
-              onRefreshBundles={reloadCatalog}
-              onCapabilities={() => setCapabilitiesOpen(true)}
-              onStartCapability={openCapability}
-              onRequestContext={() => void requestContextForActive()}
-              onOpenOutput={async (output) => {
-                try {
-                  if (output.inlineVisual) await saveInlineVisualPng(output.inlineVisual);
-                  else await openLocalOutput(session().projectDir, output.path, session().hostUrl, session().hostId);
-                } catch (error) {
-                  update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
-                }
-              }}
-              onClose={() => setRightOpen(false)}
-            />
+            <Show when={rightOpen()}>
+              <Inspector
+                state={session()}
+                lane={selectedLane()}
+                tab={inspectorTab()}
+                transport={transport()}
+                bundles={catalog().bundles}
+                providers={catalog().providers}
+                catalogError={catalogError()}
+                onTab={setInspectorTab}
+                onSelectLane={selectLane}
+                onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
+                onCycleEffort={() => void cycleEffort()}
+                onStartSibling={openSibling}
+                onAddBundle={registerBundle}
+                onRefreshBundles={reloadCatalog}
+                onCapabilities={() => setCapabilitiesOpen(true)}
+                onStartCapability={openCapability}
+                onRequestContext={() => void requestContextForActive()}
+                onOpenOutput={async (output) => {
+                  try {
+                    if (output.inlineVisual) await saveInlineVisualPng(output.inlineVisual);
+                    else await openLocalOutput(session().projectDir, output.path, session().hostUrl, session().hostId);
+                  } catch (error) {
+                    update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
+                  }
+                }}
+                onClose={closeInspector}
+              />
+            </Show>
           </div>
           )}
         </Show>

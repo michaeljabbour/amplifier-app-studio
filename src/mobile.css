@@ -1151,14 +1151,15 @@
   .mobile-runtime-settings small { margin-top: 3px; color: #77726e; font: 400 11px/1.2 var(--mobile-ui-font); }
   .mobile-runtime-settings > svg { width: 19px; height: 19px; color: #625e5a; }
 
-  /* Work is a full-screen secondary mode, not a narrow desktop inspector. */
+  /* Work is a secondary mode below persistent global navigation. Keeping the
+     app bar visible means a bad panel state can never trap a phone user. */
   .machine-inspector,
   :root[data-theme="made"] .machine-inspector {
-    z-index: 150;
-    top: 0;
+    z-index: 35;
+    top: calc(var(--mobile-header-height) + var(--studio-safe-area-top, env(safe-area-inset-top, 0px)));
     bottom: 0;
     width: 100%;
-    height: 100dvh;
+    height: auto;
     display: flex;
     flex-direction: column;
     border: 0;
@@ -1169,13 +1170,13 @@
 
   .inspector-heading,
   :root[data-theme="made"] .inspector-heading {
-    min-height: calc(88px + var(--studio-safe-area-top, env(safe-area-inset-top, 0px)));
+    min-height: 72px;
     flex: 0 0 auto;
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr) 48px;
     align-items: center;
     gap: 8px;
-    padding: calc(8px + var(--studio-safe-area-top, env(safe-area-inset-top, 0px))) 10px 8px 8px;
+    padding: 8px 10px 8px 8px;
     border-bottom: 1px solid rgba(32,31,29,.09);
     background: rgba(248,247,245,.96);
   }
@@ -1253,31 +1254,26 @@
 
   .inspector-tabs,
   :root[data-theme="made"] .inspector-tabs {
-    min-height: 52px;
+    min-height: 0;
     flex: 0 0 auto;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 2px 8px 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+    padding: 2px 8px;
     border-bottom: 1px solid rgba(32,31,29,.09);
     background: var(--mobile-surface);
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
   }
-  .inspector-tabs::-webkit-scrollbar { display: none; }
   .inspector-tabs button,
   :root[data-theme="made"] .inspector-tabs button {
-    min-width: 72px;
-    min-height: 48px;
-    flex: 0 0 auto;
-    padding: 0 13px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 4px;
     color: #77716c;
-    font: 650 13px/1 var(--mobile-ui-font);
-    scroll-snap-align: start;
+    font: 650 12px/1 var(--mobile-ui-font);
   }
   .inspector-tabs button.active,
   :root[data-theme="made"] .inspector-tabs button.active { color: #201f1d; }
-  .inspector-tabs button.active::after { right: 13px; left: 13px; height: 3px; border-radius: 3px 3px 0 0; background: #9a6a1c; }
+  .inspector-tabs button.active::after { right: 9px; left: 9px; height: 3px; border-radius: 3px 3px 0 0; background: #9a6a1c; }
 
   .inspector-body {
     min-height: 0;
