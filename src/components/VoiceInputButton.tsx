@@ -11,7 +11,7 @@ interface Props {
   disabled?: boolean;
   onDraft: (draft: string) => void;
   onTranscribe: (recording: AudioRecording) => Promise<string>;
-  onActiveChange?: (active: boolean) => void;
+  onActiveChange?: (active: boolean, phase: "listening" | "transcribing" | "idle") => void;
 }
 
 /**
@@ -46,7 +46,7 @@ export function VoiceInputButton(props: Props) {
   let capture: AudioCaptureSession | undefined;
   let baseDraft = "";
 
-  const setBlocked = (blocked: boolean) => props.onActiveChange?.(blocked);
+  const setBlocked = (blocked: boolean, phase: "listening" | "transcribing" | "idle") => props.onActiveChange?.(blocked, phase);
 
   const toggle = async () => {
     if (processing()) return;
@@ -55,6 +55,7 @@ export function VoiceInputButton(props: Props) {
       capture = undefined;
       setActive(false);
       setProcessing(true);
+      setBlocked(true, "transcribing");
       try {
         if (!current) throw new Error("The microphone recording is no longer available.");
         const recording = await promiseWithTimeout(
@@ -76,7 +77,7 @@ export function VoiceInputButton(props: Props) {
             : "Voice input could not be transcribed.");
       } finally {
         setProcessing(false);
-        setBlocked(false);
+        setBlocked(false, "idle");
       }
       return;
     }
@@ -94,10 +95,10 @@ export function VoiceInputButton(props: Props) {
     try {
       capture = await startAudioCapture();
       setActive(true);
-      setBlocked(true);
+      setBlocked(true, "listening");
     } catch (cause) {
       setError(microphoneFailureMessage(cause));
-      setBlocked(false);
+      setBlocked(false, "idle");
     }
   };
 

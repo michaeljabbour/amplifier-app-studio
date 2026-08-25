@@ -45,6 +45,8 @@ export function CoordinatorHome(props: Props) {
   const [starting, setStarting] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
+  const [voicePhase, setVoicePhase] = createSignal<"listening" | "transcribing">("listening");
+  let textarea: HTMLTextAreaElement | undefined;
   const [locationOpen, setLocationOpen] = createSignal(false);
   const latest = createMemo(() => props.sessions
     .filter(storedSessionShouldList)
@@ -79,6 +81,20 @@ export function CoordinatorHome(props: Props) {
       setText("");
       props.onAttachments([]);
     });
+  };
+
+  const setVoiceActive = (active: boolean, phase: "listening" | "transcribing" | "idle") => {
+    setDictating(active);
+    if (active && phase !== "idle") setVoicePhase(phase);
+    if (!active) {
+      queueMicrotask(() => {
+        textarea?.focus({ preventScroll: true });
+        if (textarea) {
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+          textarea.scrollTop = textarea.scrollHeight;
+        }
+      });
+    }
   };
 
   const addFiles = async (files: File[]) => {
@@ -157,7 +173,7 @@ export function CoordinatorHome(props: Props) {
 
         <div
           class="home-composer"
-          classList={{ "dragging-attachments": draggingAttachments() }}
+          classList={{ "dragging-attachments": draggingAttachments(), "voice-active": dictating() }}
           onDragEnter={(event) => {
             const transfer = event.dataTransfer;
             if (transfer && hasAttachmentFiles(transfer)) {
@@ -184,7 +200,16 @@ export function CoordinatorHome(props: Props) {
         >
           <Show when={draggingAttachments()}><div class="composer-drop-target">Drop files to start with</div></Show>
           <div class="home-composer-label"><span classList={{ active: ready() }} />{starting() ? "Starting Amplifier Agent…" : ready() ? "Ready when you are" : props.checking ? "Checking compute…" : runtimeAvailable() && !providerStatusAvailable() ? "Runtime update required" : runtimeAvailable() ? "Provider setup required" : connectionPrompt().composerLabel}</div>
+          <Show when={dictating()}>
+            <div class="composer-voice-guidance" role="status" aria-live="polite">
+              <strong>{voicePhase() === "listening" ? "Voice input is listening" : "Turning speech into text"}</strong>
+              <span>{voicePhase() === "listening"
+                ? "Tap the red microphone when you are done. Your transcript will appear here for review before anything is sent."
+                : "Keep Studio open for a moment. The editable transcript will appear here; nothing is sent automatically."}</span>
+            </div>
+          </Show>
           <textarea
+            ref={textarea}
             value={text()}
             disabled={!ready() || starting()}
             readOnly={dictating()}
@@ -230,7 +255,7 @@ export function CoordinatorHome(props: Props) {
                 unavailableReason={props.transcription?.message}
                 onDraft={setText}
                 onTranscribe={props.onTranscribe}
-                onActiveChange={setDictating}
+                onActiveChange={setVoiceActive}
               />
               <div class="home-location-control">
                 <button

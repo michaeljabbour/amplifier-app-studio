@@ -27,6 +27,7 @@ export function Composer(props: Props) {
   const [draggingAttachments, setDraggingAttachments] = createSignal(false);
   const [attachmentError, setAttachmentError] = createSignal<string>();
   const [dictating, setDictating] = createSignal(false);
+  const [voicePhase, setVoicePhase] = createSignal<"listening" | "transcribing">("listening");
   let textarea: HTMLTextAreaElement | undefined;
   const presence = createMemo(() => machinePresence(props.state));
   const reconnecting = () => props.state.connectivity?.status === "reconnecting";
@@ -78,10 +79,24 @@ export function Composer(props: Props) {
     queueMicrotask(() => textarea?.focus());
   };
 
+  const setVoiceActive = (active: boolean, phase: "listening" | "transcribing" | "idle") => {
+    setDictating(active);
+    if (active && phase !== "idle") setVoicePhase(phase);
+    if (!active) {
+      queueMicrotask(() => {
+        textarea?.focus({ preventScroll: true });
+        if (textarea) {
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+          textarea.scrollTop = textarea.scrollHeight;
+        }
+      });
+    }
+  };
+
   return (
     <div
       class="composer-shell"
-      classList={{ "dragging-attachments": draggingAttachments() }}
+      classList={{ "dragging-attachments": draggingAttachments(), "voice-active": dictating() }}
       onDragEnter={(event) => {
         const transfer = event.dataTransfer;
         if (transfer && hasAttachmentFiles(transfer)) {
@@ -135,6 +150,14 @@ export function Composer(props: Props) {
         <div class="composer-reconnecting" role="status" aria-live="polite">
           <strong>Reconnecting to compute</strong>
           <span>Your draft is safe. Sending resumes when the runtime view reconnects.</span>
+        </div>
+      </Show>
+      <Show when={dictating()}>
+        <div class="composer-voice-guidance" role="status" aria-live="polite">
+          <strong>{voicePhase() === "listening" ? "Voice input is listening" : "Turning speech into text"}</strong>
+          <span>{voicePhase() === "listening"
+            ? "Tap the red microphone when you are done. Your transcript will appear in this draft for review before anything is sent."
+            : "Keep Studio open for a moment. The editable transcript will appear here; nothing is sent automatically."}</span>
         </div>
       </Show>
       <textarea
@@ -201,7 +224,7 @@ export function Composer(props: Props) {
             unavailableReason={props.transcriptionMessage}
             onDraft={props.onDraft}
             onTranscribe={props.onTranscribe}
-            onActiveChange={setDictating}
+            onActiveChange={setVoiceActive}
           />
           <span><kbd>↵</kbd> {props.state.busy ? "steer" : "send"} · <kbd>⇧↵</kbd> newline</span>
         </div>

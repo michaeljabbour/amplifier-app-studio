@@ -34,7 +34,7 @@ export function computeConnectionPrompt(
       kind: "reconnect",
       kicker: "COMPUTE ACCESS",
       title: `Reconnect ${hostName}`,
-      description: `${hostName} is still saved as Session home${hostname ? ` at ${hostname}` : ""}. Enter its access token to use it after reopening Studio.`,
+      description: `${hostName} is still saved as Session home${hostname ? ` at ${hostname}` : ""}, but secure access is unavailable on this device. Enter its access token once to reconnect.`,
       action: `Reconnect ${hostName}`,
       composerLabel: `${hostName} needs its access token`,
       composerPlaceholder: `Reconnect ${hostName} to start`,

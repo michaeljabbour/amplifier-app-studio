@@ -4,6 +4,7 @@ mod catalog;
 mod image_drop;
 #[cfg(desktop)]
 mod local_tmux;
+mod mobile_credentials;
 pub mod observability;
 mod project_dir;
 mod protocol;
@@ -579,6 +580,12 @@ pub fn run() {
             transcription_status,
             transcribe_audio,
             default_project_dir,
+            #[cfg(mobile)]
+            mobile_credentials::store_mobile_bridge_token,
+            #[cfg(mobile)]
+            mobile_credentials::resolve_mobile_bridge_token,
+            #[cfg(mobile)]
+            mobile_credentials::delete_mobile_bridge_token,
             #[cfg(desktop)]
             clone_github_repository,
             #[cfg(desktop)]

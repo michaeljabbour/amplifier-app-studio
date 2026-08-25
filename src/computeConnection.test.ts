@@ -14,7 +14,7 @@ describe("compute connection copy", () => {
       kind: "reconnect",
       kicker: "COMPUTE ACCESS",
       title: "Reconnect Spark 288f",
-      description: "Spark 288f is still saved as Session home at spark-288f.tail422ba7.ts.net. Enter its access token to use it after reopening Studio.",
+      description: "Spark 288f is still saved as Session home at spark-288f.tail422ba7.ts.net, but secure access is unavailable on this device. Enter its access token once to reconnect.",
       action: "Reconnect Spark 288f",
       composerLabel: "Spark 288f needs its access token",
       composerPlaceholder: "Reconnect Spark 288f to start",
