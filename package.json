@@ -40,11 +40,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1",
+    "vite": "^8.2.2",
     "vite-plugin-solid": "^2.11.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
