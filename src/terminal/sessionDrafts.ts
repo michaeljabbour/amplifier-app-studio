@@ -52,3 +52,14 @@ export function renameDraftSubmission(
   const value = renameDraftFor(draft, terminalId);
   return value?.trim() ? { terminalId, value: value.trim() } : undefined;
 }
+
+/** A readable default derived from the selected directory; tmux names are ASCII. */
+export function suggestedTerminalName(directory: string, existingNames: readonly string[]): string {
+  const folder = directory.split(/[\\/]/).filter(Boolean).at(-1) || "terminal";
+  const base = (folder.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "") || "terminal").slice(0, 56);
+  const used = new Set(existingNames);
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}

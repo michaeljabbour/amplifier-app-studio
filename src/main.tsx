@@ -8,6 +8,7 @@ import "./styles.css";
 import "./madeTheme.css";
 import "./settings.css";
 import "./mobile.css";
+import "./workbench.css";
 import { captureMobileSafeAreaInsets } from "./mobileViewport";
 import { applyStudioTheme, loadStudioTheme } from "./theme";
 

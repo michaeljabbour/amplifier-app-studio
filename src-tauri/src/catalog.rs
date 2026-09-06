@@ -183,6 +183,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unavailable_explicit_project_never_falls_back_to_process_directory() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing = root.path().join("project-on-another-compute");
+        let error = resolve_cwd(Some(missing.to_string_lossy().into_owned()))
+            .expect_err("the caller's project must exist on this compute");
+        assert!(error.contains("is unavailable"), "{error}");
+        assert!(error.contains("project-on-another-compute"), "{error}");
+    }
+
+    #[test]
+    fn catalog_rejects_a_file_before_spawning_the_runtime() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let file = root.path().join("not-a-project");
+        std::fs::write(&file, "x").expect("seed");
+        let error = list_catalog(Some(file.to_string_lossy().into_owned()))
+            .expect_err("a file cannot become the runtime working directory");
+        assert!(error.contains("is not a directory"), "{error}");
+    }
+
+    #[test]
     fn parses_bundle_json_contract() {
         let rows = r#"[{"name":"anchors","active":false,"location":"/tmp/anchors.md","status":""},{"name":"tui","active":true,"location":"/tmp/tui.md","status":"default"}]"#;
         let parsed: Vec<BundleOption> = parse_json(rows, "bundle").unwrap();

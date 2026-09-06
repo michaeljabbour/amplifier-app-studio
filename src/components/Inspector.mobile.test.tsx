@@ -80,21 +80,22 @@ describe("mobile Work navigation", () => {
     await Promise.resolve();
 
     const labels = [...root.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => tab.textContent?.trim());
-    expect(labels).toEqual(["Run", "Agents", "Loop", "Plan", "Setup", "Bundles", "Outputs", "Context"]);
+    expect(labels).toEqual(["Loop", "Activity", "Outputs", "Setup", "Context"]);
 
-    click([...root.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Agents") || null);
+    click([...root.querySelectorAll('.inspector-subnav button')].find((tab) => tab.textContent?.startsWith("Agents")) || null);
     await Promise.resolve();
-    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Agents");
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Activity");
     expect(root.textContent).toContain("Explorer");
 
     click([...root.querySelectorAll(".inspector-agent-list button")][0]);
     await Promise.resolve();
-    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Agent detail");
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Activity");
+    expect(root.querySelector('.inspector-subnav [aria-pressed="true"]')?.textContent).toBe("Selected agent");
     expect(root.textContent).toContain("Reviewing the mobile flow");
 
     click([...root.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Setup") || null);
     await Promise.resolve();
-    expect(root.textContent).toContain("Active composition");
+    expect(root.textContent).toContain(state.projectDir);
   });
 
   it("returns to the conversation from both mobile close controls", async () => {

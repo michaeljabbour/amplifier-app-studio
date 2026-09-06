@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const nativeInvoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: nativeInvoke }));
 import {
+  addBundle,
   configuredBridgeToken,
   configuredBridgeUrl,
   cloneGithubRepository,
@@ -12,6 +13,7 @@ import {
   getRuntimeStatus,
   launchSession,
   loadOutputPreview,
+  listCatalog,
   listRuntimeHosts,
   probeRuntimeHost,
   prepareSessionLaunch,
@@ -292,6 +294,107 @@ describe("bridge trust storage", () => {
     expect(requested.origin).toBe("http://127.0.0.1:4319");
     expect(requested.pathname).toBe("/v1/api/runtime-settings");
     expect(requested.searchParams.get("projectDir")).toBe("/home/mjabbour/amplifier");
+  });
+
+  it("keeps a local session catalog on this desktop despite a configured remote bridge", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    nativeInvoke.mockResolvedValue({ bundles: [], providers: [] });
+
+    await expect(listCatalog("/Users/person/dev/project", undefined, "local"))
+      .resolves.toEqual({ bundles: [], providers: [] });
+    expect(nativeInvoke).toHaveBeenCalledWith("list_catalog", { projectDir: "/Users/person/dev/project" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("defaults desktop catalog requests without host metadata to local execution", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    nativeInvoke.mockResolvedValue({ bundles: [], providers: [] });
+
+    await listCatalog("/Users/person/dev/restored-project");
+    expect(nativeInvoke).toHaveBeenCalledWith("list_catalog", { projectDir: "/Users/person/dev/restored-project" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected remote catalog host and that host's credential", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const selected = "http://127.0.0.1:4319";
+    const token = "selected-host-token-0123456789abcdef";
+    saveBridgeToken(token, selected);
+    const fetchMock = vi.fn(async () => jsonResponse({ bundles: [], providers: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listCatalog("/home/person/project", selected, "spark-selected");
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.origin).toBe(selected);
+    expect(url.searchParams.get("projectDir")).toBe("/home/person/project");
+    expect(new Headers(options.headers).get("authorization")).toBe(`Bearer ${token}`);
+    expect(nativeInvoke).not.toHaveBeenCalled();
+  });
+
+  it("registers a local bundle without mutating the configured remote host", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    nativeInvoke.mockResolvedValue({ bundles: [], providers: [] });
+
+    await addBundle({ projectDir: "/Users/person/project", uri: "https://github.com/example/bundle", hostId: "local" });
+    expect(nativeInvoke).toHaveBeenCalledWith("add_bundle", {
+      projectDir: "/Users/person/project", uri: "https://github.com/example/bundle", name: undefined,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("registers a bundle only on the explicitly selected remote host", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const selected = "http://127.0.0.1:4319";
+    const token = "selected-host-token-0123456789abcdef";
+    saveBridgeToken(token, selected);
+    const fetchMock = vi.fn(async () => jsonResponse({ bundles: [], providers: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await addBundle({ projectDir: "/home/person/project", uri: "https://github.com/example/bundle", name: "example", hostUrl: selected, hostId: "spark-selected" });
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.origin).toBe(selected);
+    expect(url.pathname).toBe("/v1/api/catalog/bundles");
+    expect(JSON.parse(String(options.body))).toEqual({ projectDir: "/home/person/project", uri: "https://github.com/example/bundle", name: "example" });
+    expect(new Headers(options.headers).get("authorization")).toBe(`Bearer ${token}`);
+    expect(nativeInvoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing or invalid explicit remote targets rather than falling back to another host", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    saveBridgeUrl("http://127.0.0.1:9555");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listCatalog("/remote/project", undefined, "missing-remote"))
+      .rejects.toThrow("compute host address");
+    await expect(addBundle({ projectDir: "/remote/project", uri: "https://github.com/example/bundle", hostUrl: "not-a-host", hostId: "invalid-remote" }))
+      .rejects.toThrow("compute host address");
+    expect(nativeInvoke).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retains configured bridge catalog routing in web mode", async () => {
+    const bridge = "http://127.0.0.1:9555";
+    saveBridgeUrl(bridge);
+    saveBridgeToken("0123456789abcdef0123456789abcdef", bridge);
+    const fetchMock = vi.fn(async () => jsonResponse({ bundles: [], providers: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listCatalog("/remote/project");
+    const [url] = fetchMock.mock.calls[0] as unknown as [URL];
+    expect(url.origin).toBe(bridge);
+    expect(nativeInvoke).not.toHaveBeenCalled();
   });
 
   it("loads output previews from the session's owning host", async () => {

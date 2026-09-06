@@ -1,12 +1,10 @@
 import { For, Show } from "solid-js";
-import { Activity, Menu, Settings2, SquareTerminal } from "lucide-solid";
+import { Activity, Menu, PanelRight, Plus, Settings2, SquareTerminal, X } from "lucide-solid";
 import { appUpdateButtonTitle } from "../appUpdateCopy";
 import { adjacentTabIndex, ordinaryTabCloseIntent } from "../sessionLifecycle";
 import type { SessionViewState } from "../protocol";
 import type { AppUpdateState } from "../updater";
 import { startNativeWindowDrag } from "../windowDrag";
-import { PlanPresence } from "./Plan";
-import { ExecutionPresence } from "./ExecutionMap";
 import { workAttentionSummary } from "../mobileWork";
 
 interface Props {
@@ -20,8 +18,6 @@ interface Props {
   inspectorOpen: boolean;
   inspectorAvailable: boolean;
   onToggleInspector: (attentionSessionId?: string) => void;
-  onOpenPlan: () => void;
-  onOpenExecution: () => void;
   terminalAvailable: boolean;
   terminalOpen: boolean;
   onToggleTerminal: () => void;
@@ -69,7 +65,7 @@ export function TabStrip(props: Props) {
       </div>
       <div class="traffic-light-space" data-tauri-drag-region />
       <button class="icon-button drawer-button" aria-label="Open session drawer" onClick={props.onDrawer}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12" /></svg>
+        <Menu aria-hidden="true" />
       </button>
       <div class="tabs" classList={{ empty: props.sessions.length === 0 }} role="tablist" aria-label="Open sessions" data-tauri-drag-region>
         <For each={props.sessions}>
@@ -104,14 +100,14 @@ export function TabStrip(props: Props) {
                   props.onClose(session.guiId);
                 }}
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </div>
           )}
         </For>
       </div>
       <button class="new-tab-button" onClick={props.onNew} aria-label="New parallel session" title="New independent parallel session">
-        +
+        <Plus aria-hidden="true" />
       </button>
       <div class="top-workbench-actions">
         <Show when={props.terminalAvailable}>
@@ -128,8 +124,6 @@ export function TabStrip(props: Props) {
             <span>{props.terminalOpen ? "Agent" : "Terminal"}</span>
           </button>
         </Show>
-        <ExecutionPresence state={active()} onOpen={props.onOpenExecution} />
-        <PlanPresence state={active()} onOpen={props.onOpenPlan} />
         <button
           class="inspector-toggle"
           classList={{ active: props.inspectorAvailable && props.inspectorOpen }}
@@ -138,8 +132,8 @@ export function TabStrip(props: Props) {
           aria-label={!props.inspectorAvailable ? "Session inspector unavailable without an open session" : props.inspectorOpen ? "Hide session inspector" : "Show session inspector"}
           title={!props.inspectorAvailable ? "Open or start a session to inspect its run" : props.inspectorOpen ? "Hide session inspector" : "Show run, plan, agents, setup, outputs, and context"}
         >
-          <span class="inspector-toggle-glyph" aria-hidden="true"><i /><i /><i /></span>
-          <span>Inspect</span>
+          <PanelRight aria-hidden="true" />
+          <span>Inspect</span><Show when={attention().count > 0}><small class="header-attention-count">{attention().count}</small></Show>
         </button>
       </div>
       <Show when={["available", "downloading", "installing", "error"].includes(props.update.status)}>
@@ -163,11 +157,7 @@ export function TabStrip(props: Props) {
       <button class="icon-button settings-button" aria-label="Studio settings" onClick={props.onSettings} title="Studio and Amplifier settings">
         <Settings2 aria-hidden="true" />
       </button>
-      <div class="brand-mark" data-tauri-drag-region>
-        <span class="brand-diamond" aria-hidden="true" />
-        <span class="brand-wordmark">AMPLIFIER</span>
-        <span class="brand-ticks" aria-hidden="true"><i /><i /><i /><i /></span>
-      </div>
+
     </header>
   );
 }

@@ -409,7 +409,7 @@
 				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				DEVELOPMENT_TEAM = K74P73BUKF;
+				DEVELOPMENT_TEAM = "K74P73BUKF";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -443,7 +443,7 @@
 				CODE_SIGN_ENTITLEMENTS = "amplifier-studio_iOS/amplifier-studio_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = K74P73BUKF;
+				DEVELOPMENT_TEAM = "K74P73BUKF";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (

@@ -1,11 +1,16 @@
 import { For, Show } from "solid-js";
 import { laneLivePreview, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { LaneState, SessionViewState } from "../protocol";
+import { groupByDirectory } from "../sessionGroups";
 import { Markdown } from "./Markdown";
+import { ExecutionPresence } from "./ExecutionMap";
 
 interface Props {
   state: SessionViewState;
   parallelSummary: string;
+  sessions?: SessionViewState[];
+  onSelectSession?: (id: string) => void;
+  onLoop?: () => void;
   lanes: LaneState[];
   selectedLaneId?: string;
   onSelectLane: (id: string) => void;
@@ -29,17 +34,23 @@ export function WorkspaceSidebar(props: Props) {
       </div>
 
       <section class="sidebar-section">
-        <div class="sidebar-heading">
-          <span>PARALLEL SESSIONS</span>
-          <b>{props.parallelSummary}</b>
-        </div>
-        <p class="sidebar-section-hint">Active tabs run independently. Stopped tabs retain diagnostics until you close or retry them.</p>
         <div class="sidebar-session-actions">
-          <button class="primary" onClick={props.onNew}>+ New parallel session</button>
-          <button onClick={props.onResume}>Resume stored</button>
+          <button class="primary" onClick={props.onNew}>+ New session</button>
+          <button onClick={props.onResume}>History</button>
         </div>
+        <ExecutionPresence state={props.state} onOpen={() => props.onLoop?.()} />
       </section>
-
+      <nav class="sidebar-projects" aria-label="Sessions by directory">
+        <For each={groupByDirectory(props.sessions || [props.state], (session) => ({ path: session.projectDir, host: session.hostId, hostName: session.hostName }))}>{(group) => (
+          <details open class="directory-group">
+            <summary title={`${group.hostName} · ${group.path}`}>▱ {group.name}<span>{group.items.length}</span></summary>
+            <For each={group.items}>{(session) => <button class="sidebar-session" classList={{ selected: session.guiId === props.state.guiId }} onClick={() => props.onSelectSession?.(session.guiId)} title={session.title}>
+              <span class={`tab-status phase-${session.phase}`} /><span>{session.title}</span>
+            </button>}</For>
+          </details>
+        )}</For>
+      </nav>
+      <Show when={props.lanes.length > 0 || props.state.phase === "degraded" || props.state.busy}>
       <section class="sidebar-section agents-section">
         <div class="sidebar-heading">
           <span>THIS SESSION'S AGENTS</span>
@@ -83,6 +94,7 @@ export function WorkspaceSidebar(props: Props) {
           </div>
         </Show>
       </section>
+      </Show>
     </aside>
   );
 }

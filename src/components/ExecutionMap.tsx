@@ -37,12 +37,14 @@ export function ExecutionMap(props: Props) {
 
   return (
     <div class="execution-map-panel">
-      <Show when={graphInput()} fallback={<TurnLoop loop={props.state.turnLoop} svg={loopSvg()} />}>
+      <Show when={pipeline()} fallback={<TurnLoop loop={props.state.turnLoop} svg={loopSvg()} />}>
         <div class="execution-map-heading">
           <div><span>ATTRACTOR PIPELINE</span><strong>{pipeline()?.graphName || "Pipeline"}</strong></div>
           <span class={`execution-map-state ${pipeline()?.status || "running"}`}>{pipeline()?.status || "running"}</span>
         </div>
         <Show when={pipeline()?.goal}><p class="execution-map-goal">{pipeline()?.goal}</p></Show>
+        <p class="execution-current-step" role="status">{executionSummary(props.state).detail}</p>
+        <Show when={graphInput()} fallback={<p class="execution-map-guidance">The runtime recorded this pipeline's progress without its graph. Follow the observed steps below.</p>}>
         <p class="execution-map-guidance">This shape comes from the active Attractor at runtime. Nodes and selected edges update from observed pipeline events; hover a node for its current role and state.</p>
         <div class="pipeline-graph" aria-label={`Execution map for ${pipeline()?.graphName || "pipeline"}`}>
           <Show when={!svg.loading} fallback={<p class="execution-map-loading">Laying out pipeline…</p>}>
@@ -51,6 +53,7 @@ export function ExecutionMap(props: Props) {
             </Show>
           </Show>
         </div>
+        </Show>
         <PipelineLedger pipeline={pipeline()!} />
       </Show>
     </div>
@@ -59,7 +62,7 @@ export function ExecutionMap(props: Props) {
 
 export function ExecutionPresence(props: { state?: SessionViewState; onOpen: () => void }) {
   const pipeline = () => props.state?.pipeline;
-  const loop = () => props.state?.turnLoop;
+  const summary = () => props.state ? executionSummary(props.state) : { name: "Execution loop", detail: "Open a session" };
   const active = () => pipeline()?.status === "running" || Boolean(props.state?.busy);
   return (
     <button
@@ -67,15 +70,28 @@ export function ExecutionPresence(props: { state?: SessionViewState; onOpen: () 
       classList={{ active: active(), failed: pipeline()?.status === "failed" }}
       disabled={!props.state}
       onClick={props.onOpen}
-      title={pipeline()?.dotSource ? "Open the Attractor pipeline" : "Open the live Amplifier turn loop"}
+      aria-label={`Follow ${summary().name}: ${summary().detail}`}
+      title="Follow execution loop and current step"
     >
-      <span>{pipeline()?.dotSource ? "PIPELINE" : "LOOP"}</span>
-      <strong>{pipeline()?.dotSource ? "Attractor" : turnLoopPhaseLabel(loop()?.phase || "idle")}</strong>
-      <small>{pipeline()?.dotSource
-        ? `${Object.keys(pipeline()?.nodes || {}).length} observed nodes`
-        : `${loop()?.modelPasses || 0} model · ${loop()?.toolCalls || 0} tools`}</small>
+      <span>{pipeline() ? "SELECTED LOOP" : "EXECUTION LOOP"}</span>
+      <strong>{summary().name}<i aria-hidden="true"> →</i></strong>
+      <small>{summary().detail}</small>
     </button>
   );
+}
+
+export function executionSummary(state: SessionViewState): { name: string; detail: string } {
+  const pipeline = state.pipeline;
+  if (pipeline) {
+    const nodes = Object.values(pipeline.nodes);
+    const running = nodes.filter((node) => node.status === "running");
+    const completed = nodes.filter((node) => node.status === "completed").length;
+    const progress = `${completed}${pipeline.declaredNodeCount ? `/${pipeline.declaredNodeCount}` : ""} steps complete`;
+    return { name: pipeline.graphName || "Attractor pipeline", detail: `${running.length ? `Now: ${running.map((node) => node.id).join(", ")}` : pipeline.status} · ${progress}` };
+  }
+  const loop = state.turnLoop;
+  const activeTools = Object.values(loop.activeTools).map((tool) => tool.name);
+  return { name: "Amplifier turn loop", detail: `${activeTools.length ? `Now: ${activeTools.join(", ")}` : loop.detail} · ${loop.modelPasses} model passes · ${loop.toolResults}/${loop.toolCalls} tools` };
 }
 
 function TurnLoop(props: { loop: TurnLoopState; svg?: string }) {

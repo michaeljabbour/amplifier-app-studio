@@ -1,0 +1,355 @@
+/* Compact app chrome shared by the native, web and mobile workbenches.
+   The conversation keeps the editorial type; navigation uses platform UI type. */
+:root { --workbench-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --inspector-width: clamp(360px, 28vw, 440px); }
+:root .app-shell .tab-strip, :root .app-shell .machine-inspector, :root .app-shell .session-toolbar { font-family: var(--workbench-ui); }
+:root .app-shell .tab-strip { gap: 0; box-shadow: none; }
+:root .app-shell .top-workbench-actions { flex: 0 0 auto; align-items: center; gap: 3px; padding: 4px; border-left: 1px solid var(--line); }
+:root .app-shell .top-workbench-actions button { min-width: 0; min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 5px; padding: 0 11px; font: 550 12px/1 var(--workbench-ui); }
+:root .app-shell .top-workbench-actions svg, :root .app-shell .settings-button svg, :root .app-shell .new-tab-button svg { width: 17px; height: 17px; }
+:root .app-shell .settings-button { width: 42px; flex-basis: 42px; display: grid; place-items: center; }
+:root .app-shell .new-tab-button { min-width: 36px; width: 36px; flex-basis: 36px; display: grid; place-items: center; }
+:root .app-shell .header-attention-count { min-width: 17px; border-radius: 4px; padding: 3px; color: var(--amber); background: var(--panel-2); font-size: 10px; }
+:root .app-shell .session-tab-shell { min-width: 145px; max-width: 260px; }
+:root .app-shell .session-tab { gap: 8px; padding-left: 12px; }
+:root .app-shell .tab-title { font: 550 12px/1.3 var(--workbench-ui); }
+:root .app-shell .tab-close { width: 26px; height: 28px; flex-basis: 26px; margin-right: 4px; color: var(--muted); }
+:root .app-shell .tab-close svg { width: 13px; height: 13px; }
+:root .app-shell:not(.native-desktop) .traffic-light-space { display: none; }
+
+:root .app-shell .session-toolbar { grid-template-columns: minmax(0,1fr) auto; align-items: center; }
+:root .app-shell .session-identity { padding: 8px 16px; }
+:root .app-shell .runtime-proof { margin: 0; gap: 7px; font: 500 11px/1.5 var(--workbench-ui); }
+:root .app-shell .runtime-proof b { font-weight: 600; }
+:root .app-shell .runtime-proof code { font-size: 10px; }
+:root .app-shell .session-state-detail { margin-top: 2px; font: 400 11px/1.4 var(--workbench-ui); }
+:root .app-shell .session-toolbar-actions { padding: 0 10px 0 0; gap: 2px; }
+:root .app-shell .session-toolbar-actions button { display: inline-flex; gap: 5px; align-items: center; min-height: 32px; padding: 0 8px; font: 500 11px/1 var(--workbench-ui); }
+:root .app-shell .session-toolbar-actions svg { width: 13px; height: 13px; }
+
+:root .app-shell .machine-inspector { display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+:root .app-shell .inspector-heading { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 10px 12px; min-height: 52px; border-bottom: 1px solid var(--line); }
+:root .app-shell .inspector-heading-copy { min-width: 0; flex: 1; text-align: left; }
+:root .app-shell .inspector-heading-copy strong { margin: 0; font: 650 12px/1.4 var(--workbench-ui); }
+:root .app-shell .inspector-heading-copy small { display: flex; align-items: center; justify-content: flex-start; gap: 5px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 400 10px/1.3 var(--workbench-ui); }
+:root .app-shell .inspector-heading-copy small svg { width: 11px; height: 11px; flex: 0 0 11px; }
+:root .app-shell .inspector-heading-copy small i { width: 3px; height: 3px; border-radius: 50%; background: var(--dim); }
+:root .app-shell .mobile-work-close { width: 32px; min-height: 32px; display: grid; place-items: center; flex: 0 0 32px; border: 0; border-radius: 5px; padding: 0; color: var(--muted); background: transparent; cursor: pointer; }
+:root .app-shell .mobile-work-close:hover { background: var(--panel-2); }
+:root .app-shell .mobile-work-close svg { width: 17px; height: 17px; }
+:root .app-shell .inspector-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); padding: 0 6px; overflow: visible; border-bottom: 1px solid var(--line); }
+:root .app-shell .inspector-tabs button { min-width: 0; min-height: 40px; padding: 0 4px; display: flex; align-items: center; justify-content: center; gap: 5px; font: 550 12px/1 var(--workbench-ui); }
+:root .app-shell .inspector-tabs button svg { width: 14px; height: 14px; flex: 0 0 14px; }
+:root .app-shell .inspector-tabs button small { padding: 2px 4px; border-radius: 4px; background: var(--panel-2); font: 600 10px/1 var(--workbench-ui); }
+:root .app-shell .inspector-tabs button.active::after { height: 2px; left: 7px; right: 7px; }
+:root .app-shell .inspector-subnav { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 3px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+:root .app-shell .inspector-subnav button { flex: 1 0 auto; min-height: 28px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: 500 11px/1 var(--workbench-ui); cursor: pointer; }
+:root .app-shell .inspector-subnav button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); }
+:root .app-shell .inspector-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
+:root .app-shell .inspector-section { padding: 16px; }
+:root .app-shell .inspector-section-title { gap: 12px; margin-bottom: 12px; }
+:root .app-shell .inspector-section-title h3 { font: 650 13px/1.3 var(--workbench-ui); }
+:root .app-shell .inspector-section-title > span { font: 550 10px/1.3 var(--workbench-ui); letter-spacing: .025em; text-align: right; }
+:root .app-shell .inspector-guidance, :root .app-shell .inspector-empty { font: 400 12px/1.65 var(--workbench-ui); }
+:root .app-shell .inspector-attention { width: calc(100% - 24px); display: flex; align-items: center; gap: 8px; margin: 12px 12px 0; padding: 10px; border: 1px solid var(--amber); border-radius: 6px; background: transparent; color: var(--amber); text-align: left; font: 500 12px/1.5 var(--workbench-ui); cursor: pointer; }
+:root .app-shell .inspector-attention svg { width: 16px; height: 16px; flex: 0 0 16px; }
+:root .app-shell .catalog-discovery-warning { display: flex; align-items: flex-start; gap: 10px; margin: 12px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 12px; background: transparent; color: var(--muted); font: 400 11px/1.55 var(--workbench-ui); overflow-wrap: anywhere; }
+:root .app-shell .catalog-discovery-warning > div { flex: 1; min-width: 0; }
+:root .app-shell .catalog-discovery-warning strong { font-weight: 650; color: var(--text); }
+:root .app-shell .catalog-discovery-warning p { margin: 5px 0; }
+:root .app-shell .catalog-discovery-warning small { font-size: 11px; }
+:root .app-shell .catalog-discovery-warning button { border: 1px solid var(--line); border-radius: 5px; min-width: 32px; min-height: 32px; display: grid; place-items: center; background: var(--panel-2); color: var(--text); cursor: pointer; }
+:root .app-shell .catalog-discovery-warning svg { width: 14px; height: 14px; }
+:root .app-shell .composition-grid { display: block; margin: 0; }
+:root .app-shell .composition-grid > div { display: grid; grid-template-columns: 78px minmax(0,1fr); align-items: baseline; gap: 10px; padding: 8px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+:root .app-shell .composition-grid dt { font: 400 11px/1.5 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .composition-grid dd { min-width: 0; white-space: normal; overflow: visible; margin: 0; font: 500 12px/1.5 var(--workbench-ui); color: var(--text); overflow-wrap: anywhere; }
+:root .app-shell .composition-grid select { max-width: 100%; min-height: 30px; padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--panel); color: var(--text); font: inherit; }
+:root .app-shell .inspector-actions { gap: 7px; margin: 14px 0 10px; }
+:root .app-shell .inspector-actions button, :root .app-shell .inspector-refresh, :root .app-shell .bundle-catalog-controls button, :root .app-shell .output-open-button { min-height: 34px; padding: 7px 10px; font: 550 11px/1.3 var(--workbench-ui); border-radius: 5px; }
+:root .app-shell .bundle-catalog-list, :root .app-shell .provider-list, :root .app-shell .output-list { max-height: none; overflow: visible; }
+:root .app-shell .bundle-list strong, :root .app-shell .output-item strong { font: 600 12px/1.4 var(--workbench-ui); }
+:root .app-shell .bundle-list span, :root .app-shell .bundle-list small { font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .output-item { min-width: 0; gap: 10px; padding: 12px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+:root .app-shell .output-item code { white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
+:root .app-shell .outputs-empty { padding: 24px 16px; border-style: solid; border-color: var(--line); border-radius: 6px; text-align: left; }
+:root .app-shell .outputs-empty strong { font: 650 13px/1.4 var(--workbench-ui); }
+:root .app-shell .outputs-empty p { margin-bottom: 0; font: 400 12px/1.7 var(--workbench-ui); }
+
+@media (min-width: 761px) {
+  :root .app-shell { grid-template-rows: calc(44px + env(safe-area-inset-top,0px)) minmax(0,1fr); }
+  :root .app-shell .workspace { grid-template-columns: 216px minmax(0,1fr) var(--inspector-width); }
+  :root .app-shell .workspace:not(.left-open) { grid-template-columns: minmax(0,1fr) var(--inspector-width); }
+  :root .app-shell .workspace:not(.right-open) { grid-template-columns: 216px minmax(0,1fr); }
+  :root .app-shell .workspace:not(.right-open):not(.left-open) { grid-template-columns: minmax(0,1fr); }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  :root .app-shell .workspace, :root .app-shell .workspace:not(.right-open) { grid-template-columns: 200px minmax(0,1fr); }
+  :root .app-shell .workspace:not(.left-open), :root .app-shell .workspace:not(.left-open):not(.right-open) { grid-template-columns: minmax(0,1fr); }
+  :root .app-shell .machine-inspector { position: fixed; top: calc(44px + env(safe-area-inset-top,0px)); right: 0; bottom: 0; width: min(420px,56vw); box-shadow: -10px 0 35px rgba(0,0,0,.12); z-index: 45; }
+  :root .app-shell .runtime-proof em { display: none; }
+  :root .app-shell .session-toolbar-actions button span { display: none; }
+}
+@media (max-width: 760px) {
+  :root .app-shell .machine-inspector { position: fixed; inset: calc(var(--mobile-header-height) + var(--studio-safe-area-top,env(safe-area-inset-top,0px))) 0 0; width: 100%; border: 0; }
+  :root .app-shell .inspector-heading { min-height: 52px; padding: 6px 10px 6px 6px; }
+  :root .app-shell .mobile-work-back { min-height: 44px; width: 52px; flex: 0 0 52px; font: 550 12px/1 var(--workbench-ui); }
+  :root .app-shell .mobile-work-close { min-height: 44px; width: 44px; flex-basis: 44px; }
+  :root .app-shell .inspector-tabs button { min-height: 44px; font-size: 12px; gap: 4px; }
+  :root .app-shell .inspector-tabs button svg { display: none; }
+  :root .app-shell .inspector-subnav { padding: 4px 8px; }
+  :root .app-shell .inspector-subnav button { min-height: 40px; padding: 0 7px; font-size: 11px; }
+  :root .app-shell .inspector-section { padding: 16px; }
+  :root .app-shell .composition-grid select, :root .app-shell .inspector-actions button, :root .app-shell .inspector-refresh, :root .app-shell .bundle-catalog-controls button, :root .app-shell .output-open-button, :root .app-shell .catalog-discovery-warning button { min-height: 44px; }
+  :root .app-shell .composition-grid dd { font-size: 13px; }
+}
+:root .app-shell .output-coverage { margin-bottom: 14px; }
+:root .app-shell .outputs-empty > svg { width: 24px; height: 24px; margin-bottom: 12px; color: var(--dim); }
+:root .app-shell .output-filters { display: flex; align-items: center; gap: 7px; margin: 12px 0 5px; }
+:root .app-shell .output-filters label { min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: 5px; padding-left: 9px; background: var(--panel); }
+:root .app-shell .output-filters svg { width: 14px; height: 14px; flex: 0 0 14px; color: var(--muted); }
+:root .app-shell .output-filters input { width: 100%; min-width: 0; min-height: 34px; border: 0; background: transparent; color: var(--text); font: 400 12px/1.4 var(--workbench-ui); }
+:root .app-shell .output-filters select { max-width: 108px; min-height: 36px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--panel); color: var(--text); font: 500 11px/1.4 var(--workbench-ui); }
+:root .app-shell .output-open-error { color: var(--red); margin: 8px 0 0; font: 400 11px/1.5 var(--workbench-ui); overflow-wrap: anywhere; }
+@media (max-width:760px) { :root .app-shell .output-filters input, :root .app-shell .output-filters select { min-height: 44px; font-size: 13px; } }
+
+/* Visibility must win over the flex layout above, including mobile themes. */
+:root .app-shell .workspace:not(.right-open) .machine-inspector { display: none; }
+:root .app-shell .image-capability-disclosure > summary { cursor: pointer; font: 600 12px/1.5 var(--workbench-ui); }
+:root .app-shell .image-capability-disclosure[open] > summary { margin-bottom: 12px; }
+:root .app-shell .capability-boundary-card { border: 1px solid var(--line); background: var(--panel-2); border-radius: 5px; }
+:root .app-shell .capability-boundary-card strong { color: var(--text); font: 600 12px/1.4 var(--workbench-ui); }
+:root .app-shell .capability-boundary-card p { color: var(--muted); font: 400 12px/1.6 var(--workbench-ui); }
+@media (max-width: 760px) {
+  :root .app-shell .mobile-work-back { width: 60px; flex-basis: 60px; }
+  :root .app-shell .mobile-work-back span { overflow: visible; text-overflow: clip; }
+  :root .app-shell .mobile-work-back svg { flex: 0 0 18px; width: 18px; }
+  :root .app-shell .image-capability-disclosure > summary { min-height: 44px; align-content: center; }
+}
+
+:root .app-shell .bundle-catalog-controls input, :root .app-shell .bundle-add-form input { min-width: 0; min-height: 36px; padding: 7px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); border-radius: 5px; font: 400 12px/1.4 var(--workbench-ui); }
+:root .app-shell .output-provenance { margin-top: 5px; font: 400 11px/1.6 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .output-provenance summary { cursor: pointer; }
+:root .app-shell .output-provenance p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: normal; }
+@media (max-width:760px) {
+  :root .app-shell .bundle-catalog-controls input, :root .app-shell .bundle-add-form input { min-height: 44px; font-size: 13px; }
+  :root .app-shell .output-provenance summary { min-height: 44px; align-content: center; }
+}
+@media (max-width: 760px) {
+  /* Work occupies the conversation surface; hidden controls must not receive
+     keyboard focus behind it. Global navigation remains available. */
+  :root .app-shell .workspace.right-open .session-column { visibility: hidden; }
+  :root .app-shell .workspace.right-open .workbench-sidebar { display: none; }
+}
+/* Operational facts must stay readable on phones as well as desktop. */
+:root .app-shell .context-facts dt, :root .app-shell .agent-run-facts dt { color: var(--muted); font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .context-facts dd, :root .app-shell .agent-run-facts dd { color: var(--text); font: 400 12px/1.6 var(--workbench-ui); overflow-wrap: anywhere; }
+:root .app-shell .context-numbers strong { color: var(--text); font: 600 18px/1.5 var(--workbench-ui); }
+:root .app-shell .context-numbers span { color: var(--muted); font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .agent-inspector-hero { padding: 16px; background: var(--panel-2); }
+:root .app-shell .agent-inspector-hero h2 { color: var(--text); font: 600 16px/1.4 var(--workbench-ui); }
+:root .app-shell .agent-inspector-hero code, :root .app-shell .plan-owner-card > code { color: var(--muted); font-size: 11px; }
+:root .app-shell .agent-hero-summary, :root .app-shell .agent-live-copy, :root .app-shell .agent-instruction, :root .app-shell .agent-event-markdown { color: var(--text); font: 400 12px/1.65 var(--workbench-ui); }
+:root .app-shell .agent-timeline summary { gap: 8px; min-height: 40px; }
+:root .app-shell .agent-timeline summary strong, :root .app-shell .inspector-agent-list strong, :root .app-shell .progress-row strong { color: var(--text); font: 600 12px/1.5 var(--workbench-ui); }
+:root .app-shell .agent-timeline summary span, :root .app-shell .inspector-agent-list small, :root .app-shell .progress-row small { font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .plan-inspector-summary span, :root .app-shell .plan-owner-card > header span { color: var(--muted); font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .plan-step-list strong { font: 500 12px/1.6 var(--workbench-ui); }
+:root .app-shell .plan-step-list small { font: 400 11px/1.5 var(--workbench-ui); }
+:root .app-shell .plan-step-list strong { color: var(--text); }
+:root .app-shell .plan-step-list li.completed strong { color: var(--muted); }
+:root .app-shell .plan-inspector-summary strong { color: var(--text); font: 600 14px/1.5 var(--workbench-ui); }
+:root .app-shell .execution-map-state.complete, :root .app-shell .execution-map-state.completed { color: var(--green); background: var(--panel-2); border-color: var(--green); box-shadow: none; }
+:root .app-shell .execution-map-state { font-size: 10px; }
+:root .app-shell .outputs-empty strong { color: var(--text); }
+:root .app-shell .outputs-empty p { color: var(--muted); }
+:root .app-shell .bundle-list strong { color: var(--text); }
+:root .app-shell .bundle-list small, :root .app-shell .bundle-list span:not(.active) { color: var(--muted); }
+
+/* Workspace navigation and durable history share the compact system typography. */
+:root .app-shell .inspector-tabs { grid-template-columns: repeat(5,minmax(0,1fr)); }
+:root .app-shell .inspector-tabs button { gap: 3px; font-size: 11px; }
+:root .app-shell .inspector-tabs button svg { display: none; }
+:root .app-shell .workbench-sidebar { font: 12px/1.5 var(--workbench-ui); }
+:root .app-shell .sidebar-project { padding: 16px; }
+:root .app-shell .sidebar-project strong { font: 600 13px/1.4 var(--workbench-ui); overflow-wrap: anywhere; }
+:root .app-shell .section-kicker, :root .app-shell .sidebar-heading { font: 600 10px/1.5 var(--workbench-ui); letter-spacing: .04em; }
+:root .app-shell .sidebar-heading b { width: auto; min-width: max-content; font: 500 10px/1.4 var(--workbench-ui); padding: 2px 5px; border: 0; }
+:root .app-shell .sidebar-section { padding: 12px; }
+:root .app-shell .sidebar-session-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+:root .app-shell .sidebar-session-actions button, :root .app-shell .sidebar-loop { min-height: 34px; border-radius: 6px; font: 500 12px/1.4 var(--workbench-ui); }
+:root .app-shell .sidebar-loop { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 8px; padding: 8px; border: 0; background: var(--panel-2); color: var(--text); cursor: pointer; }
+:root .app-shell .sidebar-loop span:last-child { margin-left: auto; font-size: 10px; color: var(--muted); }
+:root .app-shell .sidebar-projects { padding: 8px; }
+.directory-group { min-width: 0; margin-bottom: 12px; font: 12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.directory-group > summary { display: flex; align-items: center; gap: 7px; padding: 8px; color: var(--text); cursor: pointer; overflow-wrap: anywhere; font-weight: 600; }
+.directory-group > summary::before { content: "›"; flex: 0 0 auto; }
+.directory-group[open] > summary::before { transform: rotate(90deg); }
+.directory-group > summary > span:last-child { margin-left: auto; font-size: 10px; color: var(--muted); }
+:root .app-shell .sidebar-session { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; color: var(--muted); text-align: left; padding: 9px; border-radius: 6px; cursor: pointer; font: 12px/1.4 var(--workbench-ui); }
+:root .app-shell .sidebar-session > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root .app-shell .sidebar-session.selected { background: var(--panel-2); color: var(--text); }
+:root .app-shell .agent-empty { padding: 10px; font: 12px/1.5 var(--workbench-ui); }
+:root .app-shell .agent-empty strong, :root .app-shell .agent-empty p { font: inherit; }
+:root .app-shell .session-drawer { width: min(600px,100vw); max-width: 100vw; font: 13px/1.5 var(--workbench-ui); }
+:root .app-shell .drawer-heading { padding: 20px 20px 16px; }
+:root .app-shell .drawer-heading h2 { font: 600 24px/1.3 var(--workbench-ui); margin: 4px 0 0; }
+:root .app-shell .drawer-heading .eyebrow { font: 500 10px/1.4 var(--workbench-ui); letter-spacing: .06em; }
+:root .app-shell .drawer-search { min-width: 0; border-radius: 8px; margin: 12px 16px; }
+:root .app-shell .drawer-search input { min-width: 0; height: 40px; font: 13px/1.5 var(--workbench-ui); }
+:root .app-shell .history-source-filter { margin: 0 16px 12px; }
+:root .app-shell .history-source-filter button { min-height: 36px; font: 500 12px/1 var(--workbench-ui); border-radius: 6px; }
+:root .app-shell .history-source-filter button:not(.active) { background: transparent; border-color: var(--line); color: var(--muted); }
+:root .app-shell .history-source-filter button span { font: 11px/1 var(--workbench-ui); }
+:root .app-shell .history-directory > summary { position: sticky; top: 0; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+:root .app-shell .history-directory > summary > span { flex: 1; min-width: 0; }
+:root .app-shell .history-directory > summary small { flex: 0 0 auto; font: 10px/1.4 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .stored-list { padding: 0 12px 16px; }
+:root .app-shell .stored-row { min-width: 0; padding: 12px; margin: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+:root .app-shell .stored-row:hover:not(:disabled) { background: var(--panel-2); }
+:root .app-shell .stored-topline { min-width: 0; gap: 12px; }
+:root .app-shell .stored-topline strong { min-width: 0; font: 600 13px/1.5 var(--workbench-ui); color: var(--text); }
+:root .app-shell .stored-topline > span { flex: 0 0 auto; font: 11px/1.4 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .stored-summary { margin: 5px 0 0; font: 12px/1.5 var(--workbench-ui); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+:root .app-shell .stored-meta { min-width: 0; flex-wrap: wrap; gap: 8px; margin-top: 8px; font: 11px/1.4 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .stored-bundle { min-width: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root .app-shell .source-badge { font: 600 9px/1.2 var(--workbench-ui); }
+:root .app-shell .stored-bottomline { min-width: 0; margin-top: 7px; }
+:root .app-shell .stored-bottomline code { font-size: 10px; color: var(--muted); }
+:root .app-shell .health-state { font: 500 10px/1.3 var(--workbench-ui); letter-spacing: 0; text-transform: none; }
+:root .app-shell .drawer-warning { margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; font: 12px/1.5 var(--workbench-ui); overflow-wrap: anywhere; }
+:root .app-shell .drawer-warning summary { cursor: pointer; font-weight: 600; }
+:root .app-shell .drawer-warning p { margin: 8px 0; }
+:root .app-shell .drawer-warning button { padding: 6px 10px; color: inherit; background: transparent; border: 1px solid var(--line-strong); border-radius: 4px; font: inherit; cursor: pointer; }
+:root .app-shell .drawer-footer { font: 11px/1.5 var(--workbench-ui); padding: 10px 16px; }
+:root .app-shell .terminal-directory > summary { font-size: 12px; }
+:root .app-shell .terminal-directory { flex: 0 0 210px; }
+@media (max-width: 760px) {
+  :root .app-shell .session-drawer { width: 100vw; }
+  :root .app-shell .history-directory > summary { flex-wrap: wrap; }
+  :root .app-shell .stored-meta { display: flex; }
+  :root .app-shell .stored-mobile-origin { display: none; }
+}
+:root .app-shell .voice-level { display: flex; align-items: center; gap: 8px; max-width: 220px; font: 11px/1.4 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .voice-level meter { width: 60px; flex: 0 0 60px; }
+:root .app-shell .voice-level span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+:root .app-shell .voice-playback { position: absolute; bottom: 48px; left: 0; width: min(300px,75vw); padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; z-index: 5; font: 11px/1.5 var(--workbench-ui); color: var(--text); }
+:root .app-shell .voice-playback audio { display: block; max-width: 100%; height: 36px; margin: 8px 0; }
+:root .app-shell .voice-playback small { display: block; font: inherit; }
+:root .app-shell .voice-playback summary { cursor: pointer; }
+:root .app-shell .footer-bar { overflow: visible; font: 11px/1.4 var(--workbench-ui); }
+:root .app-shell .footer-bar button { font-family: var(--workbench-ui); }
+:root .app-shell .footer-model-control { position: relative; min-width: 0; flex: 0 1 auto; }
+:root .app-shell .footer-model { min-height: 28px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--text); cursor: pointer; }
+:root .app-shell .model-popover, :root .app-shell .effort-popover { position: absolute; bottom: calc(100% + 8px); right: 0; left: auto; z-index: 70; width: min(280px,85vw); max-height: min(400px,65vh); overflow-y: auto; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 8px 30px #0002; padding: 12px; color: var(--text); font: 12px/1.5 var(--workbench-ui); }
+:root .app-shell .effort-popover { width: 180px; }
+:root .app-shell .model-popover p { margin: 5px 0 10px; font-size: 11px; color: var(--muted); }
+:root .app-shell .model-popover button, :root .app-shell .effort-popover button { width: 100%; display: block; padding: 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+:root .app-shell .model-popover button:hover, :root .app-shell .effort-popover button:hover, :root .app-shell .effort-popover button[aria-pressed="true"] { background: var(--panel-2); }
+:root .app-shell .model-popover small { display: block; color: var(--muted); }
+:root .app-shell .model-popover, :root .app-shell .effort-popover { white-space: normal; }
+:root .app-shell .model-popover button strong { overflow-wrap: anywhere; }
+:root .app-shell .terminal-create { font: 12px/1.5 var(--workbench-ui); }
+:root .app-shell .terminal-create label { font: 600 11px/1.5 var(--workbench-ui); color: var(--text); }
+:root .app-shell .terminal-create-directory { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 11px; color: var(--muted); }
+:root .app-shell .terminal-create > small { display: block; margin: 4px 0; font: inherit; color: var(--muted); }
+:root .app-shell .terminal-create details { margin: 4px 0; }
+:root .app-shell .terminal-create details summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+:root .app-shell .terminal-create details input { width: 100%; margin: 5px 0; }
+:root .app-shell .terminal-rail-heading strong, :root .app-shell .terminal-empty { font-family: var(--workbench-ui); }
+:root .app-shell .terminal-create > small { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  :root .app-shell .terminal-rail:has(.terminal-create) { max-height: min(520px,70dvh); overflow-y: auto; }
+  :root .app-shell .terminal-create { flex: 0 0 auto; }
+  :root .app-shell .terminal-rail:has(.terminal-create) .terminal-rail-list { flex: 0 0 auto; }
+}
+:root .app-shell .mode-control { position: relative; min-width: 0; }
+:root .app-shell .mode-control > button { display: flex; gap: 5px; align-items: center; max-width: 180px; min-height: 28px; border: 0; background: transparent; color: var(--text); cursor: pointer; font: 11px/1.4 var(--workbench-ui); }
+:root .app-shell .mode-control > button strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+:root .app-shell .mode-popover { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 75; width: min(380px,85vw); max-height: min(600px,75dvh); display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 30px #0002; white-space: normal; color: var(--text); font: 12px/1.5 var(--workbench-ui); }
+:root .app-shell .mode-popover header, :root .app-shell .mode-popover footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+:root .app-shell .mode-popover p { margin: 8px 0; color: var(--muted); font: 11px/1.5 var(--workbench-ui); }
+:root .app-shell .mode-popover button { min-height: 32px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--text); cursor: pointer; padding: 5px 8px; font: inherit; }
+:root .app-shell .mode-popover button:disabled { opacity: .5; cursor: default; }
+:root .app-shell .mode-popover input[type="search"] { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 5px; padding: 7px; background: var(--panel-2); color: var(--text); font: inherit; }
+:root .app-shell .mode-options { min-height: 0; overflow-y: auto; margin: 10px 0; }
+:root .app-shell .mode-options label { display: flex; gap: 9px; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+:root .app-shell .mode-options label > input { flex: 0 0 auto; align-self: flex-start; margin-top: 4px; }
+:root .app-shell .mode-options label > span { min-width: 0; overflow-wrap: anywhere; }
+:root .app-shell .mode-options strong, :root .app-shell .mode-options small, :root .app-shell .mode-options label > span > span { display: block; }
+:root .app-shell .mode-options small { color: var(--muted); font-size: 10px; }
+:root .app-shell .mode-options label > span > span { margin-top: 4px; font-size: 11px; }
+:root .app-shell .mode-popover .mode-error { color: var(--red); }
+:root .app-shell .mode-refresh { margin-top: 8px; }
+@media (max-width:760px) { :root .app-shell .mode-popover { position: fixed; left: 8px; right: 8px; bottom: 48px; width: auto; } }
+
+@media (max-width: 760px) {
+  :root .app-shell .footer-bar { display: flex !important; flex: 0 0 auto; min-height: 44px; overflow: visible; padding: 0 12px env(safe-area-inset-bottom, 0px); }
+  :root .app-shell .footer-bar > :not(.mode-control) { display: none; }
+  :root .app-shell .footer-bar > .mode-control { padding: 0; border: 0; }
+  :root .app-shell .mode-control > button { min-height: 44px; }
+  :root .app-shell .mode-popover { max-height: min(600px, 70dvh); bottom: calc(48px + env(safe-area-inset-bottom, 0px)); }
+}
+
+
+@media (max-width: 760px) {
+  :root .app-shell .footer-bar { justify-content: space-between; gap: 4px; }
+  :root .app-shell .footer-bar > .footer-model-control,
+  :root .app-shell .footer-bar > .effort-control { display: block; padding: 0; border: 0; min-width: 0; }
+  :root .app-shell .footer-model-control { flex: 1 1 90px; }
+  :root .app-shell .footer-model { display: block; width: 100%; min-height: 44px; max-width: 120px; }
+  :root .app-shell .effort-control > button { min-height: 44px; max-width: 105px; overflow: hidden; font-size: 10px; }
+  :root .app-shell .effort-confirmed { display: none; }
+  :root .app-shell .mode-control { max-width: 90px; }
+  :root .app-shell .mode-control > button { max-width: 90px; }
+  :root .app-shell .model-popover, :root .app-shell .effort-popover { position: fixed; left: 8px; right: 8px; bottom: calc(48px + env(safe-area-inset-bottom, 0px)); width: auto; max-height: 60dvh; }
+  :root .app-shell .model-popover button, :root .app-shell .effort-popover button { min-height: 44px; }
+}
+:root .app-shell .workbench-sidebar .execution-presence,
+:root .app-shell .mobile-loop-presence .execution-presence { display: grid; grid-template-columns: minmax(0,1fr); gap: 5px; width: 100%; min-height: 64px; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); text-align: left; cursor: pointer; }
+:root .app-shell .execution-presence > span { font: 600 10px/1.3 var(--workbench-ui); color: var(--muted); }
+:root .app-shell .execution-presence > strong { font: 600 13px/1.4 var(--workbench-ui); color: var(--text); overflow-wrap: anywhere; }
+:root .app-shell .execution-presence > strong i { font-style: normal; }
+:root .app-shell .execution-presence > small { display: block; white-space: normal; font: 400 11px/1.5 var(--workbench-ui); color: var(--muted); overflow-wrap: anywhere; }
+:root .app-shell .execution-presence.active { border-color: var(--blue); }
+:root .app-shell .execution-current-step { padding: 10px; border-left: 3px solid var(--blue); background: var(--panel-2); font: 500 12px/1.5 var(--workbench-ui); overflow-wrap: anywhere; }
+.mobile-loop-presence { display: none; }
+@media (max-width: 760px) {
+  .mobile-loop-presence { display: block; flex: 0 0 auto; padding: 0 10px 6px; }
+  :root .app-shell .mobile-loop-presence .execution-presence { min-height: 44px; padding: 7px 10px; gap: 2px; margin-top: 0; }
+  :root .app-shell .mobile-loop-presence .execution-presence > span { display: none; }
+}
+:root .app-shell .pipeline-svg .node.pipeline-running :is(ellipse, polygon, path) { fill: #a66a16 !important; stroke: #70450b !important; stroke-width: 3px; }
+:root .app-shell .pipeline-svg .node.pipeline-running text { fill: #fff !important; font-weight: 700; }
+:root .app-shell .pipeline-svg .node.pipeline-completed :is(ellipse, polygon, path) { fill: #dfe8e2 !important; stroke: #466b52 !important; stroke-width: 2px; }
+:root .app-shell .pipeline-svg .node.pipeline-completed text { fill: #274231 !important; }
+:root .app-shell .pipeline-svg .node.pipeline-failed :is(ellipse, polygon, path) { fill: #9d3939 !important; stroke: #6e2525 !important; stroke-width: 3px; }
+:root .app-shell .pipeline-svg .node.pipeline-failed text { fill: #fff !important; }
+:root .app-shell .pipeline-svg .edge.pipeline-selected path { stroke: #a66a16 !important; stroke-width: 3px; }
+:root .app-shell .pipeline-svg .edge.pipeline-selected polygon { fill: #a66a16 !important; stroke: #a66a16 !important; }
+@media (max-width: 760px) {
+  :root .app-shell .modal-backdrop { top: var(--studio-visual-offset-top,0px); bottom: auto; height: var(--studio-visual-viewport-height,100dvh); padding-top: var(--studio-safe-area-top,env(safe-area-inset-top,0px)); box-sizing: border-box; }
+  :root .app-shell .session-dialog { max-height: 100%; }
+}
+
+@media (max-width: 760px) {
+  /* Anchor menus to the footer inside the visual viewport, so the iOS
+     software keyboard cannot cover search results or Apply. */
+  :root .app-shell .footer-bar { position: relative; }
+  :root .app-shell .footer-bar > :is(.mode-control, .footer-model-control, .effort-control) { position: static; }
+  :root .app-shell :is(.mode-popover, .model-popover, .effort-popover) {
+    position: absolute;
+    top: auto;
+    bottom: calc(100% + 8px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+    box-sizing: border-box;
+    max-height: min(600px, calc(var(--studio-visual-viewport-height,100dvh) - var(--studio-safe-area-top,env(safe-area-inset-top,0px)) - var(--studio-safe-area-bottom,env(safe-area-inset-bottom,0px)) - 64px));
+  }
+}
+@media (max-width: 760px) {
+  :root .app-shell :is(.mode-popover, .model-popover, .effort-popover) {
+    max-height: min(600px, calc(var(--studio-visual-viewport-height,100dvh) - var(--studio-safe-area-top,env(safe-area-inset-top,0px)) - var(--studio-safe-area-bottom,env(safe-area-inset-bottom,0px)) - 120px));
+  }
+  body:has(.mode-popover input:focus) .app-shell .mode-popover > p:not([role]) { display: none; }
+}

@@ -1,3 +1,4 @@
+import { LogOut, Square } from "lucide-solid";
 import { Show } from "solid-js";
 import type { SessionViewState } from "../protocol";
 
@@ -12,14 +13,6 @@ export function SessionToolbar(props: {
   return (
     <div class="session-toolbar">
       <div class="session-identity">
-        <small>AMPLIFIER COORDINATOR</small>
-        <strong>{props.state.title}</strong>
-        <span>
-          {sessionToolbarStatus(props.state)}
-          <Show when={props.state.phase === "ready" && (agents().length || props.state.outputs.length)}>
-            {" · "}{agents().length} agents<Show when={running() > 0}> ({running()} live)</Show>{" · "}{props.state.outputs.length} outputs
-          </Show>
-        </span>
         <div class={`runtime-proof ${runtimeProofTone(props.state)}`} role="status">
           <i aria-hidden="true" />
           <b>{runtimeProofLabel(props.state)}</b>
@@ -28,11 +21,12 @@ export function SessionToolbar(props: {
             <code title={props.state.runtimeSessionId}>{props.state.runtimeSessionId?.slice(0, 8)}</code>
           </Show>
         </div>
+        <span class="session-state-detail" title={sessionToolbarStatus(props.state)}>{sessionToolbarStatus(props.state)}<Show when={agents().length}> · {agents().length} agents<Show when={running()}> ({running()} live)</Show></Show> · {props.state.outputs.length} outputs</span>
       </div>
       <div class="session-toolbar-actions" role="group" aria-label="Session runtime actions">
-        <button type="button" onClick={props.onDetach} title="Close this view while leaving the runtime available">Detach view</button>
+        <button type="button" onClick={props.onDetach} title="Detach view; keep the runtime available" aria-label="Detach view"><LogOut aria-hidden="true" /><span>Detach</span></button>
         <Show when={props.state.phase !== "exited" && props.state.phase !== "error"}>
-          <button type="button" class="stop-runtime-button" onClick={props.onStop}>Stop runtime</button>
+          <button type="button" class="stop-runtime-button" onClick={props.onStop} aria-label="Stop runtime" title="Stop this session runtime"><Square aria-hidden="true" /><span>Stop</span></button>
         </Show>
       </div>
       <Show when={props.state.alerts.at(-1)} keyed>{(alert) => (

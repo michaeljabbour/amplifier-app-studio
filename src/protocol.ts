@@ -321,6 +321,9 @@ export interface SessionOutput {
   toolCallId?: string;
   eventId?: string;
   runtimeHost?: string;
+  /** The evidence that placed this item in Outputs; none implies a current
+   * independent filesystem check. */
+  provenance?: "artifact-write" | "tool-artifact" | "write-target" | "tool-report";
 }
 
 export interface ArchivedTurnOutcome {
@@ -417,6 +420,15 @@ export interface SessionViewState {
   bundle: string;
   model: string;
   mode: string;
+  modelPending?: string;
+  modelError?: string;
+  nativeModes?: {
+    modes: Array<{ name: string; description: string; source: string; advertised: boolean; combinable?: boolean }>;
+    active: string[];
+    maxActive: number;
+    pendingRequest?: string;
+    error?: string;
+  };
   phase: SessionPhase;
   /** Remote bridge reachability is independent of the runtime lifecycle. A
    * ready runtime can remain alive while Studio reconnects its view. */
@@ -492,6 +504,8 @@ export interface SessionViewState {
   pipeline?: PipelineState;
   alerts: SessionAlert[];
   outputs: SessionOutput[];
+  /** Correlate completion envelopes that omit the original write target. */
+  pendingOutputTools?: Record<string, { toolName: string; input: Record<string, unknown> }>;
   lastSequence?: number;
   /** Set when a replay ends: the next live record re-baselines `lastSequence` without a gap warning. */
   sequenceResyncPending?: boolean;

@@ -1,5 +1,5 @@
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
-import { ChevronLeft, MapPin, TriangleAlert, X } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, Index, on, onMount, Show } from "solid-js";
+import { Activity, RefreshCcw, Braces, ChevronLeft, Files, MapPin, RefreshCw, Search, Settings2, TriangleAlert, X } from "lucide-solid";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionOutput, SessionViewState } from "../protocol";
 import { Markdown } from "./Markdown";
@@ -19,6 +19,8 @@ interface Props {
   bundles: BundleOption[];
   providers: ProviderOption[];
   catalogError?: string;
+  catalogLoading?: boolean;
+  onSetEffort?: (effort: string) => void;
   onTab: (tab: InspectorTab) => void;
   onSelectLane: (id: string) => void;
   onDismissAlert: (id: string) => void;
@@ -45,6 +47,29 @@ export function Inspector(props: Props) {
     queueMicrotask(() => body?.scrollTo?.({ top: 0, behavior: "auto" }));
   };
 
+  const group = () => inspectorGroup(props.tab);
+  const mainTabs = [
+    { id: "map" as InspectorTab, label: "Loop", icon: RefreshCcw },
+    { id: "run" as InspectorTab, label: "Activity", icon: Activity },
+    { id: "outputs" as InspectorTab, label: "Outputs", icon: Files },
+    { id: "build" as InspectorTab, label: "Setup", icon: Settings2 },
+    { id: "context" as InspectorTab, label: "Context", icon: Braces },
+  ];
+  const activityTabs = () => [
+    { id: "run" as InspectorTab, label: "Overview" },
+    { id: "agents" as InspectorTab, label: `Agents ${Object.keys(props.state.lanes).length}` },
+    { id: "plan" as InspectorTab, label: "Plan" },
+    ...(props.lane ? [{ id: "agent" as InspectorTab, label: "Selected agent" }] : []),
+  ];
+  const setupTabs = [{ id: "build" as InspectorTab, label: "Configuration" }, { id: "bundles" as InspectorTab, label: "Bundles" }];
+  const keyNavigate = (event: KeyboardEvent, index: number) => {
+    const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? mainTabs.length - 1 : offset ? (index + offset + mainTabs.length) % mainTabs.length : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    selectTab(mainTabs[next].id);
+    document.getElementById(tabId(mainTabs[next].id))?.focus();
+  };
   onMount(() => {
     if (window.innerWidth <= 760) queueMicrotask(() => backButton?.focus({ preventScroll: true }));
   });
@@ -56,34 +81,31 @@ export function Inspector(props: Props) {
           <ChevronLeft aria-hidden="true" /><span>Back</span>
         </button>
         <div class="inspector-heading-copy">
-          <span>WORK</span>
-          <strong>{props.state.title}</strong>
-          <small title={`${placement().host} · ${placement().project}`}>
+          <strong>Session inspector</strong>
+          <small title={`${placement().host} · ${props.state.projectDir}`}>
             <MapPin aria-hidden="true" />{placement().host}<i aria-hidden="true" />{placement().project}
           </small>
         </div>
-        <button type="button" class="mobile-work-close" onClick={props.onClose} aria-label="Close Work">
+        <button type="button" class="mobile-work-close" onClick={props.onClose} aria-label="Close Work" title="Close inspector">
           <X aria-hidden="true" />
         </button>
       </div>
-      <Show when={attention().length > 0}>
-        <button type="button" class="mobile-work-attention" onClick={() => props.onTab("run")}>
-          <TriangleAlert aria-hidden="true" />
-          <span><strong>{attention().length} item{attention().length === 1 ? "" : "s"} need{attention().length === 1 ? "s" : ""} attention</strong><small>{attention()[0]?.name}</small></span>
-        </button>
-      </Show>
       <nav class="inspector-tabs" aria-label="Work views" role="tablist">
-        <button type="button" id={tabId("run")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "run"} classList={{ active: props.tab === "run" }} onClick={() => selectTab("run")}>Run</button>
-        <button type="button" id={tabId("agents")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "agents"} classList={{ active: props.tab === "agents" }} onClick={() => selectTab("agents")}>Agents</button>
-        <button type="button" id={tabId("map")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "map"} classList={{ active: props.tab === "map" }} onClick={() => selectTab("map")}>Loop</button>
-        <button type="button" id={tabId("plan")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "plan"} classList={{ active: props.tab === "plan" }} onClick={() => selectTab("plan")}>Plan</button>
-        <button type="button" id={tabId("build")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "build"} classList={{ active: props.tab === "build" }} onClick={() => selectTab("build")}>Setup</button>
-        <button type="button" id={tabId("bundles")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "bundles"} classList={{ active: props.tab === "bundles" }} onClick={() => selectTab("bundles")}>Bundles</button>
-        <button type="button" id={tabId("outputs")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "outputs"} classList={{ active: props.tab === "outputs" }} onClick={() => selectTab("outputs")}>Outputs</button>
-        <button type="button" id={tabId("context")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "context"} classList={{ active: props.tab === "context" }} onClick={() => selectTab("context")}>Context</button>
-        <Show when={props.lane}><button type="button" id={tabId("agent")} role="tab" aria-controls={panelId()} aria-selected={props.tab === "agent"} classList={{ active: props.tab === "agent" }} onClick={() => selectTab("agent")}>Agent detail</button></Show>
+        <For each={mainTabs}>{(tab, index) => (
+          <button type="button" id={tabId(tab.id)} role="tab" aria-controls={panelId()} aria-selected={group() === tab.id} tabIndex={group() === tab.id ? 0 : -1} classList={{ active: group() === tab.id }} onClick={() => selectTab(tab.id)} onKeyDown={(event) => keyNavigate(event, index())}>
+            <tab.icon aria-hidden="true" /><span>{tab.label}</span><Show when={tab.id === "outputs" && props.state.outputs.length}><small>{props.state.outputs.length}</small></Show>
+          </button>
+        )}</For>
       </nav>
-      <div ref={body} class="inspector-body" id={panelId()} role="tabpanel" aria-labelledby={tabId(props.tab)}>
+      <Show when={group() === "run" || group() === "build"}>
+        <nav class="inspector-subnav" aria-label={group() === "run" ? "Activity sections" : "Setup sections"}>
+          <Index each={group() === "run" ? activityTabs() : setupTabs}>{(tab) => (
+            <button type="button" aria-pressed={props.tab === tab().id} onClick={() => selectTab(tab().id)}>{tab().label}</button>
+          )}</Index>
+        </nav>
+      </Show>
+      <div ref={body} class="inspector-body" id={panelId()} role="tabpanel" aria-labelledby={tabId(group())}>
+        <Show when={attention().length > 0}><button type="button" class="inspector-attention" onClick={() => selectTab("run")}><TriangleAlert aria-hidden="true" /><span>{attention().length} need attention · {attention()[0]?.name}</span></button></Show>
         <Show when={props.tab === "run"}><RunPanel {...props} /></Show>
         <Show when={props.tab === "agents"}><AgentsPanel state={props.state} onSelectLane={props.onSelectLane} /></Show>
         <Show when={props.tab === "map"}><ExecutionMap state={props.state} /></Show>
@@ -98,10 +120,15 @@ export function Inspector(props: Props) {
   );
 }
 
+export function inspectorGroup(tab: InspectorTab): InspectorTab {
+  if (["run", "agents", "plan", "agent"].includes(tab)) return "run";
+  return tab === "bundles" ? "build" : tab;
+}
+
 function RunPanel(props: Props) {
   const lanes = () => orderAgentLanes(Object.values(props.state.lanes));
   const liveCount = () => liveAgentCount(lanes());
-  const complete = () => props.state.blocks.some((block) => block.kind === "answer" && block.final);
+  const complete = () => !props.state.busy && props.state.turnLoop.phase === "complete";
   const detached = () => lanes().filter((lane) => lane.status === "detached").length;
   const attention = () => lanes().filter((lane) => lane.status === "attention").length;
   const terminal = () => props.state.phase === "closing" || props.state.phase === "exited";
@@ -241,6 +268,15 @@ function AgentPanel(props: { lane: LaneState }) {
   );
 }
 
+function CatalogNotice(props: Props) {
+  return <Show when={props.catalogLoading || props.catalogError}>
+    <div class="catalog-discovery-warning" role="status">
+      <div><strong>{props.catalogLoading ? "Loading this computer’s catalog…" : "Catalog could not load"}</strong><Show when={props.catalogError}><p>{props.catalogError}</p><small>Showing the session’s recorded configuration.</small></Show></div>
+      <button type="button" aria-label="Retry catalog discovery" title="Retry catalog discovery" disabled={props.catalogLoading} onClick={() => void props.onRefreshBundles()}><RefreshCw aria-hidden="true" /></button>
+    </div>
+  </Show>;
+}
+
 function BuildPanel(props: Props) {
   const activeProvider = () => props.providers.find((provider) => provider.model === props.state.model)
     || props.providers.find((provider) => provider.active);
@@ -250,24 +286,25 @@ function BuildPanel(props: Props) {
   const imageStudioMounted = () => sessionUsesCapability(imageStudio, props.state);
   return (
     <>
-      <Show when={props.catalogError} keyed>{(message) => <div class="catalog-discovery-warning" role="status">Amplifier catalog unavailable: {message}. Existing session settings below come from runtime events; provider alternatives may be incomplete.</div>}</Show>
-      <InspectorSection title="Active composition" meta="PINNED FOR TURN">
+      <CatalogNotice {...props} />
+      <InspectorSection title="Current configuration" meta="THIS SESSION">
         <dl class="composition-grid">
           <div><dt>Bundle</dt><dd>{props.state.bundle}</dd></div>
           <div><dt>Mode</dt><dd>{props.state.mode}</dd></div>
           <div><dt>Model</dt><dd>{props.state.model}</dd></div>
           <div><dt>Provider</dt><dd>{activeProvider()?.name || "runtime selected"}</dd></div>
-          <div><dt>Effort</dt><dd>{props.state.effort || "default"}</dd></div>
-          <div class="wide"><dt>Execution</dt><dd>{props.transport}</dd></div>
+          <div><dt>Effort</dt><dd><Show when={props.onSetEffort} fallback={props.state.effort || "default"}><select aria-label="Session effort" value={props.state.effortPending || props.state.effort || "none"} disabled={Boolean(props.state.effortPending) || props.state.phase !== "ready"} onChange={(event) => props.onSetEffort?.(event.currentTarget.value)}><For each={props.state.effortLevels.length ? props.state.effortLevels : ["none", "low", "medium", "high", "xhigh"]}>{(level) => <option value={level}>{level}</option>}</For></select></Show></dd></div>
+          <div class="wide"><dt>Computer</dt><dd>{sessionPlacement(props.state).host}</dd></div><div class="wide"><dt>Project</dt><dd title={props.state.projectDir}>{props.state.projectDir}</dd></div>
         </dl>
         <div class="inspector-actions">
           <button class="primary-button" onClick={props.onCapabilities}>Browse capabilities</button>
-          <button class="primary-button" onClick={() => props.onStartSibling()}>Start new session with this setup</button>
-          <button class="secondary-button" onClick={props.onCycleEffort}>Cycle effort now</button>
+          <button class="primary-button" onClick={() => props.onStartSibling()}>New session with this setup</button>
         </div>
-        <p class="inspector-guidance">Compare another provider, model, mode, or bundle in a parallel tab without stopping this runtime.</p>
+        <p class="inspector-guidance">Provider and bundle choices start a separate session. Effort changes apply after runtime confirmation.</p>
       </InspectorSection>
-      <InspectorSection title="Image generation" meta={imageStudioMounted() ? "MOUNTED IN THIS TAB" : "PARALLEL CAPABILITY"}>
+      <section class="inspector-section">
+        <details class="image-capability-disclosure" open={imageStudioMounted()}>
+          <summary>Image generation · {imageStudioMounted() ? "available in this session" : "parallel capability"}</summary>
         <div classList={{ "capability-boundary-card": true, mounted: imageStudioMounted() }}>
           <strong>{imageStudioMounted() ? "Imagen is mounted" : "Imagen is not mounted in this tab"}</strong>
           <p>{imageStudioMounted()
@@ -277,7 +314,8 @@ function BuildPanel(props: Props) {
             <button class="secondary-button" onClick={() => props.onStartCapability(imageStudio)}>Open Image Studio in parallel</button>
           </Show>
         </div>
-      </InspectorSection>
+        </details>
+      </section>
       <InspectorSection title="Tool-compatible providers" meta={String(safeProviders().length)}>
         <Show when={safeProviders().length} fallback={<p class="inspector-empty">{props.catalogError ? "Provider routes are unavailable because catalog discovery failed." : "No tool-compatible provider routes were discovered."}</p>}>
           <div class="bundle-list provider-list">
@@ -327,12 +365,12 @@ function BundlesPanel(props: Props) {
 
   return (
     <>
-      <Show when={props.catalogError} keyed>{(message) => <div class="catalog-discovery-warning" role="status">Amplifier catalog unavailable: {message}. Refresh after the runtime is repaired; direct GitHub registration remains available below.</div>}</Show>
+      <CatalogNotice {...props} />
       <InspectorSection title="Amplifier catalog" meta={String(props.bundles.length)}>
         <p class="inspector-guidance">Discovered from Amplifier's own bundle registry—the same composition source backed by its module catalog. Starting one opens an independent parallel runtime.</p>
         <div class="bundle-catalog-controls">
           <input value={query()} onInput={(event) => setQuery(event.currentTarget.value)} placeholder="Filter bundles…" aria-label="Filter available bundles" />
-          <button class="secondary-button" onClick={() => void props.onRefreshBundles()}>Refresh</button>
+          <button class="secondary-button" disabled={props.catalogLoading} onClick={() => void props.onRefreshBundles()}>{props.catalogLoading ? "Loading…" : "Refresh"}</button>
         </div>
         <Show when={visible().length} fallback={<p class="inspector-empty">{props.catalogError ? "Bundle results are unavailable because catalog discovery failed." : "No bundles match this filter."}</p>}>
           <div class="bundle-list bundle-catalog-list">
@@ -359,29 +397,53 @@ function BundlesPanel(props: Props) {
 }
 
 function OutputsPanel(props: { state: SessionViewState; onOpenOutput?: (output: SessionOutput) => Promise<void> }) {
+  const [query, setQuery] = createSignal("");
+  const [kind, setKind] = createSignal("all");
+  const [opening, setOpening] = createSignal<string>();
+  const [error, setError] = createSignal<{ id: string; message: string }>();
+  let openRequest = 0;
+  createEffect(on(() => props.state.guiId, () => {
+    openRequest += 1;
+    setOpening(undefined);
+    setError(undefined);
+    setQuery("");
+    setKind("all");
+  }));
+  const visible = createMemo(() => [...props.state.outputs].reverse().filter((output) =>
+    (kind() === "all" || output.kind === kind()) && `${output.title} ${output.path} ${output.source || ""}`.toLowerCase().includes(query().trim().toLowerCase())));
+  const open = async (output: SessionOutput) => {
+    const request = ++openRequest;
+    const ownerId = props.state.guiId;
+    const current = () => request === openRequest && ownerId === props.state.guiId;
+    setOpening(output.id); setError(undefined);
+    try { await props.onOpenOutput?.(output); }
+    catch (caught) { if (current()) setError({ id: output.id, message: caught instanceof Error ? caught.message : String(caught) }); }
+    finally { if (current()) setOpening(undefined); }
+  };
   return (
-    <InspectorSection title="Turn outputs" meta={String(props.state.outputs.length)}>
+    <InspectorSection title="Session outputs" meta={String(props.state.outputs.length)}>
+      <p class="inspector-guidance output-coverage">Recorded file writes and tool-reported artifacts from the coordinator and agents. Unreported shell files cannot be reconstructed from history.</p>
       <Show when={props.state.outputs.length} fallback={
-        <div class="outputs-empty"><strong>Outputs from this run</strong><p>Generated images, diagrams, datasets, and files will appear here when tools return concrete output paths.</p></div>
+        <div class="outputs-empty"><Files aria-hidden="true" /><strong>No output files recorded</strong><p>This session’s available history contains no reported file outputs. Files read or mentioned during a review are inputs and stay in the conversation.</p></div>
       }>
+        <div class="output-filters">
+          <label><Search aria-hidden="true" /><input type="search" aria-label="Search session outputs" placeholder="Find a file…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></label>
+          <select aria-label="Output type" value={kind()} onChange={(event) => setKind(event.currentTarget.value)}><option value="all">All types</option><option value="file">Files</option><option value="image">Images</option><option value="diagram">Diagrams</option><option value="data">Data</option></select>
+        </div>
         <div class="output-list">
-          <For each={[...props.state.outputs].reverse()}>{(output) => (
+          <For each={visible()}>{(output) => (
             <div class={`output-item ${output.kind}`}>
               <div class="output-item-copy">
                 <div class="output-item-heading"><span>{output.kind}</span><strong>{output.title}</strong></div>
-                <code title={output.inlineVisual ? "Rendered in the Amplifier response" : output.path}>
-                  {output.inlineVisual ? "Rendered in response · exportable PNG" : output.path}
-                </code>
-                <small>{outputProvenance(output)}</small>
+                <code title={output.inlineVisual ? "Rendered in the Amplifier response" : output.path}>{output.inlineVisual ? "Rendered in response · exportable PNG" : output.path}</code>
+                <details class="output-provenance"><summary>Source details</summary><p>{outputProvenance(output)}</p></details>
+                <Show when={error()?.id === output.id}><p class="output-open-error" role="alert">{error()?.message}</p></Show>
               </div>
-              <Show when={props.onOpenOutput}>
-                <button class="secondary-button output-open-button" onClick={() => void props.onOpenOutput?.(output)}>
-                  {output.inlineVisual ? "Save PNG" : "Open"}
-                </button>
-              </Show>
+              <Show when={props.onOpenOutput}><button type="button" class="secondary-button output-open-button" disabled={opening() !== undefined} onClick={() => void open(output)}>{opening() === output.id ? "Opening…" : output.inlineVisual ? "Save PNG" : "Open"}</button></Show>
             </div>
           )}</For>
         </div>
+        <Show when={!visible().length}><p class="inspector-empty" role="status">No outputs match this search.</p></Show>
       </Show>
     </InspectorSection>
   );

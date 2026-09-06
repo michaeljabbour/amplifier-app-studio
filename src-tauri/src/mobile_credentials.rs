@@ -5,6 +5,21 @@
 
 const KEYCHAIN_SERVICE: &str = "com.amplifier.studio.amplifier-host";
 
+#[cfg(target_os = "android")]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_amplifier_studio_MainActivity_initializeCredentialStore(
+    env: jni::JNIEnv,
+    activity: jni::objects::JObject,
+    context: jni::objects::JObject,
+) {
+    // The crate retains a global application-context reference once per process.
+    // Calling it from onCreate before Tauri starts avoids a first-command race.
+    android_native_keyring_store::Java_io_crates_keyring_Keyring_00024Companion_initializeNdkContext(
+        env, activity, context,
+    );
+}
+
 fn checked_account(account: &str) -> Result<&str, String> {
     let account = account.trim();
     if account.is_empty()
