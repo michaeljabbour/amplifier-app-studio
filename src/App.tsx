@@ -1,7 +1,11 @@
+import { createInputReceipts, InputDispatchUnconfirmed, type InputReceipt } from "./inputReceipts";
+import { InputReceipts } from "./components/InputReceipts";
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { AttentionBar, type AttentionResponse } from "./components/AttentionBar";
 import { CapabilityPalette } from "./components/CapabilityPalette";
+import { ConversationHistory } from "./components/ConversationHistory";
+import { createSessionHistoryReader } from "./sessionHistory";
 import { Composer } from "./components/Composer";
 import { CoordinatorHome } from "./components/CoordinatorHome";
 import { Footer } from "./components/Footer";
@@ -132,6 +136,15 @@ interface SettingsEntry {
 }
 
 export default function App() {
+  const historyReader = createSessionHistoryReader(sendOp);
+  const [inputReceipts, setInputReceipts] = createSignal<InputReceipt[]>([]);
+  const inputTracker = createInputReceipts(sendOp, setInputReceipts);
+  const [historyGuiId, setHistoryGuiId] = createSignal<string>();
+  const closeHistory = () => {
+    const guiId = historyGuiId();
+    if (guiId) historyReader.cancelSession(guiId);
+    setHistoryGuiId(undefined);
+  };
   const [sessions, setSessions] = createSignal<SessionViewState[]>([]);
   const [activeId, setActiveId] = createSignal<string>();
   const [dialog, setDialog] = createSignal<NewSessionInput>();
@@ -242,7 +255,8 @@ export default function App() {
     return { id: root, label: projectDisplayName(root), root };
   });
   const mobileOverlayOpen = createMemo(() => Boolean(
-    stopRuntimeRequest()
+    historyGuiId()
+    || stopRuntimeRequest()
     || storedSessionDialog()
     || providerSetupOpen()
     || capabilitiesOpen()
@@ -253,7 +267,8 @@ export default function App() {
   ));
 
   const dismissTopMobileOverlay = () => {
-    if (stopRuntimeRequest()) setStopRuntimeRequest(undefined);
+    if (historyGuiId()) closeHistory();
+    else if (stopRuntimeRequest()) setStopRuntimeRequest(undefined);
     else if (storedSessionDialog()) setStoredSessionDialog(undefined);
     else if (providerSetupOpen()) setProviderSetupOpen(false);
     else if (capabilitiesOpen()) setCapabilitiesOpen(false);
@@ -297,6 +312,11 @@ export default function App() {
     if (selected) localStorage.setItem(SESSION_HOME_HOST_KEY, selected);
     else localStorage.removeItem(SESSION_HOME_HOST_KEY);
   };
+
+  createEffect(() => {
+    const guiId = historyGuiId();
+    if (guiId && guiId !== activeId()) closeHistory();
+  });
 
   createEffect(() => {
     const laneId = selectedLaneId();
@@ -351,6 +371,7 @@ export default function App() {
   });
 
   onCleanup(() => {
+    historyReader.dispose();
     terminalCoordinator?.dispose();
     connections.forEach((connection) => connection.dispose());
     statusPollers.forEach((timer) => window.clearInterval(timer));
@@ -370,8 +391,10 @@ export default function App() {
     || detachedSessionList().find((item) => item.guiId === guiId);
 
   const handleRecord = (guiId: string, record: ProtocolRecord) => {
+    if (historyReader.accept(guiId, record) || inputTracker.accept(guiId, record)) return;
     update(guiId, (state) => reduceRecord(state, record));
     if (record.type === "session.started" || record.type === "session.attached") {
+      inputTracker.recheck(guiId);
       void applyStoredSessionTitle(guiId, typeof record.session_id === "string" ? record.session_id : undefined);
     }
     if (sessionForGuiId(guiId)?.phase === "ready") clearRestoreTimeout(guiId);
@@ -576,9 +599,11 @@ export default function App() {
         return next;
       });
       try {
-        await sendOp(session.guiId, { op: "steer", text: promptWithDocumentAttachments(text, attachments) });
+        await inputTracker.send(session.guiId, { op: "steer", text: promptWithDocumentAttachments(text, attachments) }, Boolean(session.runtimeCapabilities?.features.includes("input.receipts")));
       } catch (error) {
-        update(session.guiId, (state) => markSteerSendFailed(state, cleanError(error), optimisticSteerId));
+        update(session.guiId, (state) => error instanceof InputDispatchUnconfirmed
+          ? addLocalNotice({ ...state, activity: "Steer acceptance unconfirmed" }, error.message, "warning")
+          : markSteerSendFailed(state, cleanError(error), optimisticSteerId));
         return false;
       }
       return true;
@@ -586,7 +611,7 @@ export default function App() {
     const runtimeText = promptWithDocumentAttachments(text, attachments);
     update(session.guiId, (state) => markPromptSubmitted(state, text, attachments, runtimeText));
     try {
-      await sendOp(session.guiId, {
+      await inputTracker.send(session.guiId, {
         op: "submit",
         text: runtimeText,
         manage_project_plan: true,
@@ -594,9 +619,11 @@ export default function App() {
         ...(imageAttachments(attachments).length
           ? { attachments: imageAttachments(attachments).map((image) => ({ media_type: image.mediaType, data: image.data })) }
           : {}),
-      });
+      }, Boolean(session.runtimeCapabilities?.features.includes("input.receipts")));
     } catch (error) {
-      update(session.guiId, (state) => markPromptSendFailed(state, cleanError(error)));
+      update(session.guiId, (state) => error instanceof InputDispatchUnconfirmed
+        ? addLocalNotice({ ...state, activity: "Prompt acceptance unconfirmed" }, error.message, "warning")
+        : markPromptSendFailed(state, cleanError(error)));
       return false;
     }
     return true;
@@ -1115,6 +1142,7 @@ export default function App() {
               <SessionToolbar
                 state={session()}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
+                onHistory={() => setHistoryGuiId(session().guiId)}
                 onDetach={() => detachSessionView(session().guiId)}
                 onStop={() => requestRuntimeStop(session().guiId)}
               />
@@ -1131,6 +1159,7 @@ export default function App() {
                 onExport={() => void exportSessionDiagnostics(session())}
               />
               <div class="input-zone">
+                <InputReceipts items={inputReceipts().filter((item) => item.guiId === session().guiId)} onDismiss={inputTracker.dismiss} onCheck={() => inputTracker.recheck(session().guiId)} />
                 <Show
                   when={session().pendingApproval || session().pendingDecision}
                   fallback={<Composer
@@ -1246,6 +1275,14 @@ export default function App() {
           onStart={start}
         />}
       </Show>
+      <Show when={historyGuiId()} keyed>{(guiId) => (
+        <ConversationHistory
+          title={sessionForGuiId(guiId)?.title || "Session conversation"}
+          supported={Boolean(sessionForGuiId(guiId)?.runtimeCapabilities?.operations["history.outline"] && sessionForGuiId(guiId)?.runtimeCapabilities?.operations["history.window"])}
+          request={(op, args) => historyReader.request(guiId, op, args)}
+          onClose={closeHistory}
+        />
+      )}</Show>
       <Show when={capabilitiesOpen()}>
         <CapabilityPalette catalog={catalog()} catalogError={catalogError()} onClose={() => setCapabilitiesOpen(false)} onLaunch={openCapability} />
       </Show>

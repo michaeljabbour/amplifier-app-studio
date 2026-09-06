@@ -1321,3 +1321,53 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .real-window-smoke-voice > div { flex: 1; }
 .real-window-smoke-voice strong { display: block; margin-top: 8px; }
 .real-window-smoke-voice p { color: var(--muted); }
+
+/* The conversation reader keeps its own scroll position and never moves live chat. */
+.conversation-history-backdrop { z-index: 150; }
+.conversation-history { width: min(1100px, calc(100vw - 40px)); height: min(820px, calc(100dvh - 56px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--panel); box-shadow: var(--shadow); }
+.conversation-history-header { display: flex; justify-content: space-between; gap: 20px; padding: 24px 26px 12px; }
+.conversation-history-header h2 { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 23px; }
+.conversation-history-header h2 svg { width: 22px; color: var(--blue); }
+.conversation-history-header p { color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.conversation-history-intro { margin: 0; padding: 0 26px 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.conversation-history-content { display: grid; grid-template-columns: minmax(210px, 31%) minmax(0, 1fr); min-height: 0; flex: 1; border-top: 1px solid var(--line); }
+.conversation-history-list, .conversation-history-detail { overflow: auto; overscroll-behavior: contain; min-width: 0; }
+.conversation-history-list { padding: 12px; border-right: 1px solid var(--line); }
+.conversation-history-list > p, .conversation-history-detail > p { margin: 18px; color: var(--muted); line-height: 1.6; }
+.conversation-history-list button { width: 100%; display: block; text-align: left; padding: 13px; border: 1px solid transparent; border-radius: 10px; background: transparent; cursor: pointer; }
+.conversation-history-list button:hover { background: var(--panel-2); }
+.conversation-history-list button.selected { border-color: var(--blue); background: var(--panel-2); }
+.conversation-history-list button span { font-size: 11px; color: var(--blue); font-weight: 650; }
+.conversation-history-list button p { margin: 6px 0 0; color: var(--text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.conversation-history-detail { padding: 6px 26px; }
+.conversation-history-detail article { padding: 22px 0; border-bottom: 1px solid var(--line); }
+.conversation-history-detail article.target { border-left: 2px solid var(--blue); padding-left: 14px; }
+.conversation-history-detail article > header { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; font-size: 12px; }
+.conversation-history-detail article > header span { color: var(--blue); }
+.conversation-history-footer { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.conversation-history-footer > div { display: flex; gap: 8px; }
+.conversation-history-footer button, .conversation-history-error button { padding: 8px 13px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
+.conversation-history-footer button:disabled { opacity: .4; cursor: default; }
+.conversation-history-error, .conversation-history-unavailable { padding: 14px 26px; color: var(--amber); line-height: 1.6; }
+.conversation-history-error p { margin: 0 0 10px; }
+@media (max-width: 760px) {
+  .conversation-history { width: calc(100vw - 16px); height: calc(100dvh - 24px); border-radius: 12px; }
+  .conversation-history-header { padding: 18px 18px 10px; }
+  .conversation-history-header h2 { font-size: 19px; }
+  .conversation-history-intro { padding: 0 18px 14px; }
+  .conversation-history-content { grid-template-columns: 1fr; grid-template-rows: minmax(100px, 32%) minmax(0, 1fr); }
+  .conversation-history-list { border-right: 0; border-bottom: 1px solid var(--line); }
+  .conversation-history-detail { padding: 4px 18px; }
+}
+.agent-inspector-hero.incomplete > span { color: var(--amber); }
+.delegate-recovery { margin: 16px 0; padding: 16px; border: 1px solid var(--amber); border-radius: 12px; }
+.delegate-recovery h3 { margin-top: 0; color: var(--amber); font-size: 14px; }
+.delegate-recovery > p { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.delegate-recovery textarea { width: 100%; resize: vertical; padding: 10px; background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.delegate-recovery > button { margin-top: 10px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 8px; cursor: pointer; }
+
+.input-receipt { border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-2); padding: 10px; margin-bottom: 6px; font-size: 12px; }
+.input-receipt textarea { width: 100%; background: var(--bg); color: inherit; }
+.input-receipt button { margin: 4px 8px 0 0; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--panel); padding: 6px 8px; cursor: pointer; }
+
+.input-receipts { max-height: 170px; overflow: auto; }

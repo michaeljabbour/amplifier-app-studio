@@ -179,7 +179,7 @@ export interface LaneState {
   id: string;
   parentId?: string;
   agent: string;
-  status: "running" | "completed" | "attention" | "detached";
+  status: "running" | "completed" | "incomplete" | "attention" | "detached";
   activity: string;
   tail: string;
   tailKind: "text" | "thinking";
@@ -187,6 +187,7 @@ export interface LaneState {
   tools: LaneToolState[];
   events: LaneEventState[];
   instruction?: string;
+  partialResult?: string;
   model?: string;
   startedAtMs?: number;
   completedAtMs?: number;
