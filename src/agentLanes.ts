@@ -3,6 +3,7 @@ import type { LaneState } from "./protocol";
 const STATUS_PRIORITY: Record<LaneState["status"], number> = {
   running: 0,
   attention: 1,
+  incomplete: 1,
   completed: 2,
   detached: 3,
 };
@@ -19,7 +20,8 @@ export function liveAgentCount(lanes: LaneState[]): number {
 }
 
 export function isLaneHistorical(lane: LaneState): boolean {
-  return lane.status === "completed"
+  return lane.status === "incomplete"
+    || lane.status === "completed"
     || lane.status === "detached"
     || lane.completedAtMs !== undefined;
 }

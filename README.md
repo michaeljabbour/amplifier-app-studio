@@ -217,6 +217,15 @@ restart, stored resume is the current recovery floor. Set `AMPLIFIER_HOME` to
 persistent storage on ephemeral VMs or pods if stored sessions must survive
 replacement of the compute instance itself.
 
+Browser and remote WebSocket views reattach when Studio returns from the
+background, replaying from their last durable history cursor. An attachment
+already awaiting the host is reused; events and replay deadlines from replaced
+sockets cannot affect the current connection. Reattachment preserves the
+existing view and drafts and does not resend prompts or steering. A socket send
+alone does not prove runtime acceptance; queued-input reconciliation still
+requires correlated runtime acknowledgements. Native local IPC does not use
+this WebSocket recovery path.
+
 Release and operations checks can exercise that contract without exposing the
 host token on the command line:
 
@@ -426,3 +435,13 @@ optional active-session Autopilot controller, not a replacement persistence
 engine and not a reason to start a second session. The full boundary,
 conformance requirements, and safe extraction sequence are documented in
 [`docs/RUNTIME-PEER-ARCHITECTURE.md`](docs/RUNTIME-PEER-ARCHITECTURE.md).
+
+## Conversation navigation and delegate recovery
+
+The session toolbar opens a separate Conversation outline when the Runtime advertises history navigation. Pages contain at most 50 conversation entries; selecting one reads a bounded nearby window without changing live replay, the composer, or the session cursor. Closing the view or switching sessions cancels pending reads. Legacy history and rewound sessions may be unavailable; Runtime errors remain visible with a reload action.
+
+Incomplete delegates retain their available partial work in the agent inspector, including after replay. When Runtime advertises delegate resume and the child belongs to this parent session, Copy recovery instruction prepares a coordinator instruction containing the child ID. Copying does not execute or promise recovery; send the instruction in the original parent session so the coordinator can check whether it can resume the child.
+
+When Runtime advertises input receipts, composer submits and steers carry unique request identities. Studio retains up to 32 receipts per view, evicts confirmed receipts first, distinguishes sent/unconfirmed from dispatched or queued, and checks receipt status after reattachment without resending input. Dispatch does not prove model execution. Unknown receipts—including a previous Runtime process—offer retained text for review/copy and direct the user to check conversation history. Receipts are local to the open Studio process; initial launch prompts sent before capability discovery and older runtimes retain their existing send behavior.
+
+The Runtime dependency is pinned to candidate `908a6624d523e8e5be18d250c7070341dd74ed08` (0.1.11). Its merge is a release prerequisite; update the final release pin after Runtime lands.

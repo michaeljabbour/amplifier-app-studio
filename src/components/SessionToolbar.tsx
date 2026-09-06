@@ -1,10 +1,11 @@
-import { LogOut, Square } from "lucide-solid";
+import { BookOpen, LogOut, Square } from "lucide-solid";
 import { Show } from "solid-js";
 import type { SessionViewState } from "../protocol";
 
 export function SessionToolbar(props: {
   state: SessionViewState;
   onDismissAlert: (id: string) => void;
+  onHistory?: () => void;
   onDetach: () => void;
   onStop: () => void;
 }) {
@@ -24,6 +25,7 @@ export function SessionToolbar(props: {
         <span class="session-state-detail" title={sessionToolbarStatus(props.state)}>{sessionToolbarStatus(props.state)}<Show when={agents().length}> · {agents().length} agents<Show when={running()}> ({running()} live)</Show></Show> · {props.state.outputs.length} outputs</span>
       </div>
       <div class="session-toolbar-actions" role="group" aria-label="Session runtime actions">
+        <Show when={props.onHistory}><button type="button" onClick={props.onHistory} disabled={props.state.phase !== "ready" || props.state.connectivity?.status === "reconnecting"} title="Browse earlier prompts and responses" aria-label="Open conversation outline"><BookOpen aria-hidden="true" /><span>History</span></button></Show>
         <button type="button" onClick={props.onDetach} title="Detach view; keep the runtime available" aria-label="Detach view"><LogOut aria-hidden="true" /><span>Detach</span></button>
         <Show when={props.state.phase !== "exited" && props.state.phase !== "error"}>
           <button type="button" class="stop-runtime-button" onClick={props.onStop} aria-label="Stop runtime" title="Stop this session runtime"><Square aria-hidden="true" /><span>Stop</span></button>

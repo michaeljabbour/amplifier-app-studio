@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, Index, on, onMount, Show }
 import { Activity, RefreshCcw, Braces, ChevronLeft, Files, MapPin, RefreshCw, Search, Settings2, TriangleAlert, X } from "lucide-solid";
 import { isLaneHistorical, liveAgentCount, orderAgentLanes } from "../agentLanes";
 import type { BundleOption, LaneState, ProviderOption, SessionOutput, SessionViewState } from "../protocol";
+import { DelegateRecovery } from "./DelegateRecovery";
 import { Markdown } from "./Markdown";
 import { PlanPanel } from "./Plan";
 import { ExecutionMap } from "./ExecutionMap";
@@ -110,7 +111,7 @@ export function Inspector(props: Props) {
         <Show when={props.tab === "agents"}><AgentsPanel state={props.state} onSelectLane={props.onSelectLane} /></Show>
         <Show when={props.tab === "map"}><ExecutionMap state={props.state} /></Show>
         <Show when={props.tab === "plan"}><PlanPanel state={props.state} /></Show>
-        <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} /></Show>
+        <Show when={props.tab === "agent" && props.lane}><AgentPanel lane={props.lane!} state={props.state} /></Show>
         <Show when={props.tab === "build"}><BuildPanel {...props} /></Show>
         <Show when={props.tab === "bundles"}><BundlesPanel {...props} /></Show>
         <Show when={props.tab === "outputs"}><OutputsPanel state={props.state} onOpenOutput={props.onOpenOutput} /></Show>
@@ -224,7 +225,7 @@ function AgentsPanel(props: Pick<Props, "state" | "onSelectLane">) {
   );
 }
 
-function AgentPanel(props: { lane: LaneState }) {
+function AgentPanel(props: { lane: LaneState; state: SessionViewState }) {
   const historical = () => isLaneHistorical(props.lane);
   return (
     <>
@@ -232,6 +233,7 @@ function AgentPanel(props: { lane: LaneState }) {
         <span>{props.lane.status}</span><h2>{props.lane.agent}</h2><Markdown compact class="agent-hero-summary" text={props.lane.activity} />
         <code>{props.lane.id}</code>
       </div>
+      <DelegateRecovery state={props.state} lane={props.lane} />
       <Show when={props.lane.instruction} keyed>{(instruction) => (
         <InspectorSection title="Requested work" meta="DELEGATED BRIEF">
           <Markdown class="agent-instruction" text={instruction} />

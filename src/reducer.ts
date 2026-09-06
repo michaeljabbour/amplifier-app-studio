@@ -901,7 +901,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       activity: "Resuming delegate",
       lanes: {
         ...next.lanes,
-        [laneId]: { ...lane, status: "running", activity: "Resuming work" },
+        [laneId]: { ...lane, status: "running", activity: "Resuming work", completedAtMs: undefined, partialResult: undefined },
       },
     };
   }
@@ -916,18 +916,19 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         [laneId]: {
           id: laneId,
           agent: lane?.agent || stringValue(event.agent, "delegate"),
-          status: event.success === false ? "attention" : "completed",
-          activity: stringValue(event.result, event.success === false ? "failed" : "complete"),
+          status: event.incomplete === true ? "incomplete" : event.success === false ? "attention" : "completed",
+          activity: event.incomplete === true ? "Incomplete · review retained work" : stringValue(event.result, event.success === false ? "failed" : "complete"),
+          partialResult: event.incomplete === true ? stringValue(event.result) : undefined,
           tail: lane?.tail || "",
           tailKind: lane?.tailKind || "text",
           thinking: lane?.thinking || "",
-          tools: settleRunningLaneTools(lane?.tools || [], event.success === false ? "failed" : "completed"),
+          tools: settleRunningLaneTools(lane?.tools || [], event.incomplete === true ? "unknown" : event.success === false ? "failed" : "completed"),
           events: appendLaneEvent(lane?.events || [], {
             id: `${laneId}:completed`,
             kind: "message",
-            title: event.success === false ? "Agent stopped with an issue" : "Agent completed",
-            detail: stringValue(event.result, event.success === false ? "No result was returned" : "Work returned to the coordinator"),
-            status: event.success === false ? "failed" : "completed",
+            title: event.incomplete === true ? "Agent incomplete" : event.success === false ? "Agent stopped with an issue" : "Agent completed",
+            detail: stringValue(event.result) || (event.incomplete === true ? "No partial result was retained" : event.success === false ? "No result was returned" : "Work returned to the coordinator"),
+            status: event.incomplete === true ? "unknown" : event.success === false ? "failed" : "completed",
           }),
           parentId: lane?.parentId || stringValue(event.parent_session_id),
           instruction: lane?.instruction,
@@ -1078,6 +1079,8 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       });
     case "notification": {
       if (event.level === "decision" && stringValue(event.decision_id)) {
+        // Live requests come from the current owner; replay cannot restore dead futures.
+        if (replay) return next;
         const choices = stringList(event.choices);
         return {
           ...next,
@@ -1349,7 +1352,7 @@ function reduceTurnLoopEvent(state: SessionViewState, event: UIEvent): SessionVi
       loop = {
         ...loop,
         phase: Object.keys(loop.activeTools).length ? "delegates" : "model",
-        detail: event.success === false ? "Delegate returned an error" : "Delegate result returned to coordinator",
+        detail: event.incomplete === true ? "Delegate stopped with incomplete work" : event.success === false ? "Delegate returned an error" : "Delegate result returned to coordinator",
         completedDelegates: loop.completedDelegates + (wasActive ? 1 : 0),
         activeDelegates,
         awaitingModelPass: Object.keys(loop.activeTools).length === 0,
@@ -1358,7 +1361,7 @@ function reduceTurnLoopEvent(state: SessionViewState, event: UIEvent): SessionVi
         loop,
         event,
         "delegates",
-        event.success === false ? "Delegate failed" : "Delegate completed",
+        event.incomplete === true ? "Delegate incomplete" : event.success === false ? "Delegate failed" : "Delegate completed",
         "Child result returned to the coordinator",
         event.success === false ? "failed" : "completed",
       );
@@ -2349,7 +2352,7 @@ function upsertLaneTool(tools: LaneToolState[], item: LaneToolState): LaneToolSt
 function settleLaneTool(
   tools: LaneToolState[],
   event: UIEvent,
-  status: "completed" | "failed",
+  status: "completed" | "failed" | "unknown",
 ): LaneToolState[] {
   const id = stringValue(event.tool_call_id);
   const index = tools.findIndex((tool) => tool.id === id);
@@ -2369,7 +2372,7 @@ function settleLaneTool(
 
 function settleRunningLaneTools(
   tools: LaneToolState[],
-  status: "completed" | "failed",
+  status: "completed" | "failed" | "unknown",
 ): LaneToolState[] {
   return tools.map((tool) => tool.status === "running" ? { ...tool, status } : tool);
 }
