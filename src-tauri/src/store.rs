@@ -14,15 +14,16 @@ const SESSION_EXPORT_SCHEMA: &str = "amplifier-tui/session-export/v1";
 const SESSION_EXPORT_SCHEMA_PREFIX: &str = "amplifier-tui/session-export/";
 const SESSION_SEARCH_TEXT_LIMIT: usize = 8 * 1024;
 const SESSION_SEARCH_HEAD_LIMIT: usize = 2 * 1024;
-// v3 rebuilds indexes with durable event counts/signatures so a session whose
-// visual ledger changes can never keep a stale cached summary.
-const SESSION_INDEX_CACHE_VERSION: u8 = 3;
-const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v3.json";
+// v4 includes recorded parent-session lineage in cached history.
+const SESSION_INDEX_CACHE_VERSION: u8 = 4;
+const SESSION_INDEX_CACHE_FILE: &str = ".studio-session-index-v4.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session_id: String,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
     pub name: String,
     pub bundle: String,
     pub model: Option<String>,
@@ -141,7 +142,7 @@ fn list_stored_sessions_from(
                 continue;
             }
             let session_id = entry.file_name().to_string_lossy().into_owned();
-            if session_id.starts_with('.') || session_id.contains('_') {
+            if session_id.starts_with('.') {
                 continue;
             }
             tasks.push((
@@ -482,7 +483,7 @@ fn validate_session_id(session_id: &str) -> Result<(), String> {
     if !(8..=128).contains(&session_id.len())
         || !session_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
     {
         return Err("Stored session id contains unsupported characters".to_owned());
     }
@@ -511,6 +512,34 @@ fn summarize(
     let (metadata, metadata_recovered_or_corrupt) = read_json_with_backup(&metadata_path);
     let metadata_valid = metadata.is_some();
     let metadata = metadata.unwrap_or_default();
+
+    let parent_session_id = nonempty_string_field(&metadata, "parent_session_id")
+        .or_else(|| nonempty_string_field(&metadata, "parent_id"));
+    // Delegates can retain very large inherited ledgers. Discovery only needs
+    // their identity; replay validates and loads the transcript when opened.
+    if parent_session_id.is_some() && metadata_valid && !metadata_recovered_or_corrupt {
+        let has_transcript = ["transcript.jsonl", "transcript.jsonl.backup"]
+            .iter()
+            .any(|name| fs::metadata(session_dir.join(name)).is_ok_and(|info| info.len() > 0));
+        return StoredSession {
+            name: nonempty_string_field(&metadata, "name").unwrap_or_else(|| session_id.clone()),
+            parent_session_id,
+            bundle: nonempty_string_field(&metadata, "bundle").unwrap_or_else(|| "unknown".into()),
+            model: nonempty_string_field(&metadata, "model"),
+            tags: string_array_field(&metadata, "tags"),
+            turn_count: turn_count_from(&metadata),
+            message_count: 0,
+            event_count: 0,
+            mtime_ms: session_mtime_ms(session_dir),
+            project_dir: nonempty_string_field(&metadata, "working_dir")
+                .or_else(|| project_dir_hint.map(str::to_owned)),
+            session_id,
+            project_slug,
+            state: if has_transcript { "unindexed" } else { "empty" }.into(),
+            summary: "Saved child session. Open to load its recorded conversation.".into(),
+            search_text: String::new(),
+        };
+    }
 
     let transcript_path = session_dir.join("transcript.jsonl");
     let transcript_scan = scan_transcript_with_backup(&transcript_path);
@@ -566,6 +595,8 @@ fn summarize(
     };
 
     StoredSession {
+        parent_session_id: nonempty_string_field(&metadata, "parent_session_id")
+            .or_else(|| nonempty_string_field(&metadata, "parent_id")),
         name,
         bundle: nonempty_string_field(&metadata, "bundle").unwrap_or_else(|| "unknown".to_owned()),
         model: nonempty_string_field(&metadata, "model"),
@@ -1304,6 +1335,44 @@ mod tests {
     }
 
     #[test]
+    fn history_lists_children_with_underscores_beneath_recorded_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let child = temp
+            .path()
+            .join("project/sessions/root-session_foundation-explorer");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(
+            child.join("metadata.json"),
+            r#"{"parent_id":"root-session"}"#,
+        )
+        .unwrap();
+        // An unvalidated child transcript is deliberately not parsed at discovery.
+        fs::write(child.join("transcript.jsonl"), "not parsed until opened").unwrap();
+        let sessions = list_stored_sessions_from(temp.path(), None, None);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].state, "unindexed");
+        assert_eq!(sessions[0].event_count, 0);
+        assert_eq!(
+            sessions[0].parent_session_id.as_deref(),
+            Some("root-session")
+        );
+    }
+
+    #[test]
+    fn history_preserves_both_recorded_parent_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for field in ["parent_id", "parent_session_id"] {
+            fs::write(
+                temp.path().join("metadata.json"),
+                serde_json::json!({field: "root-session"}).to_string(),
+            )
+            .unwrap();
+            let summary = summarize(temp.path(), "child-session".into(), "project".into(), None);
+            assert_eq!(summary.parent_session_id.as_deref(), Some("root-session"));
+        }
+    }
+
+    #[test]
     fn transcript_without_metadata_is_labeled_as_missing_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         fs::write(
@@ -1531,6 +1600,7 @@ mod tests {
     fn portable_session_ids_cannot_escape_the_store() {
         assert!(validate_session_id("../../escape").is_err());
         assert!(validate_session_id("valid-session-1234").is_ok());
+        assert!(validate_session_id("root-session_foundation-explorer").is_ok());
     }
 
     #[test]

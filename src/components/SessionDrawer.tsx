@@ -3,7 +3,7 @@ import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, Rad
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery, storedSessionSourceKind, storedSessionSourceLabel } from "../storedSessions";
-import { groupByDirectory, shortBundleName } from "../sessionGroups";
+import { filterSessionTree, sessionTree, type SessionBranch, groupByDirectory, shortBundleName } from "../sessionGroups";
 import { keepModalFocus } from "../focusTrap";
 
 interface Props {
@@ -36,19 +36,15 @@ export function SessionDrawer(props: Props) {
   const detachedSessionIds = createMemo(() => new Set(props.detachedSessionIds));
   const detachedOpenSessions = createMemo(() => props.openSessions.filter((session) => detachedSessionIds().has(session.guiId)));
   const matching = createMemo(() => {
-    const needle = query().trim();
     const source = sourceFilter();
-    const resumable = props.sessions.filter(storedSessionShouldList);
-    const fromSource = source === "all"
-      ? resumable
-      : resumable.filter((session) => storedSessionSourceKind(session) === source);
-    return needle
-      ? fromSource.filter((session) => storedSessionMatchesQuery(session, needle))
-      : fromSource;
+    const sessions = props.sessions.filter(storedSessionShouldList)
+      .filter((session) => source === "all" || storedSessionSourceKind(session) === source);
+    const tree = sessionTree(sessions);
+    const needle = query().trim();
+    return needle ? filterSessionTree(tree, (session) => storedSessionMatchesQuery(session, needle)) : tree;
   });
-  const sourceCounts = createMemo(() => props.sessions
-    .filter(storedSessionShouldList)
-    .reduce((counts, session) => {
+  const sourceCounts = createMemo(() => sessionTree(props.sessions.filter(storedSessionShouldList))
+    .reduce((counts, { session }) => {
       counts[storedSessionSourceKind(session)] += 1;
       return counts;
     }, { local: 0, remote: 0 }));
@@ -59,6 +55,48 @@ export function SessionDrawer(props: Props) {
     if (list.scrollHeight - list.scrollTop - list.clientHeight < 320) {
       setLimit((value) => value + 500);
     }
+  };
+
+  const SessionRow = (row: { node: SessionBranch<StoredSession>; nested?: boolean }) => {
+              const session = row.node.session;
+              const [childrenOpen, setChildrenOpen] = createSignal(Boolean(query().trim()));
+              const blocker = () => storedSessionResumeBlocker(session, false);
+              const note = () => blocker() || storedSessionWarning(session);
+              return (
+                <div class="history-session-branch">
+                <button class="stored-row" classList={{ "needs-recovery": Boolean(blocker()) }} title={[storedSessionSourceLabel(session), note()].filter(Boolean).join(" · ")} onClick={() => void props.onResume(session)}>
+                  <div class="stored-topline">
+                    <strong>{session.name}</strong>
+                    <span>{timeAgo(session.mtimeMs)}</span>
+                  </div>
+                  <div class="stored-mobile-origin">
+                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
+                    <span>{session.hostName || "This computer"}</span>
+                  </div>
+                  <p class="stored-summary">{session.summary}</p>
+                  <div class="stored-meta">
+                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
+                    <span class="stored-bundle" title={session.bundle}>{shortBundleName(session.bundle)}</span>
+                    <span>{session.turnCount ?? "—"} turns</span>
+                  </div>
+                  <div class="stored-bottomline">
+                    <code>{session.sessionId.slice(0, 12)}</code>
+                    <Show when={session.tags.length}><span class="tag">{session.tags[0]}</span></Show>
+                    <span class={`health-state ${session.state}`}>{healthLabel(session.state)}</span>
+                  </div>
+                  <Show when={note()} keyed>{(message) => <span class="unavailable-note">{message}</span>}</Show>
+                </button>
+                <Show when={row.node.children.length}>
+                  <details class="history-children" open={childrenOpen()} onToggle={(event) => setChildrenOpen(event.currentTarget.open)}>
+                    <summary>{row.node.children.length} child {row.node.children.length === 1 ? "session" : "sessions"}</summary>
+                    <Show when={childrenOpen()}><For each={row.node.children}>{(node) => <SessionRow node={node} nested /> }</For></Show>
+                  </details>
+                </Show>
+                <Show when={session.parentSessionId && !row.nested}>
+                  <p class="history-parent-unavailable">Child session · parent unavailable in this history</p>
+                </Show>
+                </div>
+              );
   };
 
   return (
@@ -192,42 +230,15 @@ export function SessionDrawer(props: Props) {
           <Show when={!props.loading && !props.error && visible().length === 0}>
             <div class="drawer-empty"><span>◇</span><strong>No matching sessions</strong><p>Completed Amplifier sessions will appear here.</p></div>
           </Show>
-          <Show when={props.warning}><details class="drawer-warning"><summary>Some hosts are unavailable · history is incomplete</summary><p>{props.warning}</p><button type="button" onClick={props.onRefresh}>Retry connections</button></details></Show>
-          <For each={groupByDirectory(visible(), (session) => ({ path: session.projectDir || session.projectSlug, host: session.hostId, hostName: session.hostName }))}>{(group) => (
-            <details open class="directory-group history-directory">
-              <summary title={group.path}><span>{group.name}</span><small>{group.hostName} · {group.items.length}</small></summary>
-          <For each={group.items}>
-            {(session) => {
-              const blocker = () => storedSessionResumeBlocker(session, false);
-              const note = () => blocker() || storedSessionWarning(session);
-              return (
-                <button class="stored-row" classList={{ "needs-recovery": Boolean(blocker()) }} title={[storedSessionSourceLabel(session), note()].filter(Boolean).join(" · ")} onClick={() => void props.onResume(session)}>
-                  <div class="stored-topline">
-                    <strong>{session.name}</strong>
-                    <span>{timeAgo(session.mtimeMs)}</span>
-                  </div>
-                  <div class="stored-mobile-origin">
-                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
-                    <span>{session.hostName || "This computer"}</span>
-                  </div>
-                  <p class="stored-summary">{session.summary}</p>
-                  <div class="stored-meta">
-                    <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
-                    <span class="stored-bundle" title={session.bundle}>{shortBundleName(session.bundle)}</span>
-                    <span>{session.turnCount ?? "—"} turns</span>
-                  </div>
-                  <div class="stored-bottomline">
-                    <code>{session.sessionId.slice(0, 12)}</code>
-                    <Show when={session.tags.length}><span class="tag">{session.tags[0]}</span></Show>
-                    <span class={`health-state ${session.state}`}>{healthLabel(session.state)}</span>
-                  </div>
-                  <Show when={note()} keyed>{(message) => <span class="unavailable-note">{message}</span>}</Show>
-                </button>
-              );
-            }}
-          </For>
+          <Show when={props.warning}><details class="drawer-warning"><summary>Some hosts are unavailable · history is incomplete</summary><p>{props.warning}</p><button type="button" onClick={props.onRefresh}>Retry connections</button><button type="button" onClick={() => { props.onClose(); props.onSettings(); }}>Manage compute hosts</button></details></Show>
+          <For each={groupByDirectory(visible(), ({ session }) => ({ path: session.projectDir || session.projectSlug, host: session.hostId, hostName: session.hostName }))}>{(group) => {
+            const [expanded, setExpanded] = createSignal(Boolean(query().trim()));
+            return (
+            <details open={expanded()} onToggle={(event) => setExpanded(event.currentTarget.open)} class="directory-group history-directory">
+              <summary title={group.path}><span>{group.name}</span><small>{group.hostName} · {group.items.length} conversations</small></summary>
+          <Show when={expanded()}><For each={group.items}>{(node) => <SessionRow node={node} />}</For></Show>
             </details>
-          )}</For>
+          ); }}</For>
           <Show when={visible().length < matching().length}>
             <button class="drawer-load-more" type="button" onClick={() => setLimit((value) => value + 300)}>
               Show 300 more <span>{matching().length - visible().length} remaining</span>
@@ -235,7 +246,7 @@ export function SessionDrawer(props: Props) {
           </Show>
         </div>
         <div class="drawer-footer">
-          {props.sourceName} · showing {visible().length} of {matching().length} sessions · {sourceFilter() === "all" ? "all sources" : `${sourceFilter()} only`}
+          {props.sourceName} · showing {visible().length} of {matching().length} conversations · {sourceFilter() === "all" ? "all sources" : `${sourceFilter()} only`}
         </div>
         <div class="mobile-drawer-footer">
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
@@ -252,6 +263,7 @@ export function SessionDrawer(props: Props) {
 
 function healthLabel(state: StoredSession["state"]): string {
   switch (state) {
+    case "unindexed": return "Saved child session";
     case "transcript_lost": return "history damaged";
     case "recovered": return "metadata recovered";
     case "indexing": return "metadata missing";

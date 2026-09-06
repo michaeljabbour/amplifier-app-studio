@@ -7,6 +7,7 @@ import { createHostDirectory, listHostDirectories, type CloneRepositoryResult, t
 
 interface Props {
   initial: NewSessionInput;
+  initialPrompt?: string;
   catalog: CapabilityCatalog;
   catalogError?: string;
   hosts: RuntimeHost[];
@@ -17,12 +18,13 @@ interface Props {
   onCloneRepository: (repositoryUrl: string, host: RuntimeHost) => Promise<CloneRepositoryResult>;
   onBusyChange?: (busy: boolean) => void;
   onHostChange: (host: RuntimeHost) => Promise<string | undefined>;
-  onStart: (input: NewSessionInput) => Promise<void>;
+  onStart: (input: NewSessionInput, initialPrompt?: string) => Promise<void>;
 }
 
 export function NewSessionDialog(props: Props) {
   let remoteBrowserTrigger: HTMLButtonElement | undefined;
   let remoteBrowserBack: HTMLButtonElement | undefined;
+  const [firstRequest, setFirstRequest] = createSignal(props.initialPrompt || "");
   const [projectDir, setProjectDir] = createSignal(props.initial.projectDir);
   const [existingProjectDir, setExistingProjectDir] = createSignal(props.initial.projectDir);
   const [localProjectConfirmed, setLocalProjectConfirmed] = createSignal(false);
@@ -112,7 +114,7 @@ export function NewSessionDialog(props: Props) {
         expectedHistoryEvents: props.initial.expectedHistoryEvents,
         capabilityId: props.initial.capabilityId,
         capabilityName: props.initial.capabilityName,
-      });
+      }, firstRequest().trim() || undefined);
     } catch (caught) {
       setError(String(caught));
       setStarting(false);
@@ -559,6 +561,12 @@ export function NewSessionDialog(props: Props) {
           <Show when={!unsafeProvider() && unsafeOverride()} keyed>{(warning) => <div class="form-error provider-contract-warning"><strong>This model cannot run Amplifier tools safely.</strong> {warning}</div>}</Show>
         </details>
 
+        <Show when={props.initialPrompt}>
+          <label class="field smart-tool-request">
+            <span>First request <em>review before starting</em></span>
+            <textarea rows={6} value={firstRequest()} onInput={(event) => setFirstRequest(event.currentTarget.value)} />
+          </label>
+        </Show>
         <Show when={error() && !remoteDirectories()}><div class="form-error">{error()}</div></Show>
 
         <div class="dialog-footer" inert={Boolean(remoteDirectories())} aria-hidden={Boolean(remoteDirectories())}>

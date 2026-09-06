@@ -51,3 +51,13 @@ describe("Studio capabilities", () => {
     expect(sessionUsesCapability(imagen, { bundle: "tui", capabilityId: "imagen" })).toBe(true);
   });
 });
+
+it("offers smart tools as host-checked workflows rather than installed bundles", () => {
+  for (const id of ["tmux-fleet", "digital-twin"]) {
+    const capability = STUDIO_CAPABILITIES.find((item) => item.id === id)!;
+    expect(capabilityReadiness(capability, { bundles: [], providers: [] })).toBe("host-check");
+    expect(capability.bundle).toBeUndefined();
+    expect(capability.initialPrompt).toContain("compute host");
+    expect(capability.initialPrompt).toContain("--confirmed");
+  }
+});

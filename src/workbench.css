@@ -353,3 +353,12 @@
   }
   body:has(.mode-popover input:focus) .app-shell .mode-popover > p:not([role]) { display: none; }
 }
+
+/* Lineage stays inside its owning conversation, including on narrow phones. */
+.history-session-branch { min-width: 0; }
+.history-children { margin: 0 12px 12px; padding-left: 12px; border-left: 2px solid var(--line); min-width: 0; }
+.history-children > summary { cursor: pointer; padding: 10px 4px; font-size: 12px; }
+.history-parent-unavailable { margin: 0 16px 12px; font-size: 12px; opacity: .7; }
+.history-directory > summary small { flex-shrink: 0; }
+
+.smart-tool-request textarea { width: 100%; min-width: 0; resize: vertical; font: inherit; line-height: 1.5; }

@@ -537,6 +537,8 @@ export interface NewSessionInput {
 
 export interface StoredSession {
   sessionId: string;
+  /** Recorded lineage; never inferred from a session title. */
+  parentSessionId?: string;
   /** Compute origin is attached by Studio when it federates host histories. */
   hostId?: string;
   hostName?: string;
@@ -554,7 +556,7 @@ export interface StoredSession {
   mtimeMs: number;
   projectSlug: string;
   projectDir?: string;
-  state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing" | "empty";
+  state: "ok" | "recovered" | "corrupt" | "transcript_lost" | "indexing" | "empty" | "unindexed";
   summary: string;
   /** Bounded user/assistant transcript text used by federated history search. */
   searchText?: string;
