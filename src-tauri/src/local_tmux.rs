@@ -53,7 +53,11 @@ impl TmuxInvocation {
     }
 
     async fn output(self) -> Result<Output, String> {
-        Command::new(self.program)
+        let mut command = Command::new(self.program);
+        if let Some(path) = crate::runtime_setup::runtime_path(Path::new(self.program)) {
+            command.env("PATH", path);
+        }
+        command
             .args(&self.args)
             .kill_on_drop(true)
             .output()

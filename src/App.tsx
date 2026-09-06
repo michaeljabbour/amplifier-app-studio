@@ -18,7 +18,7 @@ import { TabStrip } from "./components/TabStrip";
 import { TerminalWorkSurface } from "./components/TerminalWorkSurface";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
-import { capabilitySessionInput, type StudioCapability } from "./capabilities";
+import { STUDIO_CAPABILITIES, capabilitySessionInput, type StudioCapability } from "./capabilities";
 import { activeSessionAutopilotOp, canEngageAutopilot } from "./autopilot";
 import {
   appendAttachmentFiles,
@@ -1217,6 +1217,7 @@ export default function App() {
       <Show when={dialog()} keyed>
         {(initial) => <NewSessionDialog
           initial={initial}
+          initialPrompt={STUDIO_CAPABILITIES.find((item) => item.id === initial.capabilityId)?.initialPrompt}
           catalog={catalog()}
           catalogError={catalogError()}
           hosts={runtimeHosts()}

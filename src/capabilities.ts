@@ -6,7 +6,9 @@ export type StudioCapabilityId =
   | "app-use"
   | "terminal"
   | "imagen"
-  | "attractor";
+  | "attractor"
+  | "tmux-fleet"
+  | "digital-twin";
 
 export interface StudioCapability {
   id: StudioCapabilityId;
@@ -15,6 +17,7 @@ export interface StudioCapability {
   outcome: string;
   description: string;
   action: string;
+  initialPrompt?: string;
   bundle?: string;
   catalogNames: string[];
   mode: string;
@@ -23,7 +26,7 @@ export interface StudioCapability {
   activation: "parallel-session" | "included";
 }
 
-export type CapabilityReadiness = "native" | "composition" | "catalogued" | "on-demand";
+export type CapabilityReadiness = "native" | "composition" | "catalogued" | "on-demand" | "host-check";
 
 export const STUDIO_CAPABILITIES: StudioCapability[] = [
   {
@@ -87,6 +90,28 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     activation: "included",
   },
   {
+    id: "tmux-fleet",
+    name: "Tmux Fleet",
+    eyebrow: "SMART TOOL",
+    outcome: "Find terminals that need attention and inspect their progress.",
+    description: "Use the tmux-fleet CLI through Amplifier on the compute host you choose. Review the first request before starting.",
+    action: "Inspect terminal fleet",
+    catalogNames: [], mode: "auto", accent: "green", activation: "parallel-session",
+    requirements: ["Requires tmux and tmux-fleet on the selected host.", "AI triage requires the tool's own provider configuration; Studio credentials are not copied."],
+    initialPrompt: "Use Microsoft's tmux-fleet smart tool on this session's compute host. First check command availability, then run tmux-fleet doctor and tmux-fleet attention, and summarize their JSON results. Use tmux-fleet --help for its current contract. These are read-only checks: do not type into, create, rename, or kill any terminal. If missing, explain how to install from https://github.com/microsoft/amplifier-smart-tool-tmux; do not install automatically. For subsequent requests use its read, triage, or interpret commands as appropriate; model-backed commands need their own provider configuration. Never expose credentials. Send/create require explicit confirmation for the specific invocation before using --confirmed.",
+  },
+  {
+    id: "digital-twin",
+    name: "Digital Twin Universe",
+    eyebrow: "SMART TOOL",
+    outcome: "Check readiness for isolated test environments on your compute host.",
+    description: "Use the Digital Twin Universe CLI through Amplifier to inspect prerequisites, then plan an environment for your project.",
+    action: "Check environment readiness",
+    catalogNames: [], mode: "auto", accent: "violet", activation: "parallel-session",
+    requirements: ["Requires amplifier-digital-twin-universe; launching environments also requires Incus.", "Model-backed operations need the tool's own provider configuration."],
+    initialPrompt: "Use Microsoft's amplifier-digital-twin-universe smart tool on this session's compute host. First check command availability, then run amplifier-digital-twin-universe manifest and amplifier-digital-twin-universe check. Summarize the JSON readiness results and missing prerequisites. Use --help for the current contract. Do not install software, launch, change, or destroy environments in this first check. If missing, explain installation from https://github.com/microsoft/amplifier-smart-tool-digital-twin-universe. Ask what environment the user wants before planning lifecycle actions. Later calls must follow the tool's confirmation contract; never automatically pass --confirmed or expose credentials. A passed prerequisite check is not a tested environment.",
+  },
+  {
     id: "imagen",
     name: "Image Studio",
     eyebrow: "IMAGEN 2",
@@ -126,6 +151,7 @@ export function capabilityReadiness(
   capability: StudioCapability,
   catalog: CapabilityCatalog,
 ): CapabilityReadiness {
+  if (capability.initialPrompt) return "host-check";
   if (capability.id === "coordinator") return "native";
   if (capability.id === "terminal") return "composition";
   if (capability.catalogNames.some((name) => catalog.bundles.some((bundle) => bundle.name === name))) {
@@ -135,6 +161,7 @@ export function capabilityReadiness(
 }
 
 export function capabilityStatusLabel(readiness: CapabilityReadiness): string {
+  if (readiness === "host-check") return "Check on selected host";
   if (readiness === "native") return "Included";
   if (readiness === "composition") return "Standard composition";
   if (readiness === "catalogued") return "Bundle found";

@@ -50,7 +50,7 @@ export function CoordinatorHome(props: Props) {
   const [locationOpen, setLocationOpen] = createSignal(false);
   const latest = createMemo(() => props.sessions
     .filter(storedSessionShouldList)
-    .find((session) => !storedSessionResumeBlocker(session, true)));
+    .find((session) => !session.parentSessionId && !storedSessionResumeBlocker(session, true)));
   const runtimeAvailable = () => props.runtime?.installed === true && props.runtime?.current === true;
   const providerStatusAvailable = () => props.runtime?.providerStatusAvailable === true;
   const ready = () => runtimeAvailable() && providerStatusAvailable() && props.runtime?.providerConfigured === true;
