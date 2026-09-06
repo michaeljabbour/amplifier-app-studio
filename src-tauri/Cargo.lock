@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "amplifier-studio"
-version = "0.1.78"
+version = "0.1.79"
 dependencies = [
  "android-native-keyring-store",
  "axum",
