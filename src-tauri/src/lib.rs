@@ -551,6 +551,41 @@ pub(crate) fn output_media_type(path: &std::path::Path) -> Option<&'static str> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     observability::init("studio");
+    let context = tauri::generate_context!();
+    // Keep review windows out of the installed app's WebKit storage without
+    // changing the signed application identity or its Keychain permissions.
+    #[cfg(target_os = "macos")]
+    let context = {
+        let mut context = context;
+        if let Some(profile) = std::env::var("AMPLIFIER_STUDIO_REVIEW_PROFILE")
+            .ok()
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|profile| *profile > 0)
+        {
+            for window in &mut context.config_mut().app.windows {
+                window.data_store_identifier = Some([
+                    0xf4,
+                    0x91,
+                    0x23,
+                    0x34,
+                    0xb4,
+                    0x26,
+                    0x43,
+                    0x9d,
+                    0x9a,
+                    0x8e,
+                    0xd0,
+                    0xcc,
+                    0xf1,
+                    0xc3,
+                    0xca,
+                    0x58u8.wrapping_add(profile),
+                ]);
+                window.title = format!("Amplifier Studio · Release QA {profile}");
+            }
+        }
+        context
+    };
     let app = tauri::Builder::default()
         .setup(|_app| {
             #[cfg(desktop)]
@@ -631,7 +666,7 @@ pub fn run() {
             #[cfg(desktop)]
             app_updates::install_update,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Amplifier Studio");
 
     #[cfg(desktop)]

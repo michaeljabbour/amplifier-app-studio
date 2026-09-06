@@ -5,6 +5,7 @@ import { CapabilityPalette } from "./components/CapabilityPalette";
 import { Composer } from "./components/Composer";
 import { CoordinatorHome } from "./components/CoordinatorHome";
 import { Footer } from "./components/Footer";
+import { ExecutionPresence } from "./components/ExecutionMap";
 import { Inspector, type InspectorTab } from "./components/Inspector";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { ProviderSetupDialog } from "./components/ProviderSetupDialog";
@@ -54,6 +55,7 @@ import {
   setThinkingExpanded,
 } from "./reducer";
 import { saveInlineVisualPng } from "./visualExport";
+import { assertOutputHostMatchesSession } from "./outputAccess";
 import {
   createGuiId,
   addBundle,
@@ -151,8 +153,10 @@ export default function App() {
   const [transport, setTransport] = createSignal(transportLabel());
   const [catalog, setCatalog] = createSignal<CapabilityCatalog>({ bundles: [], providers: [] });
   const [catalogError, setCatalogError] = createSignal<string>();
+  const [catalogLoading, setCatalogLoading] = createSignal(false);
+  let catalogRequest = 0;
   const [selectedLaneId, setSelectedLaneId] = createSignal<string>();
-  const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("run");
+  const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("map");
   const [leftOpen, setLeftOpen] = createSignal(window.matchMedia("(min-width: 761px)").matches);
   const [rightOpen, setRightOpen] = createSignal(false);
   const [workbenchSurface, setWorkbenchSurface] = createSignal<"agent" | "terminal">("agent");
@@ -319,7 +323,6 @@ export default function App() {
       if (home?.url) void refreshHostProjectRoot(home).catch(() => undefined);
     }).catch((error) => setRuntimeError(cleanError(error)));
     void refreshTranscription();
-    queueMicrotask(() => void refreshCatalog());
     const checkForUpdates = () => {
       if (appUpdatesEnabled() && !updateInProgress()) void refreshAppUpdate(false);
     };
@@ -373,6 +376,10 @@ export default function App() {
     }
     if (sessionForGuiId(guiId)?.phase === "ready") clearRestoreTimeout(guiId);
     const type = typeof record.type === "string" ? record.type : "";
+    const modeSession = sessionForGuiId(guiId);
+    if ((type === "runtime.capabilities" || type === "turn.completed") && modeSession?.runtimeCapabilities?.operations["modes.get"]) {
+      void sendOp(guiId, { op: "modes.get" }).catch((error) => reportSendError(guiId, error));
+    }
     if ((type === "session.started" || type === "session.attached") && !initialized.has(guiId)) {
       initialized.add(guiId);
       void sendOp(guiId, { op: "runtime.capabilities" }).catch((error) => reportSendError(guiId, error));
@@ -446,7 +453,6 @@ export default function App() {
         localStorage.setItem("amplifier-studio.project-dir", input.projectDir);
         setDefaultDir(input.projectDir);
       }
-      if (input.projectDir) void refreshCatalog(input.projectDir, input.hostUrl, input.hostId);
     } catch (error) {
       pendingInitialPrompts.delete(guiId);
       update(guiId, (current) => markExited(current, undefined, cleanError(error)));
@@ -679,14 +685,46 @@ export default function App() {
     );
   };
 
+  const catalogContext = (session = active()) => {
+    if (session) {
+      if (session.hostId === "local" || (!session.hostId && !session.hostUrl)) {
+        return { projectDir: session.projectDir, hostId: "local", hostUrl: undefined };
+      }
+      const host = runtimeHostForSession(session, runtimeHosts());
+      return { projectDir: session.projectDir, hostId: session.hostId || host?.id || "configured", hostUrl: session.hostUrl || host?.url };
+    }
+    const host = sessionHomeHost();
+    return { projectDir: knownHostProjectRoot(host), ...sessionHostInput(host) };
+  };
+
   const refreshCatalog = async (projectDir?: string, hostUrl?: string, hostId?: string) => {
+    const context = projectDir !== undefined || hostUrl !== undefined || hostId !== undefined
+      ? { projectDir, hostUrl, hostId }
+      : catalogContext();
+    const request = ++catalogRequest;
+    setCatalogLoading(true);
+    setCatalog({ bundles: [], providers: [] });
+    setCatalogError(undefined);
     try {
-      setCatalog(await listCatalog(projectDir, hostUrl, hostId));
-      setCatalogError(undefined);
+      const result = await listCatalog(context.projectDir, context.hostUrl, context.hostId);
+      if (request === catalogRequest) setCatalog(result);
     } catch (error) {
-      setCatalogError(cleanError(error));
+      if (request === catalogRequest) setCatalogError(cleanError(error));
+    } finally {
+      if (request === catalogRequest) setCatalogLoading(false);
     }
   };
+
+  // A restored/selected session changes the catalog's compute and directory as
+  // one unit. Slow responses from the previous computer cannot replace it.
+  const catalogContextKey = createMemo(() => dialog() || settingsOpen() ? undefined : JSON.stringify(catalogContext()));
+  createEffect(() => {
+    const key = catalogContextKey();
+    if (key) {
+      const context = JSON.parse(key) as Pick<NewSessionInput, "projectDir" | "hostUrl" | "hostId">;
+      void refreshCatalog(context.projectDir, context.hostUrl, context.hostId);
+    }
+  });
 
   const openDrawer = () => {
     setDrawerOpen(true);
@@ -699,13 +737,15 @@ export default function App() {
 
   const openNewDialog = async () => {
     const host = sessionHomeHost();
-    // A saved host record is only a hint. The host's current config is the
-    // security boundary and may have changed since Studio last connected.
-    const remembered = host?.url
-      ? await refreshHostProjectRoot(host).catch(() => knownHostProjectRoot(host))
-      : knownHostProjectRoot(host);
-    if (host?.url) await refreshCatalog(remembered, host.url, host.id);
+    // Show the editable draft immediately, including when the saved host is
+    // offline. Launch still validates the host's current project boundary.
+    const remembered = knownHostProjectRoot(host);
     setDialog({ projectDir: remembered, ...sessionHostInput(host) });
+    if (host?.url) {
+      void refreshHostProjectRoot(host)
+        .catch(() => remembered)
+        .then((root) => refreshCatalog(root, host.url, host.id));
+    }
   };
 
   const openSibling = (bundle?: string, provider?: ProviderOption) => {
@@ -818,14 +858,52 @@ export default function App() {
     }
   };
 
+  const selectModel = async (provider: ProviderOption) => {
+    const session = active();
+    if (!session) return;
+    if (!session.runtimeCapabilities?.operations["model.set"]) { openSibling(undefined, provider); return; }
+    if (session.busy || session.modelPending) return;
+    const requestId = crypto.randomUUID();
+    update(session.guiId, (state) => ({ ...state, modelPending: requestId, modelError: undefined }));
+    window.setTimeout(() => update(session.guiId, (state) => state.modelPending === requestId ? { ...state, modelPending: undefined, modelError: "The runtime did not confirm the model change." } : state), 10000);
+    try { await sendOp(session.guiId, { op: "model.set", provider: provider.name, model: provider.model }); }
+    catch (error) { update(session.guiId, (state) => ({ ...state, modelPending: undefined, modelError: cleanError(error) })); }
+  };
+
+  const setNativeModes = async (names: string[]) => {
+    const session = active();
+    if (!session?.runtimeCapabilities?.operations["modes.set"] || session.busy || !session.nativeModes) return;
+    const requestId = crypto.randomUUID();
+    update(session.guiId, (state) => ({ ...state, nativeModes: { ...state.nativeModes!, pendingRequest: requestId, error: undefined } }));
+    const timeout = window.setTimeout(() => {
+      update(session.guiId, (state) => state.nativeModes?.pendingRequest === requestId ? { ...state, nativeModes: { ...state.nativeModes, pendingRequest: undefined, error: "The runtime did not confirm the change. Refresh modes before trying again." } } : state);
+    }, 10000);
+    try { await sendOp(session.guiId, { op: "modes.set", names }); }
+    catch (error) {
+      window.clearTimeout(timeout);
+      update(session.guiId, (state) => ({ ...state, nativeModes: { ...state.nativeModes!, pendingRequest: undefined, error: cleanError(error) } }));
+    }
+  };
+
   const registerBundle = async (uri: string, name?: string) => {
-    const projectDir = active()?.projectDir || defaultDir();
-    setCatalog(await addBundle({ projectDir, uri, name }));
+    const context = catalogContext();
+    const request = ++catalogRequest;
+    setCatalogLoading(true);
     setCatalogError(undefined);
+    try {
+      const result = await addBundle({ ...context, uri, name });
+      if (request === catalogRequest) setCatalog(result);
+    } catch (error) {
+      if (request === catalogRequest) setCatalogError(cleanError(error));
+      throw error;
+    } finally {
+      if (request === catalogRequest) setCatalogLoading(false);
+    }
   };
 
   const reloadCatalog = async () => {
-    await refreshCatalog(active()?.projectDir || defaultDir());
+    const context = catalogContext();
+    await refreshCatalog(context.projectDir, context.hostUrl, context.hostId);
   };
 
   const requestContextForActive = async () => {
@@ -922,7 +1000,7 @@ export default function App() {
   };
 
   return (
-    <div class="app-shell">
+    <div class="app-shell" classList={{ "native-desktop": isDesktopRuntime() }}>
       <TabStrip
         sessions={sessions()}
         activeId={activeId()}
@@ -943,10 +1021,8 @@ export default function App() {
             return;
           }
           if (attentionSessionId) activateSessionView(attentionSessionId);
-          openInspector("run");
+          openInspector(attentionSessionId ? "run" : "map");
         }}
-        onOpenExecution={() => openInspector("map")}
-        onOpenPlan={() => openInspector("plan")}
         terminalAvailable={Boolean(terminalCoordinator)}
         terminalOpen={workbenchSurface() === "terminal"}
         onToggleTerminal={() => setWorkbenchSurface((surface) => surface === "terminal" ? "agent" : "terminal")}
@@ -1026,6 +1102,9 @@ export default function App() {
             <WorkspaceSidebar
               state={session()}
               parallelSummary={parallelSessionSummary(sessions())}
+              sessions={sessions()}
+              onSelectSession={activateSessionView}
+              onLoop={() => { setInspectorTab("map"); setRightOpen(true); }}
               lanes={lanes()}
               selectedLaneId={selectedLaneId()}
               onSelectLane={selectLane}
@@ -1039,6 +1118,7 @@ export default function App() {
                 onDetach={() => detachSessionView(session().guiId)}
                 onStop={() => requestRuntimeStop(session().guiId)}
               />
+              <div class="mobile-loop-presence"><ExecutionPresence state={session()} onOpen={() => openInspector("map")} /></div>
               <Transcript
                 state={session()}
                 onInterrupt={() => void interrupt()}
@@ -1072,6 +1152,10 @@ export default function App() {
               </div>
               <Footer
                 state={session()}
+                providers={catalog().providers}
+                onRequestModes={() => { void sendOp(session().guiId, { op: "modes.get" }).catch((error) => reportSendError(session().guiId, error)); }}
+                onSetModes={(names) => void setNativeModes(names)}
+                onSelectModel={(provider) => void selectModel(provider)}
                 onCycleEffort={() => void cycleEffort()}
                 onSetEffort={(effort) => void setEffort(effort)}
                 onContext={() => { openInspector("context"); void requestContextForActive(); }}
@@ -1089,10 +1173,12 @@ export default function App() {
                 bundles={catalog().bundles}
                 providers={catalog().providers}
                 catalogError={catalogError()}
+                catalogLoading={catalogLoading()}
                 onTab={setInspectorTab}
                 onSelectLane={selectLane}
                 onDismissAlert={(id) => update(session().guiId, (state) => dismissAlert(state, id))}
                 onCycleEffort={() => void cycleEffort()}
+                onSetEffort={(effort) => void setEffort(effort)}
                 onStartSibling={openSibling}
                 onAddBundle={registerBundle}
                 onRefreshBundles={reloadCatalog}
@@ -1100,11 +1186,17 @@ export default function App() {
                 onStartCapability={openCapability}
                 onRequestContext={() => void requestContextForActive()}
                 onOpenOutput={async (output) => {
+                  const owner = session();
                   try {
                     if (output.inlineVisual) await saveInlineVisualPng(output.inlineVisual);
-                    else await openLocalOutput(session().projectDir, output.path, session().hostUrl, session().hostId);
+                    else {
+                      const context = catalogContext(owner);
+                      assertOutputHostMatchesSession(output, { ...owner, ...context });
+                      await openLocalOutput(context.projectDir, output.path, context.hostUrl, context.hostId);
+                    }
                   } catch (error) {
-                    update(session().guiId, (state) => addLocalNotice(state, String(error), "error"));
+                    update(owner.guiId, (state) => addLocalNotice(state, String(error), "error"));
+                    throw error;
                   }
                 }}
                 onClose={closeInspector}
@@ -1117,6 +1209,7 @@ export default function App() {
         <TerminalWorkSurface
           coordinator={coordinator}
           project={nativeTerminalProject()}
+          onPickProjectDir={pickProjectDirectory}
           onClose={() => setWorkbenchSurface("agent")}
         />
       )}</Show>
@@ -1283,7 +1376,7 @@ export default function App() {
             setRuntime(status);
             setRuntimeError(undefined);
             void refreshTranscription();
-            void refreshCatalog(defaultDir());
+            void refreshCatalog();
           }}
         />
       </Show>
@@ -1410,7 +1503,7 @@ export default function App() {
     if (!projectDir) return;
     localStorage.setItem("amplifier-studio.project-dir", projectDir);
     setDefaultDir(projectDir);
-    await refreshCatalog(projectDir);
+    await refreshCatalog(projectDir, undefined, "local");
   }
 
   function requestStoredResume(session: StoredSession) {
@@ -1538,7 +1631,7 @@ export default function App() {
     try {
       const installed = await installRuntime();
       setRuntime(installed);
-      await Promise.all([refreshTranscription(), refreshStored(), refreshCatalog(defaultDir())]);
+      await Promise.all([refreshTranscription(), refreshStored(), refreshCatalog()]);
     } catch (error) {
       setRuntimeError(cleanError(error));
     } finally {

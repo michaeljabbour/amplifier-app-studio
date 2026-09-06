@@ -92,12 +92,19 @@ describe("mobile layout contracts", () => {
     expect(tabStripSource).toContain("onClick={() => props.onToggleInspector(attention().sessionId)}");
     expect(inspectorSource).toContain('aria-label="Back to session"');
     expect(inspectorSource).toContain('aria-label="Close Work"');
-    expect(inspectorSource).toContain("{props.state.title}");
+    expect(inspectorSource).toContain("<strong>Session inspector</strong>");
     expect(inspectorSource).toContain("{placement().host}");
     expect(inspectorSource).toContain("{placement().project}");
-    for (const label of ["Run", "Agents", "Loop", "Plan", "Setup", "Bundles", "Outputs", "Context"]) {
-      expect(inspectorSource).toContain(`>${label}</button>`);
-    }
+    const primaryTabs = inspectorSource.slice(inspectorSource.indexOf("const mainTabs ="), inspectorSource.indexOf("const activityTabs ="));
+    expect([...primaryTabs.matchAll(/label: "([^"]+)"/g)].map((match) => match[1])).toEqual(["Loop", "Activity", "Outputs", "Setup", "Context"]);
+    const activityTabs = inspectorSource.slice(inspectorSource.indexOf("const activityTabs ="), inspectorSource.indexOf("const setupTabs ="));
+    for (const id of ["run", "agents", "plan", "agent"]) expect(activityTabs).toContain(`id: "${id}"`);
+    const setupTabs = inspectorSource.slice(inspectorSource.indexOf("const setupTabs ="), inspectorSource.indexOf("const keyNavigate ="));
+    expect([...setupTabs.matchAll(/label: "([^"]+)"/g)].map((match) => match[1])).toEqual(["Configuration", "Bundles"]);
+    expect(inspectorSource).toContain('aria-label="Work views" role="tablist"');
+    expect(inspectorSource).toContain('aria-label={group() === "run" ? "Activity sections" : "Setup sections"}');
+    expect(inspectorSource.indexOf('class="inspector-tabs"')).toBeLessThan(inspectorSource.indexOf('class="inspector-body"'));
+    expect(inspectorSource.indexOf('class="inspector-subnav"')).toBeLessThan(inspectorSource.indexOf('class="inspector-body"'));
     expect(mobileCss).toMatch(/\.machine-inspector,[\s\S]*top:\s*calc\(var\(--mobile-header-height\)[\s\S]*height:\s*auto;[\s\S]*display:\s*flex/);
     expect(mobileCss).toMatch(/\.inspector-tabs,[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
     expect(mobileCss).toMatch(/\.inspector-tabs button,[\s\S]*min-height:\s*44px/);

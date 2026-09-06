@@ -40,6 +40,11 @@ export function microphoneFailureMessage(cause: unknown): string {
 }
 
 export function VoiceInputButton(props: Props) {
+  const [starting, setStarting] = createSignal(false);
+  const [level, setLevel] = createSignal(0);
+  const [device, setDevice] = createSignal("Default microphone");
+  const [clip, setClip] = createSignal<AudioRecording>();
+  let disposed = false;
   const [active, setActive] = createSignal(false);
   const [processing, setProcessing] = createSignal(false);
   const [error, setError] = createSignal<string>();
@@ -49,7 +54,7 @@ export function VoiceInputButton(props: Props) {
   const setBlocked = (blocked: boolean, phase: "listening" | "transcribing" | "idle") => props.onActiveChange?.(blocked, phase);
 
   const toggle = async () => {
-    if (processing()) return;
+    if (processing() || starting()) return;
     if (active()) {
       const current = capture;
       capture = undefined;
@@ -63,12 +68,14 @@ export function VoiceInputButton(props: Props) {
           CAPTURE_STOP_TIMEOUT_MS,
           "The microphone did not finish the recording. Try again.",
         );
+        if (disposed) return;
+        setClip(recording);
         const transcript = await promiseWithTimeout(
           props.onTranscribe(recording),
           TRANSCRIPTION_TIMEOUT_MS,
           "Transcription took too long. Check the network connection and try again.",
         );
-        props.onDraft(appendTranscript(baseDraft, transcript));
+        if (!disposed) props.onDraft(appendTranscript(baseDraft, transcript));
       } catch (cause) {
         setError(cause instanceof Error
           ? cause.message
@@ -91,18 +98,23 @@ export function VoiceInputButton(props: Props) {
       setError(props.unavailableReason || "Speech-to-text is not configured, so there is nowhere to send the recording.");
       return;
     }
-    baseDraft = props.draft;
+    setStarting(true);
+    setLevel(0);
     try {
-      capture = await startAudioCapture();
+      capture = await startAudioCapture(undefined, (value, label) => { setLevel(value); setDevice(label); });
+      if (disposed) { capture.abort(); return; }
+      baseDraft = props.draft;
       setActive(true);
       setBlocked(true, "listening");
     } catch (cause) {
       setError(microphoneFailureMessage(cause));
       setBlocked(false, "idle");
+    } finally {
+      setStarting(false);
     }
   };
 
-  onCleanup(() => capture?.abort());
+  onCleanup(() => { disposed = true; capture?.abort(); setClip(undefined); });
 
   // Deliberately NOT used to disable the button. A disabled control with a tooltip is a dead end:
   // it cannot be focused on some platforms, tooltips are invisible to touch and to screen readers,
@@ -114,7 +126,7 @@ export function VoiceInputButton(props: Props) {
       : active()
         ? "Stop voice input and place the transcript in the draft"
         : "Use speech-to-text to fill the editable draft. Studio never submits automatically.";
-  const status = () => processing() ? "Transcribing voice input" : active() ? "Listening · click again to transcribe" : "";
+  const status = () => starting() ? "Opening microphone · wait to speak" : processing() ? "Transcribing voice input" : active() ? "Listening · click again to transcribe" : "";
 
   return (
     <span class="voice-input-control">
@@ -122,7 +134,7 @@ export function VoiceInputButton(props: Props) {
         type="button"
         class="voice-input-trigger"
         classList={{ active: active(), processing: processing() }}
-        disabled={props.disabled || processing()}
+        disabled={props.disabled || processing() || starting()}
         aria-pressed={active()}
         aria-label={active() ? "Stop voice input and transcribe" : "Start voice input"}
         title={tooltip()}
@@ -133,6 +145,10 @@ export function VoiceInputButton(props: Props) {
         </Show>
       </button>
       <Show when={status()}>{(message) => <span class="voice-input-status" aria-live="polite">{message()}</span>}</Show>
+      <Show when={active()}><span class="voice-level"><meter min="0" max="1" value={level()} aria-label="Microphone input level" /><span>{device()}</span></span></Show>
+      <Show when={clip() && !active() && !processing() && !starting()}>
+        <details class="voice-playback"><summary>Review recorded audio</summary><audio controls preload="none" src={`data:${clip()!.mediaType};base64,${clip()!.data}`} aria-label="Your last microphone recording" /><small>Compare this clip with the draft. Record again if words are missing.</small><button type="button" onClick={() => setClip(undefined)}>Discard recording</button></details>
+      </Show>
       <Show when={error()} keyed>{(message) => (
         <small role="alert">
           <span>{message}</span>

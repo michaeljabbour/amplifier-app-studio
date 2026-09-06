@@ -33,3 +33,14 @@ describe("terminal session drafts", () => {
     });
   });
 });
+
+describe("automatic terminal names", () => {
+  it("uses the directory and avoids existing names", async () => {
+    const { suggestedTerminalName } = await import("./sessionDrafts");
+    expect(suggestedTerminalName("/dev/Studio", [])).toBe("Studio");
+    expect(suggestedTerminalName("/dev/Studio", ["Studio", "Studio-2"])).toBe("Studio-3");
+    expect(suggestedTerminalName("/dev/Project with spaces!", [])).toBe("Project-with-spaces");
+    expect(suggestedTerminalName("/", [])).toBe("terminal");
+    expect(suggestedTerminalName("/" + "x".repeat(100), [])).toHaveLength(56);
+  });
+});

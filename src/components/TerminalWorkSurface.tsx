@@ -7,10 +7,12 @@ import type {
   TerminalSession,
 } from "../terminal";
 import {
+  suggestedTerminalName,
   renameDraftFor,
   renameDraftSubmission,
   type TerminalRenameDraft,
 } from "../terminal/sessionDrafts";
+import { groupByDirectory } from "../sessionGroups";
 import { TerminalEmulator } from "./TerminalEmulator";
 import "./TerminalWorkSurface.css";
 
@@ -19,12 +21,16 @@ interface Props {
   title?: string;
   project?: TerminalProjectIdentity;
   onClose?: () => void;
+  onPickProjectDir?: (defaultPath?: string) => Promise<string | undefined>;
   confirmTerminate?: (terminal: TerminalSession) => boolean | Promise<boolean>;
 }
 
 export function TerminalWorkSurface(props: Props) {
   const [state, setState] = createSignal<TerminalCoordinatorSnapshot>(props.coordinator.snapshot());
   const [createName, setCreateName] = createSignal("");
+  const [createProject, setCreateProject] = createSignal<TerminalProjectIdentity>();
+  const [pickingDirectory, setPickingDirectory] = createSignal(false);
+  const suggestedName = () => suggestedTerminalName(createProject()?.root || "", state().sessions.map((terminal) => terminal.name));
   const [creating, setCreating] = createSignal(false);
   const [renameDraft, setRenameDraft] = createSignal<TerminalRenameDraft>();
   const [working, setWorking] = createSignal<string>();
@@ -62,10 +68,10 @@ export function TerminalWorkSurface(props: Props) {
 
   const createTerminal = async (event: SubmitEvent) => {
     event.preventDefault();
-    const name = createName().trim();
-    if (!name) return;
+    const name = createName().trim() || suggestedName();
+    if (!createProject()?.root) return;
     await run("create", async () => {
-      const terminal = await props.coordinator.create({ name, project: props.project });
+      const terminal = await props.coordinator.create({ name, project: createProject() });
       setCreateName("");
       setCreating(false);
       await props.coordinator.attach(terminal.id);
@@ -127,24 +133,29 @@ export function TerminalWorkSurface(props: Props) {
                 class="primary"
                 title="New terminal"
                 aria-label="New terminal"
-                onClick={() => setCreating((value) => !value)}
+                onClick={() => { setCreateProject(props.project); setCreateName(""); setCreating((value) => !value); }}
               ><Plus aria-hidden="true" /></button>
             </div>
           </div>
 
           <Show when={creating()}>
             <form class="terminal-create" onSubmit={(event) => void createTerminal(event)}>
-              <label for="terminal-create-name">New terminal</label>
-              <input
-                id="terminal-create-name"
-                value={createName()}
-                onInput={(event) => setCreateName(event.currentTarget.value)}
-                placeholder="session-name"
-                autocomplete="off"
-                autofocus
-              />
+              <label>Directory</label>
+              <code class="terminal-create-directory" title={createProject()?.root}>{createProject()?.root || "Choose a directory"}</code>
+              <button type="button" disabled={pickingDirectory() || !props.onPickProjectDir} onClick={async () => {
+                setPickingDirectory(true);
+                try {
+                  const root = await props.onPickProjectDir?.(createProject()?.root);
+                  if (root) setCreateProject({ id: root, root, label: root.split(/[\\/]/).filter(Boolean).at(-1) || root });
+                } catch (error) { showError(error); } finally { setPickingDirectory(false); }
+              }}>{pickingDirectory() ? "Choosing…" : "Choose directory…"}</button>
+              <small>Terminal name: <strong>{createName().trim() || suggestedName()}</strong></small>
+              <details><summary>Customize name (optional)</summary>
+                <label for="terminal-create-name">Terminal name</label>
+                <input id="terminal-create-name" value={createName()} onInput={(event) => setCreateName(event.currentTarget.value)} placeholder={suggestedName()} autocomplete="off" />
+              </details>
               <div>
-                <button type="submit" class="primary" disabled={!createName().trim() || Boolean(working())}>Create</button>
+                <button type="submit" class="primary" disabled={!createProject()?.root || pickingDirectory() || Boolean(working())}>Create terminal</button>
                 <button type="button" onClick={() => setCreating(false)}>Cancel</button>
               </div>
             </form>
@@ -152,7 +163,10 @@ export function TerminalWorkSurface(props: Props) {
 
           <div class="terminal-rail-list">
             <Show when={state().sessions.length} fallback={<p>No terminals found on this host.</p>}>
-              <For each={state().sessions}>{(terminal) => (
+              <For each={groupByDirectory(state().sessions, (terminal) => ({ path: terminal.cwd || terminal.project?.root, host: terminal.host.id, hostName: terminal.host.label }))}>{(group) => (
+                <details open class="directory-group terminal-directory">
+                  <summary title={`${group.hostName} · ${group.path}`}>▱ {group.name}<span>{group.items.length}</span></summary>
+                  <For each={group.items}>{(terminal) => (
                 <button
                   type="button"
                   class="terminal-rail-item"
@@ -169,6 +183,8 @@ export function TerminalWorkSurface(props: Props) {
                     <b aria-label={`${terminal.attention.unseenCount} attention alerts`}>{terminal.attention.unseenCount}</b>
                   </Show>
                 </button>
+              )}</For>
+                </details>
               )}</For>
             </Show>
           </div>

@@ -774,21 +774,28 @@ export async function importStoredSession(
 }
 
 export async function listCatalog(projectDir?: string, hostUrl?: string, hostId?: string): Promise<CapabilityCatalog> {
-  const bridge = hostUrl ? normalizedBridgeUrl(hostUrl) : bridgeBaseUrl();
+  const bridge = catalogBridge(hostUrl, hostId);
   if (bridge) {
     await ensureBridgeToken(bridge, hostId);
     const url = hostApiUrl(bridge, "/catalog");
     const project = clean(projectDir);
     if (project) url.searchParams.set("projectDir", project);
-    return fetchJson<CapabilityCatalog>(url);
+    return fetchJson<CapabilityCatalog>(url, undefined, bridge);
   }
-  requireTauri();
+  requireDesktop();
   return invoke<CapabilityCatalog>("list_catalog", { projectDir: clean(projectDir) });
 }
 
-export async function addBundle(input: { projectDir?: string; uri: string; name?: string }): Promise<CapabilityCatalog> {
-  const bridge = bridgeBaseUrl();
+export async function addBundle(input: {
+  projectDir?: string;
+  uri: string;
+  name?: string;
+  hostUrl?: string;
+  hostId?: string;
+}): Promise<CapabilityCatalog> {
+  const bridge = catalogBridge(input.hostUrl, input.hostId);
   if (bridge) {
+    await ensureBridgeToken(bridge, input.hostId);
     return fetchJson<CapabilityCatalog>(hostApiUrl(bridge, "/catalog/bundles"), {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -797,14 +804,29 @@ export async function addBundle(input: { projectDir?: string; uri: string; name?
         uri: input.uri.trim(),
         name: clean(input.name),
       }),
-    });
+    }, bridge);
   }
-  requireTauri();
+  requireDesktop();
   return invoke<CapabilityCatalog>("add_bundle", {
     projectDir: clean(input.projectDir),
     uri: input.uri.trim(),
     name: clean(input.name),
   });
+}
+
+/** Catalog reads and bundle writes must resolve on the same compute as their
+ * project path. A saved bridge is a connection preference, not permission to
+ * send a restored local session's /Users/... folder to another machine. */
+function catalogBridge(hostUrl?: string, hostId?: string): string | undefined {
+  if (hostId === "local") return undefined;
+  const explicit = hostUrl?.trim();
+  if (explicit) {
+    const bridge = /^(?:https?|wss?):\/\//i.test(explicit) ? normalizedBridgeUrl(explicit) : undefined;
+    if (!bridge) throw new Error("Choose a valid compute host address before loading its project catalog.");
+    return bridge;
+  }
+  if (hostId) throw new Error("Reconnect the selected compute host address before loading its project catalog.");
+  return isDesktopRuntime() ? undefined : bridgeBaseUrl();
 }
 
 export async function defaultProjectDir(hostUrl?: string, hostId?: string): Promise<string> {

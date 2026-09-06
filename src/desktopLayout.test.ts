@@ -79,7 +79,7 @@ describe("desktop navigation and history contracts", () => {
     expect(appSource).toContain("<TerminalWorkSurface");
     expect(tabStripSource).toContain('<SquareTerminal aria-hidden="true" />');
     expect(tabStripSource).toContain("aria-pressed={props.terminalOpen}");
-    expect(terminalSurfaceSource).toContain("project: props.project");
+    expect(terminalSurfaceSource).toContain("project: createProject()");
     expect(terminalSurfaceSource).toContain('class="terminal-back"');
     expect(terminalSurfaceSource).toContain("<TerminalEmulator");
     expect(terminalSurfaceSource).not.toContain("terminal-command-bar");

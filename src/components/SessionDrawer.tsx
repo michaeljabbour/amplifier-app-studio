@@ -3,6 +3,7 @@ import { Blocks, FolderKanban, History, MessageCircle, MoreHorizontal, Plus, Rad
 import type { SessionViewState, StoredSession } from "../protocol";
 import { storedSessionResumeBlocker, storedSessionShouldList, storedSessionWarning } from "../sessionAvailability";
 import { storedSessionMatchesQuery, storedSessionSourceKind, storedSessionSourceLabel } from "../storedSessions";
+import { groupByDirectory, shortBundleName } from "../sessionGroups";
 import { keepModalFocus } from "../focusTrap";
 
 interface Props {
@@ -164,9 +165,9 @@ export function SessionDrawer(props: Props) {
         </div>
 
         <div class="history-source-filter" role="group" aria-label="Filter history by compute source">
-          <button type="button" classList={{ active: sourceFilter() === "all" }} onClick={() => setSourceFilter("all")}>All <span>{sourceCounts().local + sourceCounts().remote}</span></button>
-          <button type="button" classList={{ active: sourceFilter() === "local" }} onClick={() => setSourceFilter("local")}>Local <span>{sourceCounts().local}</span></button>
-          <button type="button" classList={{ active: sourceFilter() === "remote" }} onClick={() => setSourceFilter("remote")}>Remote <span>{sourceCounts().remote}</span></button>
+          <button type="button" aria-pressed={sourceFilter() === "all"} classList={{ active: sourceFilter() === "all" }} onClick={() => setSourceFilter("all")}>All <span>{sourceCounts().local + sourceCounts().remote}</span></button>
+          <button type="button" aria-pressed={sourceFilter() === "local"} classList={{ active: sourceFilter() === "local" }} onClick={() => setSourceFilter("local")}>Local <span>{sourceCounts().local}</span></button>
+          <button type="button" aria-pressed={sourceFilter() === "remote"} classList={{ active: sourceFilter() === "remote" }} onClick={() => setSourceFilter("remote")}>Remote <span>{sourceCounts().remote}</span></button>
         </div>
 
         <div class="stored-list" onScroll={revealMoreNearBottom}>
@@ -191,8 +192,11 @@ export function SessionDrawer(props: Props) {
           <Show when={!props.loading && !props.error && visible().length === 0}>
             <div class="drawer-empty"><span>◇</span><strong>No matching sessions</strong><p>Completed Amplifier sessions will appear here.</p></div>
           </Show>
-          <Show when={props.warning}><div class="drawer-warning">{props.warning}</div></Show>
-          <For each={visible()}>
+          <Show when={props.warning}><details class="drawer-warning"><summary>Some hosts are unavailable · history is incomplete</summary><p>{props.warning}</p><button type="button" onClick={props.onRefresh}>Retry connections</button></details></Show>
+          <For each={groupByDirectory(visible(), (session) => ({ path: session.projectDir || session.projectSlug, host: session.hostId, hostName: session.hostName }))}>{(group) => (
+            <details open class="directory-group history-directory">
+              <summary title={group.path}><span>{group.name}</span><small>{group.hostName} · {group.items.length}</small></summary>
+          <For each={group.items}>
             {(session) => {
               const blocker = () => storedSessionResumeBlocker(session, false);
               const note = () => blocker() || storedSessionWarning(session);
@@ -209,13 +213,9 @@ export function SessionDrawer(props: Props) {
                   <p class="stored-summary">{session.summary}</p>
                   <div class="stored-meta">
                     <span class={`source-badge ${storedSessionSourceKind(session)}`}>{storedSessionSourceKind(session)}</span>
-                    <span>{session.hostName || "This computer"}</span><i />
-                    <span>{session.bundle}</span><i />
-                    <span>{session.turnCount ?? "—"} turns</span><i />
-                    <span>{session.messageCount} messages</span><i />
-                    <span>{session.eventCount === undefined ? "history verified on open" : `${session.eventCount} records`}</span>
+                    <span class="stored-bundle" title={session.bundle}>{shortBundleName(session.bundle)}</span>
+                    <span>{session.turnCount ?? "—"} turns</span>
                   </div>
-                  <div class="stored-path">{session.projectDir || session.projectSlug}</div>
                   <div class="stored-bottomline">
                     <code>{session.sessionId.slice(0, 12)}</code>
                     <Show when={session.tags.length}><span class="tag">{session.tags[0]}</span></Show>
@@ -226,6 +226,8 @@ export function SessionDrawer(props: Props) {
               );
             }}
           </For>
+            </details>
+          )}</For>
           <Show when={visible().length < matching().length}>
             <button class="drawer-load-more" type="button" onClick={() => setLimit((value) => value + 300)}>
               Show 300 more <span>{matching().length - visible().length} remaining</span>
@@ -233,7 +235,7 @@ export function SessionDrawer(props: Props) {
           </Show>
         </div>
         <div class="drawer-footer">
-          {props.sourceName} · showing {visible().length} of {matching().length} resumable matches · {sourceFilter() === "all" ? "all sources" : `${sourceFilter()} only`}
+          {props.sourceName} · showing {visible().length} of {matching().length} sessions · {sourceFilter() === "all" ? "all sources" : `${sourceFilter()} only`}
         </div>
         <div class="mobile-drawer-footer">
           <button type="button" class="mobile-new-session" onClick={() => { props.onClose(); props.onNew(); }}><Plus aria-hidden="true" /><span>New session</span></button>
@@ -255,7 +257,7 @@ function healthLabel(state: StoredSession["state"]): string {
     case "indexing": return "metadata missing";
     case "empty": return "empty run";
     case "corrupt": return "corrupt";
-    default: return "ready";
+    default: return "Resumable";
   }
 }
 

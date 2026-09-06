@@ -86,7 +86,11 @@ export function bumpRelease(version, build, root = repositoryRoot) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.includes("--check")) {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: node scripts/bump-version.mjs [MAJOR.MINOR.PATCH | --check | --help]");
+  } else if (args.some((arg) => arg.startsWith("-") && arg !== "--check")) {
+    throw new Error("Unknown option. Use --help for usage.");
+  } else if (args.includes("--check")) {
     const { version, build } = current();
     console.log(`Amplifier Studio ${version}, mobile build ${build}`);
   } else {

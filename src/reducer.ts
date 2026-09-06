@@ -24,6 +24,7 @@ import {
 } from "./protocol";
 import { estimateRunPodCost, mergeCostBasis, type CostBasis } from "./costEstimate";
 import { splitDocumentAttachments } from "./attachments";
+import { discoverOutputArtifacts as outputArtifacts, outputTargetInput, outputToolFailed, toolInputPaths } from "./outputDiscovery";
 
 type NewTranscriptBlock = TranscriptBlock extends infer Block
   ? Block extends { id: string }
@@ -206,6 +207,12 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         ...next,
         context: contextFromRecord(next.context, record),
       };
+    case "model.state":
+      return { ...next, model: record.ok === true ? stringValue(record.model, next.model) : next.model, modelPending: undefined, modelError: record.ok === false ? stringValue(record.detail, "The runtime did not apply the model change") : undefined };
+    case "modes.state": {
+      const modes = Array.isArray(record.modes) ? record.modes.filter(isRecord).filter((mode) => typeof mode.name === "string").map((mode) => ({ name: String(mode.name), description: stringValue(mode.description), source: stringValue(mode.source), advertised: mode.advertised !== false, combinable: mode.combinable !== false })) : [];
+      return { ...next, nativeModes: { modes, active: stringList(record.active), maxActive: Math.max(1, numberValue(record.max_active) || 1), error: record.ok === false ? stringValue(record.detail, "The runtime did not apply the mode change") : undefined } };
+    }
     case "effort.state": {
       const effort = typeof record.effort === "string" ? record.effort : next.effort;
       const levels = stringList(record.levels);
@@ -517,7 +524,7 @@ export function registerInlineVisual(
   };
   return {
     ...state,
-    outputs: [...state.outputs.filter((item) => item.id !== artifact.id), output].slice(-80),
+    outputs: [...state.outputs.filter((item) => item.id !== artifact.id), output],
   };
 }
 
@@ -737,6 +744,7 @@ export function retryRestore(state: SessionViewState): SessionViewState {
       plans: {},
       pipeline: undefined,
       outputs: [],
+      pendingOutputTools: {},
       alerts: [],
       context: emptyContext(),
       turnLoop: emptyTurnLoop(),
@@ -815,6 +823,24 @@ function checkEnvelope(state: SessionViewState, record: ProtocolRecord): Session
 
 function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): SessionViewState {
   let next = state;
+  const outputCallId = stringValue(event.tool_call_id);
+  const outputCallKey = `${stringValue(event.session_id)}:${outputCallId}`;
+  if (event.kind === "tool_pre" && outputCallId) {
+    next = { ...next, pendingOutputTools: { ...next.pendingOutputTools,
+      [outputCallKey]: { toolName: stringValue(event.tool_name), input: outputTargetInput(event.tool_input) },
+    } };
+  } else if ((event.kind === "tool_post" || event.kind === "tool_error") && outputCallId) {
+    const pending = next.pendingOutputTools?.[outputCallKey];
+    if (pending) {
+      event = { ...event, tool_name: stringValue(event.tool_name) || pending.toolName,
+        tool_input: { ...pending.input, ...objectValue(event.tool_input) } };
+      const pendingOutputTools = { ...next.pendingOutputTools };
+      delete pendingOutputTools[outputCallKey];
+      next = { ...next, pendingOutputTools };
+    }
+  }
+  // These explicit events have no tool_post, and may belong to child agents.
+  if (event.kind === "artifact_write") return captureOutputs(next, event);
   // A declared pipeline belongs to one turn. Start every new prompt from the
   // generic observed loop; a Resolve/Attractor turn will replace it when its
   // own `pipeline_started` event supplies the authoritative topology.
@@ -1781,96 +1807,24 @@ function settleLaneEvent(
 }
 
 function captureOutputs(state: SessionViewState, event: UIEvent): SessionViewState {
-  if (event.kind !== "tool_post") return state;
   const toolName = stringValue(event.tool_name);
-  if (!isOutputProducingTool(toolName)) return state;
   const artifacts = outputArtifacts(event);
   if (!artifacts.length) return state;
-  const source = toolName ? displayToolName(toolName) : undefined;
+  const source = toolName ? displayToolName(toolName) : "Amplifier file write";
   const additions = artifacts.map((artifact) => ({
     id: artifact.path,
     kind: artifact.kind,
     title: artifact.path.split(/[\\/]/).at(-1) || artifact.path,
     path: artifact.path,
-    source,
+    source: artifact.provenance === "tool-report" ? `${source} · reported output` : source,
+    provenance: artifact.provenance,
     laneId: stringValue(event.parent_id) ? stringValue(event.session_id) || undefined : undefined,
     toolCallId: stringValue(event.tool_call_id) || undefined,
     eventId: stringValue(event.event_id) || undefined,
     runtimeHost: stringValue(event.runtime_host) || undefined,
   }));
   const ids = new Set(additions.map((item) => item.id));
-  return { ...state, outputs: [...state.outputs.filter((item) => !ids.has(item.id)), ...additions].slice(-80) };
-}
-
-function outputArtifacts(event: UIEvent): Array<{
-  path: string;
-  kind: SessionViewState["outputs"][number]["kind"];
-}> {
-  const toolName = stringValue(event.tool_name);
-  if (!isOutputProducingTool(toolName)) return [];
-  const typedArtifacts = Array.isArray(event.artifacts)
-    ? event.artifacts.filter(isRecord).flatMap((artifact) => {
-        const path = stringValue(artifact.path).trim();
-        if (!path) return [];
-        const kind = stringValue(artifact.kind);
-        return [{
-          path,
-          kind: ["file", "image", "diagram", "data"].includes(kind)
-            ? kind as SessionViewState["outputs"][number]["kind"]
-            : outputKind(path),
-        }];
-      })
-    : [];
-  if (typedArtifacts.length) return typedArtifacts;
-
-  const fromResult = collectOutputPaths(event.result).map((path) => ({ path, kind: outputKind(path) }));
-  if (fromResult.length) return fromResult;
-
-  // Fall back to the tool's INPUT. Which file a write touched is stated in the call, not
-  // necessarily in the reply: a Claude-Code-shaped Write returns only
-  // {content: "File created successfully at: ..."}, so reading the result alone made Studio's
-  // output inventory depend on the runtime's reply shape. An Edit that echoes file_path was
-  // captured; a Write that does not was silently dropped.
-  return toolInputPaths(event.tool_input).map((path) => ({ path, kind: outputKind(path) }));
-}
-
-/** Path-shaped fields a write-like tool call uses to name its target. */
-const TOOL_INPUT_PATH_KEYS = ["file_path", "filePath", "path", "filename", "target_file", "TargetFile"];
-
-function toolInputPaths(input: unknown): string[] {
-  if (!isRecord(input)) return [];
-  const paths = TOOL_INPUT_PATH_KEYS
-    .map((key) => stringValue(input[key]).trim())
-    // "/dev/null" is a real value some tools pass and never an artifact worth listing.
-    .filter((value) => value.length > 0 && value !== "/dev/null" && value !== "undefined" && value !== "null");
-  return [...new Set(paths)];
-}
-
-function isOutputProducingTool(toolName: string): boolean {
-  const tool = toolName.trim().toLowerCase().replaceAll("-", "_");
-  const leaf = tool.split(/[.:/]/).at(-1) || tool;
-  if (/^(?:read|read_file|glob|grep|search|find|list|ls|stat|inspect|query|fetch|get)$/.test(leaf)) return false;
-  return /(?:^|_)(?:write|create|generate|render|export|save|download|edit|patch|screenshot)(?:_|$)/.test(leaf)
-    || ["apply_patch", "imagegen"].includes(leaf);
-}
-
-function collectOutputPaths(value: unknown, key = "", depth = 0): string[] {
-  if (depth > 5) return [];
-  if (typeof value === "string") {
-    if (!/(?:file_?path|output_?path|artifact_?path|image_?path|path)$/i.test(key)) return [];
-    return /^(?:\/|[A-Za-z]:\\|\.\.?\/)/.test(value) ? [value] : [];
-  }
-  if (Array.isArray(value)) return value.flatMap((item) => collectOutputPaths(item, key, depth + 1));
-  if (!isRecord(value)) return [];
-  return Object.entries(value).flatMap(([nestedKey, item]) => collectOutputPaths(item, nestedKey, depth + 1));
-}
-
-function outputKind(path: string): "file" | "image" | "diagram" | "data" {
-  const extension = path.split(".").at(-1)?.toLowerCase();
-  if (["png", "jpg", "jpeg", "webp", "gif", "avif", "svg"].includes(extension || "")) return "image";
-  if (["dot", "gv", "mermaid", "mmd"].includes(extension || "")) return "diagram";
-  if (["csv", "tsv", "json", "jsonl", "parquet"].includes(extension || "")) return "data";
-  return "file";
+  return { ...state, outputs: [...state.outputs.filter((item) => !ids.has(item.id)), ...additions] };
 }
 
 function reduceLaneEvent(
@@ -2439,9 +2393,7 @@ function runningAgentCount(state: SessionViewState): number {
 }
 
 function toolResultFailed(event: UIEvent): boolean {
-  const result = objectValue(event.result);
-  const status = stringValue(result.status).toLowerCase();
-  return result.success === false || ["denied", "rejected", "error", "failed"].includes(status) || Boolean(result.error);
+  return outputToolFailed(event);
 }
 
 function liveToolLabel(event: UIEvent): string {

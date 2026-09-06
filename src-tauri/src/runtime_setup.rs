@@ -17,7 +17,7 @@ use tokio::io::AsyncWriteExt;
 /// honestly report the same version. A version check can therefore pass when the pin has
 /// drifted, which is the case it exists to catch. `installed_runtime_commit` reads
 /// the commit the package manager recorded and `status()` compares it against this constant.
-const RUNTIME_INSTALL_REF: &str = "5cb6916bb7d6025be90b633f5baafbccb98e7396";
+const RUNTIME_INSTALL_REF: &str = "29dc48281b8943593bb925b8718295954dcc55c4";
 
 /// Bootstrap scripts are fetched from the pinned commit and checksum-verified before they run.
 ///
@@ -193,8 +193,7 @@ pub fn status() -> RuntimeStatus {
     } else if install_supported {
         "Amplifier's session runtime is not installed yet".to_owned()
     } else {
-        "Use a configured Rust bridge on this platform; local runtime installation is not supported yet"
-            .to_owned()
+        "Connect this device to a computer to access your projects and sessions".to_owned()
     };
     RuntimeStatus {
         installed,
