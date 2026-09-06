@@ -503,6 +503,106 @@ describe("bridge trust storage", () => {
     vi.useRealTimers();
   });
 
+  it("reattaches once on foreground return and ignores the replaced socket", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const show = (state: DocumentVisibilityState) => {
+      visibility.mockReturnValue(state);
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
+    const onExit = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-foreground", projectDir: "/project" },
+      { onRecord, onLog: vi.fn(), onExit },
+    );
+    sockets[0].open();
+    sockets[0].message({ type: "ready" });
+    const connection = await pending;
+    sockets[0].message(recordEnvelope({ type: "history.end", cursor: 7 }));
+    show("hidden");
+    expect(sockets).toHaveLength(1);
+    show("visible");
+    expect(sockets).toHaveLength(2);
+    show("hidden");
+    show("visible");
+    expect(sockets).toHaveLength(2);
+    sockets[1].open();
+    expect(sockets[1].messages()).toEqual([{ type: "attach", since: 7, version: 1 }]);
+    sockets[0].message(recordEnvelope({ type: "history.end", cursor: 999 }));
+    sockets[0].message({ type: "event", channel: "exit", payload: { message: "stale exit" } });
+    sockets[0].disconnect();
+    sockets[1].message({ type: "ready" });
+    sockets[1].message(eventEnvelope("recovered", 8, true));
+    sockets[1].message(recordEnvelope({ type: "history.end", cursor: 8 }));
+    expect(runtimeEventIds(onRecord)).toEqual(["recovered"]);
+    expect(onExit).not.toHaveBeenCalled();
+    expect(onRecord.mock.calls.some(([record]) => record.cursor === 999)).toBe(false);
+    sockets[1].disconnect();
+    show("hidden");
+    show("visible");
+    expect(sockets).toHaveLength(3);
+    sockets[2].open();
+    expect(sockets[2].messages()).toEqual([{ type: "attach", since: 8, version: 1 }]);
+    sockets[2].message({ type: "ready" });
+    sockets[2].message(recordEnvelope({ type: "history.end", cursor: 8 }));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sockets).toHaveLength(3);
+    connection.dispose();
+    show("hidden");
+    show("visible");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(3);
+  });
+
+  it("does not let an old replay deadline flush a replacement socket's history", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    class TestWebSocket extends FakeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+    saveBridgeUrl("http://127.0.0.1:9555");
+    saveBridgeToken("0123456789abcdef0123456789abcdef");
+    const onRecord = vi.fn();
+    const pending = launchSession(
+      { guiId: "gui-replay-generation", projectDir: "/project" },
+      { onRecord, onLog: vi.fn(), onExit: vi.fn() },
+    );
+    sockets[0].open();
+    sockets[0].message({ type: "ready" });
+    const connection = await pending;
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(300);
+    sockets[1].open();
+    sockets[1].message({ type: "ready" });
+    await vi.advanceTimersByTimeAsync(11_000);
+    sockets[1].disconnect();
+    await vi.advanceTimersByTimeAsync(300);
+    sockets[2].open();
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[2].message({ type: "ready" });
+    sockets[2].message(eventEnvelope("live-after-ack", 10));
+    expect(runtimeEventIds(onRecord)).toEqual([]);
+    sockets[2].message(eventEnvelope("earlier-history", 9, true));
+    sockets[2].message(recordEnvelope({ type: "history.end", cursor: 9 }));
+    expect(runtimeEventIds(onRecord)).toEqual(["earlier-history", "live-after-ack"]);
+    connection.dispose();
+  });
+
   // Regression: the host rejects the reattach because the runtime is gone, and this used to
   // close the socket straight into the reconnect backoff. The view retried a runtime that could
   // never come back -- "Reconnecting to compute" forever, composer disabled, and detaching the

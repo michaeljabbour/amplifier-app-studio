@@ -217,6 +217,15 @@ restart, stored resume is the current recovery floor. Set `AMPLIFIER_HOME` to
 persistent storage on ephemeral VMs or pods if stored sessions must survive
 replacement of the compute instance itself.
 
+Browser and remote WebSocket views reattach when Studio returns from the
+background, replaying from their last durable history cursor. An attachment
+already awaiting the host is reused; events and replay deadlines from replaced
+sockets cannot affect the current connection. Reattachment preserves the
+existing view and drafts and does not resend prompts or steering. A socket send
+alone does not prove runtime acceptance; queued-input reconciliation still
+requires correlated runtime acknowledgements. Native local IPC does not use
+this WebSocket recovery path.
+
 Release and operations checks can exercise that contract without exposing the
 host token on the command line:
 

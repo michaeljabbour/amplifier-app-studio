@@ -143,6 +143,7 @@ interface BridgeConnection extends SessionConnection {
     timer: number;
   };
   sawExit: boolean;
+  removeForegroundListener?: () => void;
   reconnectAttempt: number;
   reconnectTimer?: number;
   lastCursor: number;
@@ -985,6 +986,7 @@ async function launchBridgeSession(
     replayCoveredIds: new Set(),
     dispose: () => {
       connection.disposed = true;
+      connection.removeForegroundListener?.();
       if (connection.reconnectTimer !== undefined) window.clearTimeout(connection.reconnectTimer);
       clearReplayWatchdog(connection);
       if (connection.pendingStop) {
@@ -1002,30 +1004,40 @@ async function launchBridgeSession(
     let initiallyReady = false;
     let settled = false;
 
+    let awaitingAcknowledgement = false;
     const connect = (reattach: boolean) => {
       if (connection.disposed || connection.stopCompleted || connection.sawExit) return;
+      clearReplayWatchdog(connection);
+      if (connection.reconnectTimer !== undefined) window.clearTimeout(connection.reconnectTimer);
+      connection.reconnectTimer = undefined;
+      awaitingAcknowledgement = true;
       connection.replaying = reattach;
       connection.replayBuffer = [];
       connection.replayCoveredIds.clear();
       const socket = new WebSocket(url, [WS_PROTOCOL, websocketBearerProtocol(token)]);
+      const previousSocket = connection.socket;
       connection.socket = socket;
+      previousSocket?.close(1000, "session view reattaching");
       let acknowledged = false;
       const timer = window.setTimeout(() => {
-        if (acknowledged) return;
+        if (acknowledged || connection.socket !== socket || connection.disposed) return;
         socket.close(4000, "bridge acknowledgement timeout");
         if (!initiallyReady && !settled) {
           settled = true;
+          connection.removeForegroundListener?.();
           bridgeConnections.delete(options.guiId);
           reject(new Error("The Rust bridge did not acknowledge the session start"));
         }
       }, 15_000);
 
       socket.addEventListener("open", () => {
+        if (connection.socket !== socket || connection.disposed) return;
         sendBridge(socket, reattach
           ? { type: "attach", since: connection.lastCursor }
           : { type: "start", options: wireOptions(options) });
       });
       socket.addEventListener("message", (event) => {
+        if (connection.socket !== socket || connection.disposed) return;
         let envelope: BridgeEnvelope;
         try {
           envelope = JSON.parse(String(event.data)) as BridgeEnvelope;
@@ -1044,6 +1056,7 @@ async function launchBridgeSession(
 
         if (envelope.type === "ready") {
           acknowledged = true;
+          awaitingAcknowledgement = false;
           initiallyReady = true;
           connection.reconnectAttempt = 0;
           handlers.onConnectionChange?.({
@@ -1076,6 +1089,7 @@ async function launchBridgeSession(
           if (!initiallyReady && !settled) {
             settled = true;
             connection.disposed = true;
+            connection.removeForegroundListener?.();
             bridgeConnections.delete(options.guiId);
             socket.close();
             reject(error);
@@ -1099,9 +1113,11 @@ async function launchBridgeSession(
         if (envelope.type === "event") deliverBridgeEnvelope(connection, envelope, handlers);
       });
       socket.addEventListener("error", () => {
+        if (connection.socket !== socket || connection.disposed) return;
         if (!initiallyReady && !settled) {
           settled = true;
           connection.disposed = true;
+          connection.removeForegroundListener?.();
           bridgeConnections.delete(options.guiId);
           reject(new Error(`Could not connect to the Rust bridge at ${bridge}`));
         }
@@ -1109,10 +1125,13 @@ async function launchBridgeSession(
       socket.addEventListener("close", () => {
         window.clearTimeout(timer);
         if (connection.socket !== socket || connection.disposed || connection.stopCompleted || connection.sawExit) return;
+        clearReplayWatchdog(connection);
+        awaitingAcknowledgement = false;
         if (!initiallyReady) {
           if (!settled) {
             settled = true;
             connection.disposed = true;
+            connection.removeForegroundListener?.();
             bridgeConnections.delete(options.guiId);
             reject(new Error(`The Rust bridge at ${bridge} closed during startup`));
           }
@@ -1127,6 +1146,18 @@ async function launchBridgeSession(
       });
     };
 
+    let wasHidden = document.visibilityState === "hidden";
+    const onVisibilityChange = () => {
+      const hidden = document.visibilityState === "hidden";
+      const returned = wasHidden && !hidden;
+      wasHidden = hidden;
+      if (!returned || !initiallyReady || awaitingAcknowledgement
+        || connection.disposed || connection.stopRequested || connection.stopCompleted || connection.sawExit) return;
+      handlers.onConnectionChange?.({ status: "reconnecting", message: "Refreshing the session after returning to Studio" });
+      connect(true);
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    connection.removeForegroundListener = () => document.removeEventListener("visibilitychange", onVisibilityChange);
     connect(false);
   });
 }
@@ -1183,6 +1214,7 @@ function endBridgeConnection(
   // `sawExit` and `disposed` both suppress the close handler's reconnect scheduling.
   connection.sawExit = true;
   connection.disposed = true;
+  connection.removeForegroundListener?.();
   if (connection.reconnectTimer !== undefined) window.clearTimeout(connection.reconnectTimer);
   clearReplayWatchdog(connection);
   bridgeConnections.delete(guiId);
@@ -1261,6 +1293,7 @@ function deliverBridgeEnvelope(
     handlers.onLog(envelope.payload);
   } else if (envelope.channel === "exit" && isProcessExit(envelope.payload)) {
     connection.sawExit = true;
+    connection.removeForegroundListener?.();
     if (connection.stopRequested) completeBridgeStop(connection, true);
     handlers.onExit(envelope.payload);
   }
@@ -1268,6 +1301,7 @@ function deliverBridgeEnvelope(
 
 function completeBridgeStop(connection: BridgeConnection, stopped: boolean): void {
   connection.stopCompleted = stopped;
+  if (stopped) connection.removeForegroundListener?.();
   connection.stopRequested = false;
   const pending = connection.pendingStop;
   if (!pending) return;
