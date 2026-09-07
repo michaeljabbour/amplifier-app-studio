@@ -57,7 +57,11 @@ impl TmuxInvocation {
         if let Some(path) = crate::runtime_setup::runtime_path(Path::new(self.program)) {
             command.env("PATH", path);
         }
+        // Finder and updater launches may have no UTF-8 locale. Without -u,
+        // tmux replaces tabs in formatted output (and Unicode capture) with
+        // underscores, destroying the stable session/pane field boundaries.
         command
+            .arg("-u")
             .args(&self.args)
             .kill_on_drop(true)
             .output()
@@ -593,6 +597,54 @@ mod tests {
         assert!(validate_key("C-c").is_ok());
         assert!(validate_key("C-b").is_err());
         assert!(validate_key("; kill-server").is_err());
+    }
+
+    #[test]
+    fn session_identity_survives_a_non_utf8_desktop_environment() {
+        use std::process::Command as StdCommand;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        if StdCommand::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket = format!("studio-locale-test-{}-{nonce}", std::process::id());
+        let invoke = |args: &[&str]| {
+            StdCommand::new("tmux")
+                .args(["-u", "-L", &socket, "-f", "/dev/null"])
+                .args(args)
+                .env("LC_ALL", "C")
+                .env_remove("LANG")
+                .env_remove("LC_CTYPE")
+                .output()
+                .unwrap()
+        };
+        let created = invoke(&[
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            SESSION_FORMAT,
+            "-s",
+            "studio-locale",
+            "-c",
+            "/tmp",
+        ]);
+        let listed = invoke(&["list-sessions", "-F", SESSION_FORMAT]);
+        // Always remove only this test's isolated server, including on assertion failure.
+        invoke(&["kill-server"]);
+        assert!(created.status.success(), "{:?}", created);
+        assert!(listed.status.success(), "{:?}", listed);
+        let created = parse_session_list(&output_text(&created.stdout));
+        let listed = parse_session_list(&output_text(&listed.stdout));
+        assert_eq!(created.len(), 1);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(created[0].name, "studio-locale");
+        assert_eq!(created[0].session_id, listed[0].session_id);
+        assert_eq!(created[0].pane_id, listed[0].pane_id);
     }
 
     #[test]
