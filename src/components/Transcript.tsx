@@ -14,6 +14,7 @@ interface Props {
   retryLabel?: string;
   onResume?: () => void;
   onExport: () => void;
+  onRecoverResponse?: () => void;
   onVisualArtifact?: (artifact: InlineVisualArtifact) => void;
 }
 
@@ -65,7 +66,6 @@ export function Transcript(props: Props) {
   // back to the bottom. The memo only notifies the effect when visible
   // transcript content actually changes.
   const contentMarker = createMemo(() => transcriptScrollMarker(props.state));
-  const liveTailText = throttled(() => props.state.liveTail?.text || "", LIVE_MARKDOWN_INTERVAL_MS);
 
   onMount(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -97,6 +97,8 @@ export function Transcript(props: Props) {
       !(block.kind === "notice" && block.level === "error" && block.text.trim() === fatalMessage),
     );
   });
+
+  const blocksById = createMemo(() => new Map(visibleBlocks().map((block) => [block.id, block])));
 
   createEffect(() => {
     void contentMarker();
@@ -241,8 +243,8 @@ export function Transcript(props: Props) {
           <div class="replay-banner"><span class="mini-spinner" /> Rebuilding durable session history…</div>
         </Show>
 
-        <For each={visibleBlocks()}>{(block) => <BlockView
-          block={block}
+        <For each={[...blocksById().keys()]}>{(id) => <BlockView
+          block={blocksById().get(id)!}
           projectDir={props.state.projectDir}
           hostUrl={props.state.hostUrl}
           hostId={props.state.hostId}
@@ -250,30 +252,9 @@ export function Transcript(props: Props) {
           onVisualArtifact={props.onVisualArtifact}
         />}</For>
 
-        <Show when={props.state.liveTail?.text ? props.state.liveTail : undefined} keyed>
-          {(tail) => (
-            <Show
-              when={tail.blockType !== "thinking"}
-              fallback={
-                <details class="live-reasoning" open>
-                  <summary><span>Reasoning</span><small>live</small></summary>
-                  <div><Markdown text={liveTailText() || tail.text} class="thinking-text-live" /><span class="stream-caret" /></div>
-                </details>
-              }
-            >
-              <article class="block live-response">
-                <div class="block-gutter"><span class="live-spark">✦</span></div>
-                <div class="block-body">
-                  <div class="block-label">AMPLIFIER · LIVE</div>
-                  {/* The streaming answer is the product's primary output and was the one
-                      region with no live region announcement: screen-reader users got the boot,
-                      working and fatal cards but never the answer itself. `polite` and
-                      non-atomic so it reads incrementally instead of restarting each delta. */}
-                  <div class="answer-text live-markdown" aria-live="polite" aria-atomic="false"><Markdown text={liveTailText() || tail.text} /><span class="stream-caret" /></div>
-                </div>
-              </article>
-            </Show>
-          )}
+        {/* Stream identity is stable across deltas and distinct across model blocks. */}
+        <Show when={props.state.liveTail?.text ? JSON.stringify([props.state.liveTail.requestId, props.state.liveTail.blockIndex, props.state.liveTail.blockType]) : undefined} keyed>
+          {(_streamKey) => <LiveTail blockType={props.state.liveTail?.blockType || "text"} text={props.state.liveTail?.text || ""} ended={props.state.liveTail?.ended} />}
         </Show>
 
         <Show when={props.state.busy && props.state.phase === "ready"}>
@@ -301,6 +282,19 @@ export function Transcript(props: Props) {
                 )}</For>
               </div>
             </Show>
+          </div>
+        </Show>
+
+        <Show when={props.state.responseIssue && !props.state.busy && props.state.phase === "ready"}>
+          <div class="restore-card response-recovery" role="alert">
+            <h2>No final answer received</h2>
+            <p>{props.state.responseIssue === "partial"
+              ? "The response ended without a confirmed final answer. The text received so far is preserved above and marked partial."
+              : "The turn ended without answer text. You can ask the model to summarize the work already completed, or select another model before continuing."}</p>
+            <div class="recovery-actions">
+              <Show when={props.onRecoverResponse}><button class="primary-button" onClick={() => props.onRecoverResponse?.()}>Draft follow-up</button></Show>
+              <button class="secondary-button" onClick={props.onExport}>Export diagnostics</button>
+            </div>
           </div>
         </Show>
 
@@ -442,7 +436,7 @@ export function transcriptScrollMarker(state: SessionViewState): string {
       : last.kind === "thinking" || last.kind === "user" || last.kind === "answer" || last.kind === "notice"
         ? last.text
         : "";
-  return `${state.blocks.length}:${last?.kind || "none"}:${content.length}:${state.liveTail?.blockType || ""}:${state.liveTail?.text.length || 0}`;
+  return `${state.blocks.length}:${last?.kind || "none"}:${content.length}:${state.liveTail?.blockType || ""}:${state.liveTail?.text.length || 0}:${state.responseIssue || ""}`;
 }
 
 export function transcriptAtBottom(scrollHeight: number, scrollTop: number, clientHeight: number): boolean {
@@ -500,7 +494,7 @@ function BlockView(props: {
             </Show>
           </Show>
           <Show when={block().kind === "answer"}>
-            <div class="block-label">AMPLIFIER AGENT{(block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
+            <div class="block-label">AMPLIFIER AGENT{(block() as Extract<TranscriptBlock, { kind: "answer" }>).incomplete ? " · PARTIAL" : (block() as Extract<TranscriptBlock, { kind: "answer" }>).final ? " · FINAL" : ""}</div>
             <Markdown
               class="answer-text"
               text={(block() as Extract<TranscriptBlock, { kind: "answer" }>).text}
@@ -648,5 +642,34 @@ function ThinkingView(props: {
         <Markdown class="thinking-text" text={props.block.text || "Content withheld by provider"} />
       </details>
     </article>
+  );
+}
+
+/** Keep DOM identity and sampling state for one visible streaming block. */
+function LiveTail(props: { blockType: string; text: string; ended?: boolean }) {
+  const sampledText = throttled(() => props.text, LIVE_MARKDOWN_INTERVAL_MS);
+  const liveTailText = () => props.ended ? props.text : sampledText();
+  return (
+    <Show
+      when={props.blockType !== "thinking"}
+      fallback={
+        <details class="live-reasoning" open>
+          <summary><span>Reasoning</span><small>{props.ended ? "received" : "live"}</small></summary>
+          <div><Markdown text={liveTailText()} class="thinking-text-live" /><Show when={!props.ended}><span class="stream-caret" /></Show></div>
+        </details>
+      }
+    >
+      <article class="block live-response">
+        <div class="block-gutter"><span class="live-spark">✦</span></div>
+        <div class="block-body">
+          <div class="block-label">AMPLIFIER · {props.ended ? "RECEIVED" : "LIVE"}</div>
+          {/* The streaming answer is the product's primary output and was the one
+              region with no live region announcement: screen-reader users got the boot,
+              working and fatal cards but never the answer itself. `polite` and
+              non-atomic so it reads incrementally instead of restarting each delta. */}
+          <div class="answer-text live-markdown" aria-live="polite" aria-atomic="false"><Markdown text={liveTailText()} /><Show when={!props.ended}><span class="stream-caret" /></Show></div>
+        </div>
+      </article>
+    </Show>
   );
 }

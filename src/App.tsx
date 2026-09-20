@@ -1128,6 +1128,12 @@ export default function App() {
                 onVisualArtifact={(artifact) => update(session().guiId, (state) => registerInlineVisual(state, artifact))}
                 onRetry={session().projectDir ? () => void relaunchFailedSession(session(), true) : undefined}
                 retryLabel={session().runtimeSessionId || session().resumeId ? "Retry resume" : "Retry"}
+                onRecoverResponse={() => {
+                  const followUp = "Please provide a concise final answer based on the work already completed in this session. If anything remains incomplete, explain what remains. Do not repeat completed tool actions.";
+                  update(session().guiId, (state) => setComposerDraft(state,
+                    state.composerDraft.includes(followUp) ? state.composerDraft : [state.composerDraft.trim(), followUp].filter(Boolean).join("\n\n"),
+                  ));
+                }}
                 onExport={() => void exportSessionDiagnostics(session())}
               />
               <div class="input-zone">

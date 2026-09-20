@@ -2066,3 +2066,42 @@ describe("session reducer", () => {
     expect(twice).toBe(once);
   });
 });
+
+
+describe("reasoning model final responses", () => {
+  function afterThinking() {
+    let state = started();
+    state = reduceRecord(state, runtime(2, { kind: "prompt_submit", prompt: "Hello" }));
+    state = reduceRecord(state, runtime(3, { kind: "stream_block_start", block_type: "thinking" }));
+    state = reduceRecord(state, runtime(4, { kind: "stream_block_delta", block_type: "thinking", text: "Synthetic reasoning" }));
+    state = reduceRecord(state, runtime(5, { kind: "stream_block_end", block_type: "thinking" }));
+    state = reduceRecord(state, runtime(6, { kind: "content_block_start", block_type: "thinking" }));
+    return reduceRecord(state, runtime(7, { kind: "content_block_end", block_type: "thinking", block: { type: "thinking", text: "Synthetic reasoning" } }));
+  }
+
+  it("retains one final answer after reasoning, streaming, durable content, and completion", () => {
+    let state = afterThinking();
+    state = reduceRecord(state, runtime(8, { kind: "stream_block_start", block_type: "text" }));
+    state = reduceRecord(state, runtime(9, { kind: "stream_block_delta", block_type: "text", text: "Final answer" }));
+    state = reduceRecord(state, runtime(10, { kind: "stream_block_end", block_type: "text" }));
+    state = reduceRecord(state, runtime(11, { kind: "content_block_end", block_type: "text", block: { type: "text", text: "Final answer" } }));
+    state = reduceRecord(state, runtime(12, { kind: "prompt_complete", response: "Final answer" }));
+    state = reduceRecord(state, { type: "turn.completed", response: "Final answer" });
+    expect(state.blocks.filter((block) => block.kind === "answer")).toEqual([
+      expect.objectContaining({ text: "Final answer", final: true }),
+    ]);
+    expect(state.busy).toBe(false);
+  });
+
+  it("renders completion text even when the provider emits no durable text block", () => {
+    const state = reduceRecord(afterThinking(), { type: "turn.completed", response: "Final answer" });
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "answer", text: "Final answer", final: true });
+  });
+
+  it("does not relabel reasoning as an answer when completion text is empty", () => {
+    const state = reduceRecord(afterThinking(), { type: "turn.completed", response: "" });
+    expect(state.blocks.some((block) => block.kind === "answer")).toBe(false);
+    expect(state.blocks.at(-1)).toMatchObject({ kind: "thinking", text: "Synthetic reasoning" });
+    expect(state.busy).toBe(false);
+  });
+});

@@ -108,6 +108,8 @@ export interface AnswerBlock extends BaseBlock {
   kind: "answer";
   text: string;
   final: boolean;
+  /** Text received live without authoritative final confirmation. */
+  incomplete?: boolean;
 }
 
 export interface ThinkingBlock extends BaseBlock {
@@ -156,6 +158,11 @@ export interface OutputBlock extends BaseBlock {
 export type TranscriptBlock = UserBlock | AnswerBlock | ThinkingBlock | ToolBlock | RecipeBlock | NoticeBlock | OutputBlock;
 
 export interface LiveTailState {
+  requestId?: string;
+  blockIndex?: number;
+  sequence?: number;
+  ended?: boolean;
+  durable?: boolean;
   blockType: string;
   text: string;
 }
@@ -496,6 +503,11 @@ export interface SessionViewState {
   effortConfirmedAtMs?: number;
   blocks: TranscriptBlock[];
   liveTail?: LiveTailState;
+  streamBlocks?: LiveTailState[];
+  responseIssue?: "empty" | "partial";
+  /** Excludes pre-tool commentary even when a plan tool has no transcript row. */
+  responseStartIndex?: number;
+  turnInterrupted?: boolean;
   openThinkingId?: string;
   lanes: Record<string, LaneState>;
   pendingDelegateBriefs: Record<string, PendingDelegateBrief>;
