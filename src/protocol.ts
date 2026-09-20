@@ -161,6 +161,7 @@ export interface LiveTailState {
   requestId?: string;
   blockIndex?: number;
   sequence?: number;
+  eventId?: string;
   ended?: boolean;
   durable?: boolean;
   blockType: string;

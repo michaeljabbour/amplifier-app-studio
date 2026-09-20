@@ -10,7 +10,7 @@ function event(state: SessionViewState, kind: string, fields: Record<string, unk
 }
 function stream(state: SessionViewState, text = "Visible answer", type = "text") {
   state = event(state, "stream_block_start", { request_id: "request", block_index: 0, block_type: type });
-  return event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: type, sequence: 0, text });
+  return event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: type, event_id: "delta-0", sequence: 0, text });
 }
 const complete = (state: SessionViewState, response = "") => reduceRecord(state, { type: "turn.completed", response });
 const answers = (state: SessionViewState) => state.blocks.filter((b) => b.kind === "answer");
@@ -98,7 +98,7 @@ describe("response completion recovery", () => {
 
   it("does not append duplicate deltas carrying the same stream sequence", () => {
     let state = stream(start());
-    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", sequence: 0, text: "Visible answer" });
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", event_id: "delta-0", sequence: 0, text: "Visible answer" });
     expect(state.liveTail?.text).toBe("Visible answer");
   });
 
@@ -178,6 +178,21 @@ describe("response completion recovery", () => {
     state = complete(state);
     expect(answers(state)).toEqual([expect.objectContaining({ text: "Visible answer", final: true })]);
     expect(state.responseIssue).toBeUndefined();
+  });
+
+  it("accepts legacy deltas whose absent sequence was normalized to zero", () => {
+    let state = stream(start(), "One");
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", event_id: "legacy-2", sequence: 0, text: " two" });
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", event_id: "legacy-3", sequence: 0, text: " two" });
+    expect(state.liveTail?.text).toBe("One two two");
+  });
+
+  it("rejects out-of-order sequenced deltas after the counter advances", () => {
+    let state = stream(start(), "One");
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", sequence: 1, text: " two" });
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", sequence: 0, text: "One" });
+    state = event(state, "stream_block_delta", { request_id: "request", block_index: 0, block_type: "text", sequence: 1, text: " two" });
+    expect(state.liveTail?.text).toBe("One two");
   });
 
 });

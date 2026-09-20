@@ -24,12 +24,19 @@ export function reduceStream(state: SessionViewState, event: UIEvent): SessionVi
   const previous = index >= 0 ? streams[index] : undefined;
   if (previous?.durable || (event.kind === "stream_block_end" && !previous)) return state;
   const sequence = typeof event.sequence === "number" ? event.sequence : undefined;
-  if (event.kind === "stream_block_delta" && sequence !== undefined && previous?.sequence !== undefined && sequence <= previous.sequence) return state;
+  const eventId = stringValue(event.event_id) || undefined;
+  // Older runtimes normalize an absent sequence to zero on every delta. Do
+  // not mistake those distinct events for retransmissions of the first token.
+  if (event.kind === "stream_block_delta" && previous) {
+    if (eventId && eventId === previous.eventId) return state;
+    if (sequence !== undefined && previous.sequence !== undefined
+      && (sequence > 0 || previous.sequence > 0) && sequence <= previous.sequence) return state;
+  }
   if (event.kind === "stream_block_start" && previous) return state;
   const block: LiveTailState = event.kind === "stream_block_end"
     ? { ...previous!, ended: true }
     : event.kind === "stream_block_delta"
-      ? { ...target, text: `${previous?.text || ""}${stringValue(event.text)}`, sequence }
+      ? { ...target, text: `${previous?.text || ""}${stringValue(event.text)}`, sequence, eventId }
       : target;
   const streamBlocks = index >= 0
     ? streams.map((item, i) => i === index ? block : item)

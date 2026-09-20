@@ -34,7 +34,7 @@ If the report recurs after the patch, useful diagnostics are the exact provider/
 - Regression tests reproduce the pre-fix remount, stale sampler, lost stream, empty completion, cross-turn deduplication, and stream-correlation defects.
 - Automated coverage includes redacted durable output, late/duplicate events, thinking-only responses, tool boundaries, repeated completion, process exit, interruption, and normal final answers.
 - Browser fixture using the shipping Transcript component: continuous thinking stayed collapsed; partial text and the recovery card rendered correctly; the follow-up callback populated a draft. This was a browser component check, not a live-provider or packaged native-app acceptance test.
-- Local verification: 403 frontend tests, 28 release-tooling tests, 119 Rust tests, production build, typecheck, release consistency, and Rust all-target check passed. npm audit reports zero vulnerabilities; cargo audit exits successfully with eight existing upstream maintenance/unsoundness warnings.
+- Local verification: 405 frontend tests, 28 release-tooling tests, 119 Rust tests, production build, typecheck, release consistency, and Rust all-target check passed. npm audit reports zero vulnerabilities; cargo audit exits successfully with eight existing upstream maintenance/unsoundness warnings.
 - Vitest 4.1.11 resolves GHSA-82fw-gwwq-j7x9. rustls 0.23.45 resolves RUSTSEC-2026-0285. Existing upstream Rust maintenance/unsoundness warnings are separate from vulnerability audit failures.
 
 ## Delivery
