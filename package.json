@@ -1,7 +1,7 @@
 {
   "name": "amplifier-app-studio",
   "private": true,
-  "version": "0.1.79",
+  "version": "0.1.80",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -45,6 +45,6 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vite-plugin-solid": "^2.11.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

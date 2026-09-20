@@ -4,6 +4,23 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.80 — unreleased
+
+Stable thinking and answer rendering, and recovery when a model returns no final answer.
+
+- Preserve live and durable transcript row identity so streaming does not restart
+  entrance animations, reopen thinking disclosures, or reset their scroll containers.
+- Reset sampled markdown at stream boundaries and flush the final chunk when a block ends.
+- Keep received text visible while waiting for durable output. If completion text is
+  missing, retain available streamed text as partial and show a follow-up draft action.
+- Keep reasoning separate from answers, respect interruption/error states, and never
+  automatically replay work to recover an empty response.
+- Correlate live blocks by request/type/index, ignore duplicate deltas, and prevent
+  late events from clearing another block or resurrecting already-reconciled text.
+- Keep identical answers in separate turns and reconcile multi-block final answers
+  without duplicating them. Commentary before tool calls is not a final answer.
+- Upgrade Vitest to 4.1.11 and rustls to 0.23.45 to address dependency advisories.
+
 ## 0.1.76 — 2026-08-25
 
 Mobile voice visibility and durable secure compute access.

@@ -25,6 +25,7 @@ import {
 import { estimateRunPodCost, mergeCostBasis, type CostBasis } from "./costEstimate";
 import { splitDocumentAttachments } from "./attachments";
 import { discoverOutputArtifacts as outputArtifacts, outputTargetInput, outputToolFailed, toolInputPaths } from "./outputDiscovery";
+import { consumeStream, reduceStream } from "./streaming";
 
 type NewTranscriptBlock = TranscriptBlock extends infer Block
   ? Block extends { id: string }
@@ -459,7 +460,7 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
     }
     case "turn.completed": {
       const response = stringValue(record.response).trim();
-      next = finalizeAnswer(next, response);
+      next = completeResponse(next, response);
       if (next.queuedSteers > 0) {
         next = appendBlock(next, {
           kind: "notice",
@@ -473,7 +474,8 @@ export function reduceRecord(state: SessionViewState, record: ProtocolRecord): S
         pendingPrompt: undefined,
         autopilot: false,
         autopilotPending: false,
-        activity: "Idle",
+        activity: next.responseIssue ? "Answer incomplete" : next.turnInterrupted ? "Interrupted" : "Idle",
+        streamBlocks: undefined,
         liveTail: undefined,
         openThinkingId: undefined,
         queuedSteers: 0,
@@ -593,6 +595,10 @@ export function markPromptSubmitted(
   return {
     ...next,
     pendingPrompt: { text: prompt, runtimeText, mode: state.mode },
+    streamBlocks: undefined,
+    responseIssue: undefined,
+    responseStartIndex: next.blocks.length,
+    turnInterrupted: false,
     busy: true,
     activity: "Submitting prompt",
     // The elapsed clock starts only after a runtime event or status record
@@ -678,7 +684,7 @@ export function markExited(
   code: number | undefined,
   message: string,
 ): SessionViewState {
-  let next = state;
+  let next = preserveStreamText(state);
   if (code !== 0 || state.phase !== "closing") {
     next = appendBlock(next, {
       kind: "notice",
@@ -787,6 +793,8 @@ export function openRestoreAnyway(state: SessionViewState): SessionViewState {
 }
 
 export function setThinkingExpanded(state: SessionViewState, blockId: string, expanded: boolean): SessionViewState {
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block || block.kind !== "thinking" || block.expanded === expanded) return state;
   return {
     ...state,
     blocks: state.blocks.map((block) => block.id === blockId && block.kind === "thinking"
@@ -975,6 +983,10 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
         mode,
         busy: !replay,
         activity: "Starting turn",
+        streamBlocks: undefined,
+        responseIssue: undefined,
+        responseStartIndex: next.blocks.length,
+        turnInterrupted: false,
         turnStartedAtMs: replay ? next.turnStartedAtMs : eventTimeMs(event),
         error: undefined,
         goal: next.goal?.state === "continuing" ? next.goal : undefined,
@@ -985,21 +997,9 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     case "execution_start":
       return { ...next, busy: !replay || next.busy, activity: "Waiting for model" };
     case "stream_block_start":
-      return {
-        ...next,
-        activity: stringValue(event.block_type) === "thinking" ? "Thinking" : "Writing response",
-        liveTail: { blockType: stringValue(event.block_type, "text"), text: "" },
-      };
     case "stream_block_delta":
-      return {
-        ...next,
-        liveTail: {
-          blockType: next.liveTail?.blockType || stringValue(event.block_type, "text"),
-          text: `${next.liveTail?.text || ""}${stringValue(event.text)}`,
-        },
-      };
     case "stream_block_end":
-      return { ...next, activity: "Reviewing response", liveTail: undefined };
+      return replay ? next : reduceStream(next, event);
     case "stream_aborted":
       next = appendBlock(next, {
         kind: "notice",
@@ -1018,10 +1018,11 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     }
     case "content_block_end": {
       const block = typeof event.block === "object" && event.block !== null ? (event.block as Record<string, unknown>) : {};
-      const blockType = stringValue(event.block_type, "text");
+      const blockType = stringValue(event.block_type, stringValue(block.type, "text"));
       const text = stringValue(block[blockType === "thinking" ? "thinking" : "text"], stringValue(block.text));
-      if (blockType === "thinking") return recordThinking(next, text);
-      if (!text) return { ...next, activity: "Thinking" };
+      if (blockType === "thinking") return recordThinking(consumeStream(next, blockType), text);
+      if (blockType !== "text" || !text.trim()) return next;
+      next = consumeStream(next, blockType);
       return appendBlock(next, {
         kind: "answer",
         text,
@@ -1029,6 +1030,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
       } as NewTranscriptBlock);
     }
     case "tool_pre": {
+      next = { ...next, streamBlocks: undefined, liveTail: undefined, responseStartIndex: next.blocks.length };
       if (planLifecycle) return planTracked ? { ...next, activity: "Plan steps updated" } : next;
       if (isDelegateTool(event)) next = rememberDelegateBrief(next, event);
       next = appendBlock(next, {
@@ -1067,9 +1069,15 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     case "tool_error":
       if (planLifecycle) return planTracked ? { ...next, activity: "Plan update needs attention" } : next;
       return { ...settleTool(forgetPendingDelegateBrief(next, stringValue(event.tool_call_id)), event, "failed"), activity: `Recovering from ${displayToolName(stringValue(event.tool_name, "tool"))} error` };
-    case "prompt_complete":
-      next = finalizeAnswer(next, stringValue(event.response).trim());
-      return { ...next, busy: replay ? false : next.busy, activity: "Finishing turn", liveTail: undefined };
+    case "prompt_complete": {
+      const response = stringValue(event.response).trim();
+      next = finalizeAnswer(next, response);
+      return {
+        ...next, busy: replay ? false : next.busy, activity: "Finishing turn", liveTail: undefined,
+        streamBlocks: response ? undefined : next.streamBlocks,
+        responseIssue: response ? undefined : next.responseIssue,
+      };
+    }
     case "provider_notice":
       return appendBlock(next, {
         kind: "notice",
@@ -1164,7 +1172,7 @@ function reduceEvent(state: SessionViewState, event: UIEvent, replay: boolean): 
     case "cancel_requested":
       return appendBlock(next, { kind: "notice", level: "info", text: "Interrupt requested…" });
     case "cancel_completed":
-      return { ...next, activity: "Interrupted", liveTail: undefined };
+      return { ...next, turnInterrupted: true, activity: "Interrupted", liveTail: undefined };
     case "context_injected":
       return { ...next, queuedSteers: Math.max(0, next.queuedSteers - 1) };
     case "context_compacted":
@@ -2514,24 +2522,60 @@ function settleTool(
   return { ...state, blocks };
 }
 
+function responseBoundary(state: SessionViewState): number {
+  return Math.max((state.responseStartIndex ?? 0) - 1, findLastIndex(state.blocks, (block) =>
+    (block.kind === "user" && block.mode !== "steer") || block.kind === "tool" || block.kind === "thinking",
+  ));
+}
+
+function preserveStreamText(state: SessionViewState): SessionViewState {
+  let next = state;
+  for (const stream of state.streamBlocks || []) {
+    if (!stream.durable && stream.blockType === "text" && stream.text.trim()) {
+      next = appendBlock(next, { kind: "answer", text: stream.text, final: false, incomplete: true });
+    }
+  }
+  return { ...next, streamBlocks: undefined, liveTail: undefined };
+}
+
+/** Close a turn without silently discarding text or inventing an answer from reasoning. */
+function completeResponse(state: SessionViewState, response: string): SessionViewState {
+  if (response) return { ...finalizeAnswer(state, response), responseIssue: undefined };
+  const terminal = state.blocks.slice(responseBoundary(state) + 1).filter((block) => block.kind === "answer");
+  const pending = (state.streamBlocks || []).filter((block) => !block.durable && block.blockType === "text" && block.text.trim());
+  const durable = terminal.filter((block) => !block.incomplete && block.text.trim());
+  if (!pending.length && durable.length && !terminal.some((block) => block.incomplete) && !state.error && !state.turnInterrupted) {
+    // Some runtimes report final text only as durable content blocks.
+    const last = durable.at(-1)!;
+    return { ...state, responseIssue: undefined, blocks: state.blocks.map((block) => block === last ? { ...last, final: true } : block) };
+  }
+  const next = preserveStreamText(state);
+  const partial = terminal.some((block) => block.incomplete) || pending.length > 0;
+  return {
+    ...next,
+    responseIssue: state.error || state.turnInterrupted ? undefined : partial ? "partial" : "empty",
+  };
+}
+
 function finalizeAnswer(state: SessionViewState, response: string): SessionViewState {
   if (!response) return state;
-  const index = findLastIndex(
-    state.blocks,
-    (block) => block.kind === "answer" && block.text.trim() === response,
-  );
-  const reconciledIndex = index >= 0
-    ? index
-    : findLastIndex(
-      state.blocks,
-      (block) => block.kind === "answer" && !block.final && redactedTextMatches(block.text.trim(), response),
-    );
-  if (reconciledIndex < 0) return appendBlock(state, { kind: "answer", text: response, final: true });
-  const block = state.blocks[reconciledIndex];
-  if (block.kind !== "answer" || block.final) return state;
-  const blocks = [...state.blocks];
-  blocks[reconciledIndex] = { ...block, text: response, final: true };
-  return { ...state, blocks };
+  const boundary = responseBoundary(state);
+  const candidates = state.blocks.slice(boundary + 1).filter((block) => block.kind === "answer");
+  // Providers can split one final response into several durable text blocks.
+  const combined = candidates.map((block) => block.text.trim()).join("\n\n");
+  if (candidates.length > 1 && (combined === response || redactedTextMatches(combined, response))) {
+    const ids = new Set(candidates.slice(1).map((block) => block.id));
+    return {
+      ...state,
+      blocks: state.blocks.filter((block) => !ids.has(block.id)).map((block) => block === candidates[0]
+        ? { ...candidates[0], text: response, final: true, incomplete: undefined } : block),
+    };
+  }
+  const block = candidates[findLastIndex(candidates, (block) => block.text.trim() === response)]
+    || candidates[findLastIndex(candidates, (block) => !block.final && redactedTextMatches(block.text.trim(), response))];
+  if (!block) return appendBlock(state, { kind: "answer", text: response, final: true });
+  if (block.final) return state;
+  return { ...state, blocks: state.blocks.map((item) => item === block ? { ...block, text: response, final: true, incomplete: undefined } : item) };
 }
 
 function redactedTextMatches(redacted: string, clear: string): boolean {
