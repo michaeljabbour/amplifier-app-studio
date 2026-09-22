@@ -8,6 +8,19 @@ import {
 } from "./capabilities";
 
 describe("Studio capabilities", () => {
+  it("launches the active fast-decisions bundle while preserving the selected main provider and model", () => {
+    const capability = STUDIO_CAPABILITIES.find((item) => item.id === "fast-decisions")!;
+    const input = capabilitySessionInput(capability, "/work/project", { model: "qwen-main", provider: "vllm-local" });
+    expect(input).toMatchObject({
+      projectDir: "/work/project", model: "qwen-main", provider: "vllm-local",
+      capabilityId: "fast-decisions", mode: "auto",
+    });
+    expect(input.bundle).toMatch(/amplifier-bundle-fast-decisions@[0-9a-f]{40}#subdirectory=bundles\/active\.yaml$/);
+    expect(capabilityReadiness(capability, { bundles: [], providers: [] })).toBe("on-demand");
+    expect(sessionUsesCapability(capability, { bundle: input.bundle! })).toBe(true);
+    expect(sessionUsesCapability(capability, { bundle: "tui" })).toBe(false);
+  });
+
   it("pins the image studio and composes App Use as a real runtime", () => {
     const imagen = STUDIO_CAPABILITIES.find((item) => item.id === "imagen")!;
     expect(imagen.bundle).toContain("@v2.0.0");

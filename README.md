@@ -86,9 +86,12 @@ place.
   current machine
 - Active-session Autopilot: it continues an idle coordinator or steers the
   coordinator's current turn, and never creates a replacement session
-- An outcome-first capability library for Coordinator, Browser Use, Computer
+- An outcome-first capability library for Coordinator, Fast Decisions, Browser Use, Computer
   Use, built-in Terminal Use, Imagen, and Attractor, grounded in Amplifier's canonical
   `MODULES.md` catalog; app control remains a capability of the active runtime
+- Optional [Fast Decisions sessions](docs/FAST-DECISIONS.md): a local judge can
+  select prepared read/list actions while the selected main model handles the
+  rest of the task. Requires Ollama on the session's compute host.
 - Typed output capture for concrete file, image, diagram, and dataset paths
   returned by tools
 - Bounded microphone speech-to-text into an editable draft. On desktop Studio uses

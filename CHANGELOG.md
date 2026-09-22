@@ -4,7 +4,16 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
-## 0.1.80 — unreleased
+## 0.1.81 — unreleased
+
+- Add Fast Decisions to the capability library, with compute-host setup guidance
+  and a pinned active bundle. Preserve the selected main provider and model.
+- Adopt runtime 0.1.11 so explicitly selected execution profiles keep their
+  declared loop when global app overlays include a conflicting default loop.
+- Pin the corrected active profile, which resolves its root package explicitly
+  and installs the streaming loop it wraps on fresh hosts.
+
+## 0.1.80 — 2026-09-20
 
 Stable thinking and answer rendering, and recovery when a model returns no final answer.
 

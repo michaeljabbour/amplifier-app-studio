@@ -259,6 +259,14 @@ export function NewSessionDialog(props: Props) {
           </div>
         </Show>
 
+        <Show when={props.initial.capabilityId === "fast-decisions"}>
+          <div class="capability-selection" role="note" aria-label="Fast Decisions setup">
+            <strong>Local judge on {selectedHost()?.name || "the runtime host"}</strong>
+            <p>Run Ollama on this host and install the judge with <code>ollama pull qwen3:0.6b</code>. The judge uses this host’s local Ollama service, including when you connect remotely.</p>
+            <p>Your selected main model still writes code and answers. Missing, slow, or uncertain judge responses fall back to the main model. This option can reduce model turns for file exploration; speed depends on the task.</p>
+          </div>
+        </Show>
+
         <Show when={props.catalogError} keyed>{(message) => (
           <div class="catalog-discovery-warning" role="status">
             Installed bundles and provider routes could not be discovered: {message}. You may enter explicit values under Advanced composition.
