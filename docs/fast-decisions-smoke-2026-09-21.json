@@ -1,0 +1,99 @@
+{
+  "date": "2026-09-21",
+  "task": "Read a disposable README and return its verification marker without editing files.",
+  "main_model": "Qwen/Qwen3.8-27B-FP8",
+  "judge": "Ollama qwen3:0.6b",
+  "profile_commit": "91d0addb7caf566eb0fc7b74aeece7bcb6c37144",
+  "runtime_source_commit": "3f5139ef89bf22df2630e3711ba716c7c68e1a55",
+  "control": "Identical profile and main provider/model with decision mode off; exploration effort routing remains the same.",
+  "order": [
+    "off",
+    "active",
+    "active",
+    "off",
+    "off",
+    "active"
+  ],
+  "timing": "task_seconds spans prompt_submit to prompt_complete; process_seconds includes dependency preparation and runtime startup; loop_seconds is only the inner orchestrator.",
+  "limitations": "One tiny read task, three repetitions per mode, shared provider and warm host. Not a coding benchmark or a statistically established speedup. Active includes a slower run and one fallback.",
+  "results": [
+    {
+      "mode": "off",
+      "rep": 0,
+      "session_id": "927a62bf-eeb1-41c3-890d-7b4c2c50bf23",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 43.748,
+      "loop_seconds": 17.323,
+      "fast_total": 0,
+      "slow_total": 2,
+      "status": "ok",
+      "task_seconds": 37.287
+    },
+    {
+      "mode": "active",
+      "rep": 1,
+      "session_id": "cf0a3970-2dd0-443e-ac29-df14689bec02",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 29.842,
+      "loop_seconds": 10.011,
+      "fast_total": 1,
+      "slow_total": 1,
+      "status": "ok",
+      "task_seconds": 23.803
+    },
+    {
+      "mode": "active",
+      "rep": 2,
+      "session_id": "fa0b6368-c65b-4a07-92bb-428d3aa6d08d",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 30.777,
+      "loop_seconds": 10.992,
+      "fast_total": 0,
+      "slow_total": 2,
+      "status": "ok",
+      "task_seconds": 26.229
+    },
+    {
+      "mode": "off",
+      "rep": 3,
+      "session_id": "a4dd7f94-2ab7-482a-b2a4-bf97951aec03",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 31.631,
+      "loop_seconds": 12.697,
+      "fast_total": 0,
+      "slow_total": 2,
+      "status": "ok",
+      "task_seconds": 27.049
+    },
+    {
+      "mode": "off",
+      "rep": 4,
+      "session_id": "20c2ef94-9f0a-4159-829d-9ae0933ee8e8",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 32.806,
+      "loop_seconds": 12.439,
+      "fast_total": 0,
+      "slow_total": 2,
+      "status": "ok",
+      "task_seconds": 27.114
+    },
+    {
+      "mode": "active",
+      "rep": 5,
+      "session_id": "48b60c70-3312-4b1a-a65d-d9ab2b51e1a1",
+      "exit_code": 0,
+      "correct": true,
+      "process_seconds": 44.967,
+      "loop_seconds": 25.855,
+      "fast_total": 1,
+      "slow_total": 1,
+      "status": "ok",
+      "task_seconds": 39.968
+    }
+  ]
+}

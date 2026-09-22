@@ -51,8 +51,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.1.80
-        CFBundleVersion: "68"
+        CFBundleShortVersionString: 0.1.81
+        CFBundleVersion: "69"
         ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: amplifier-studio_iOS/amplifier-studio_iOS.entitlements

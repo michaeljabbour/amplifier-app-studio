@@ -2,6 +2,7 @@ import type { CapabilityCatalog, NewSessionInput, SessionViewState } from "./pro
 
 export type StudioCapabilityId =
   | "coordinator"
+  | "fast-decisions"
   | "browser"
   | "app-use"
   | "terminal"
@@ -40,6 +41,24 @@ export const STUDIO_CAPABILITIES: StudioCapability[] = [
     mode: "auto",
     requirements: ["Uses the composition selected for this session."],
     accent: "blue",
+    activation: "parallel-session",
+  },
+  {
+    id: "fast-decisions",
+    name: "Fast Decisions",
+    eyebrow: "LOCAL ACCELERATION",
+    outcome: "Spend fewer model turns choosing files to read.",
+    description: "A small local judge can choose prepared read/list actions while your selected model handles reasoning, edits, and the final answer. Uncertain decisions fall back to the normal loop.",
+    action: "Start with Fast Decisions",
+    bundle: "git+https://github.com/michaeljabbour/amplifier-bundle-fast-decisions@91d0addb7caf566eb0fc7b74aeece7bcb6c37144#subdirectory=bundles/active.yaml",
+    catalogNames: ["fast-decisions-active"],
+    mode: "auto",
+    requirements: [
+      "Requires Ollama with qwen3:0.6b on the selected compute host. A judge on your laptop cannot accelerate a different host.",
+      "Uses the active decision bundle for this new session. Existing sessions and the default bundle stay unchanged.",
+      "Keeps your selected main model and native tool permissions. Speed gains depend on the task.",
+    ],
+    accent: "green",
     activation: "parallel-session",
   },
   {
