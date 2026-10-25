@@ -4,6 +4,11 @@ All notable Amplifier Studio changes are recorded here. Releases use tags of
 the form `studio-vX.Y.Z`; the GitHub release workflow is the sole supported
 path for signed public artifacts.
 
+## 0.1.82 — unreleased
+
+- Security: refresh dompurify (3.4.17), undici (8.12.2) and vite (8.3.4) in the
+  lockfile to clear the 2026-10-25 dependency advisories.
+
 ## 0.1.81 — unreleased
 
 - Add Fast Decisions to the capability library, with compute-host setup guidance
