@@ -34,7 +34,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - uses: microsoft/setup-WinAppCli@v0.2
+      - uses: microsoft/setup-WinAppCli@v0.3
       - run: npm ci
       - run: npm run release:check
       - run: npm test
